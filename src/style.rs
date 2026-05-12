@@ -23,6 +23,14 @@ pub enum Color {
 }
 
 impl Color {
+    pub fn fg_ansi(&self) -> String {
+        self.fg_code()
+    }
+
+    pub fn bg_ansi(&self) -> String {
+        self.bg_code()
+    }
+
     fn fg_code(&self) -> String {
         match self {
             Color::Black => "30".into(),

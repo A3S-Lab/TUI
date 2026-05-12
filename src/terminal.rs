@@ -86,6 +86,14 @@ impl Terminal {
         self.stdout.flush()
     }
 
+    pub fn write_raw(&mut self, s: &str) -> io::Result<()> {
+        write!(self.stdout, "{}", s)
+    }
+
+    pub fn stdout_mut(&mut self) -> &mut Stdout {
+        &mut self.stdout
+    }
+
     pub fn size() -> io::Result<(u16, u16)> {
         terminal::size()
     }
