@@ -72,6 +72,20 @@ impl Terminal {
         self.stdout.flush()
     }
 
+    pub fn draw_line(&mut self, row: u16, content: &str) -> io::Result<()> {
+        queue!(
+            self.stdout,
+            cursor::MoveTo(0, row),
+            terminal::Clear(terminal::ClearType::CurrentLine),
+        )?;
+        write!(self.stdout, "{}", content)?;
+        Ok(())
+    }
+
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.stdout.flush()
+    }
+
     pub fn size() -> io::Result<(u16, u16)> {
         terminal::size()
     }

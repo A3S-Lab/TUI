@@ -7,6 +7,8 @@ use crate::terminal::{Terminal, TerminalOptions};
 use crossterm::event::EventStream;
 use futures_util::StreamExt;
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 
 pub struct ProgramBuilder<M: Model> {
@@ -50,11 +52,16 @@ where
     }
 
     pub async fn run(self) -> io::Result<()> {
-        Program::run_inner(self.model, TerminalOptions {
-            alt_screen: self.alt_screen,
-            mouse_support: self.mouse_support,
-            raw_mode: true,
-        }, self.fps).await
+        Program::run_inner(
+            self.model,
+            TerminalOptions {
+                alt_screen: self.alt_screen,
+                mouse_support: self.mouse_support,
+                raw_mode: true,
+            },
+            self.fps,
+        )
+        .await
     }
 }
 
@@ -80,9 +87,10 @@ impl Program {
         terminal.enter()?;
 
         let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<M::Msg>();
+        let quit_flag = Arc::new(AtomicBool::new(false));
 
         if let Some(cmd) = model.init() {
-            Self::spawn_cmd(cmd, msg_tx.clone());
+            Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
         }
 
         let mut event_stream = EventStream::new();
@@ -91,9 +99,11 @@ impl Program {
         let view = model.view();
         renderer.render(&mut terminal, &view)?;
 
-        let mut should_quit = false;
+        loop {
+            if quit_flag.load(Ordering::Relaxed) {
+                break;
+            }
 
-        while !should_quit {
             tokio::select! {
                 event = event_stream.next() => {
                     match event {
@@ -101,7 +111,7 @@ impl Program {
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
-                                should_quit = Self::process_cmd(cmd, &msg_tx).await;
+                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                             }
                         }
                         Some(Err(_)) => break,
@@ -110,15 +120,17 @@ impl Program {
                 }
                 Some(msg) = msg_rx.recv() => {
                     if let Some(cmd) = model.update(msg) {
-                        should_quit = Self::process_cmd(cmd, &msg_tx).await;
+                        Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                     }
                 }
             }
 
-            if !should_quit {
-                let view = model.view();
-                renderer.render_if_changed(&mut terminal, &view)?;
+            if quit_flag.load(Ordering::Relaxed) {
+                break;
             }
+
+            let view = model.view();
+            renderer.render_if_changed(&mut terminal, &view)?;
         }
 
         terminal.exit()?;
@@ -126,49 +138,57 @@ impl Program {
         Ok(())
     }
 
-    async fn process_cmd<M: Send + 'static>(
-        cmd: Cmd<M>,
-        tx: &mpsc::UnboundedSender<M>,
-    ) -> bool {
-        let result = cmd.await;
-        match result {
-            CmdResult::Quit => true,
-            CmdResult::Msg(m) => {
-                let _ = tx.send(m);
-                false
-            }
-            CmdResult::Batch(cmds) => {
-                for c in cmds {
-                    Self::spawn_cmd(c, tx.clone());
-                }
-                false
-            }
-            CmdResult::None => false,
-        }
-    }
-
-    fn spawn_cmd<M: Send + 'static>(
+    fn dispatch_cmd<M: Send + 'static>(
         cmd: Cmd<M>,
         tx: mpsc::UnboundedSender<M>,
+        quit: Arc<AtomicBool>,
     ) {
         tokio::spawn(async move {
             let result = cmd.await;
             match result {
+                CmdResult::Quit => {
+                    quit.store(true, Ordering::Relaxed);
+                }
                 CmdResult::Msg(m) => {
                     let _ = tx.send(m);
                 }
                 CmdResult::Batch(cmds) => {
                     for c in cmds {
                         let tx2 = tx.clone();
+                        let quit2 = quit.clone();
                         tokio::spawn(async move {
                             let r = c.await;
-                            if let CmdResult::Msg(m) = r {
-                                let _ = tx2.send(m);
+                            match r {
+                                CmdResult::Quit => {
+                                    quit2.store(true, Ordering::Relaxed);
+                                }
+                                CmdResult::Msg(m) => {
+                                    let _ = tx2.send(m);
+                                }
+                                CmdResult::Batch(inner_cmds) => {
+                                    for ic in inner_cmds {
+                                        let tx3 = tx2.clone();
+                                        let quit3 = quit2.clone();
+                                        tokio::spawn(async move {
+                                            let r = ic.await;
+                                            match r {
+                                                CmdResult::Quit => {
+                                                    quit3.store(true, Ordering::Relaxed);
+                                                }
+                                                CmdResult::Msg(m) => {
+                                                    let _ = tx3.send(m);
+                                                }
+                                                _ => {}
+                                            }
+                                        });
+                                    }
+                                }
+                                CmdResult::None => {}
                             }
                         });
                     }
                 }
-                CmdResult::Quit | CmdResult::None => {}
+                CmdResult::None => {}
             }
         });
     }
