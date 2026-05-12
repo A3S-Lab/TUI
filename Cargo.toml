@@ -1,0 +1,25 @@
+[package]
+name = "a3s-tui"
+version = "0.1.0"
+edition = "2021"
+authors = ["A3S Lab"]
+license = "MIT"
+description = "TEA (The Elm Architecture) framework for terminal user interfaces"
+repository = "https://github.com/A3S-Lab/a3s"
+keywords = ["tui", "terminal", "elm-architecture", "tea", "async"]
+categories = ["command-line-interface", "asynchronous"]
+
+[lib]
+name = "a3s_tui"
+path = "src/lib.rs"
+
+[dependencies]
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[[example]]
+name = "counter"
