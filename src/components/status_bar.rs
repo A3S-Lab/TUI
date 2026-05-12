@@ -1,0 +1,85 @@
+use crate::style::{visible_len, Color, Style};
+
+pub struct StatusBar {
+    left: String,
+    center: String,
+    right: String,
+    fg: Color,
+    bg: Color,
+}
+
+impl StatusBar {
+    pub fn new() -> Self {
+        Self {
+            left: String::new(),
+            center: String::new(),
+            right: String::new(),
+            fg: Color::White,
+            bg: Color::BrightBlack,
+        }
+    }
+
+    pub fn left(mut self, s: impl Into<String>) -> Self {
+        self.left = s.into();
+        self
+    }
+
+    pub fn center(mut self, s: impl Into<String>) -> Self {
+        self.center = s.into();
+        self
+    }
+
+    pub fn right(mut self, s: impl Into<String>) -> Self {
+        self.right = s.into();
+        self
+    }
+
+    pub fn fg(mut self, color: Color) -> Self {
+        self.fg = color;
+        self
+    }
+
+    pub fn bg(mut self, color: Color) -> Self {
+        self.bg = color;
+        self
+    }
+
+    pub fn view(&self, width: u16) -> String {
+        let w = width as usize;
+        let left_width = visible_len(&self.left);
+        let center_width = visible_len(&self.center);
+        let right_width = visible_len(&self.right);
+
+        let mut line = String::new();
+        line.push_str(&self.left);
+
+        let space_for_center = w.saturating_sub(left_width + right_width);
+        if center_width > 0 && space_for_center >= center_width {
+            let center_start = (w.saturating_sub(center_width)) / 2;
+            let pad_before = center_start.saturating_sub(left_width);
+            line.push_str(&" ".repeat(pad_before));
+            line.push_str(&self.center);
+            let used = left_width + pad_before + center_width;
+            let pad_after = w.saturating_sub(used + right_width);
+            line.push_str(&" ".repeat(pad_after));
+        } else {
+            let middle_space = w.saturating_sub(left_width + right_width);
+            line.push_str(&" ".repeat(middle_space));
+        }
+
+        line.push_str(&self.right);
+
+        let total_vis = visible_len(&line);
+        if total_vis < w {
+            line.push_str(&" ".repeat(w - total_vis));
+        }
+
+        Style::new().fg(self.fg).bg(self.bg).render(&line)
+    }
+}
+
+impl Default for StatusBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
