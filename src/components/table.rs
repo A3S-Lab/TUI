@@ -72,3 +72,54 @@ impl Table {
             .join("│")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_table() {
+        let table = Table::new(vec!["A", "B"]);
+        let el: Element<()> = table.element();
+        match el {
+            Element::Box(b) => {
+                // header + separator = 2 lines
+                assert_eq!(b.children.len(), 2);
+            }
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn table_with_rows() {
+        let table = Table::new(vec!["Name", "Age"])
+            .row(vec!["Alice", "30"])
+            .row(vec!["Bob", "25"]);
+        let el: Element<()> = table.element();
+        match el {
+            Element::Box(b) => {
+                // header + separator + 2 rows = 4
+                assert_eq!(b.children.len(), 4);
+            }
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn col_widths_expand() {
+        let table = Table::new(vec!["X"])
+            .row(vec!["longer text"]);
+        assert_eq!(table.col_widths[0], 11);
+    }
+
+    #[test]
+    fn add_row_method() {
+        let mut table = Table::new(vec!["Col"]);
+        table.add_row(vec!["val"]);
+        let el: Element<()> = table.element();
+        match el {
+            Element::Box(b) => assert_eq!(b.children.len(), 3),
+            _ => panic!("expected Box"),
+        }
+    }
+}

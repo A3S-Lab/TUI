@@ -78,6 +78,48 @@ impl Color {
             Color::Rgb(r, g, b) => format!("48;2;{};{};{}", r, g, b),
         }
     }
+
+    /// Parse a hex color string (e.g., "#ff0000" or "ff0000").
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return None;
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        Some(Color::Rgb(r, g, b))
+    }
+
+    /// Lighten an RGB color by a factor (0.0 to 1.0).
+    pub fn lighten(&self, amount: f64) -> Self {
+        match self {
+            Color::Rgb(r, g, b) => {
+                let factor = amount.clamp(0.0, 1.0);
+                Color::Rgb(
+                    (*r as f64 + (255.0 - *r as f64) * factor) as u8,
+                    (*g as f64 + (255.0 - *g as f64) * factor) as u8,
+                    (*b as f64 + (255.0 - *b as f64) * factor) as u8,
+                )
+            }
+            other => *other,
+        }
+    }
+
+    /// Darken an RGB color by a factor (0.0 to 1.0).
+    pub fn darken(&self, amount: f64) -> Self {
+        match self {
+            Color::Rgb(r, g, b) => {
+                let factor = 1.0 - amount.clamp(0.0, 1.0);
+                Color::Rgb(
+                    (*r as f64 * factor) as u8,
+                    (*g as f64 * factor) as u8,
+                    (*b as f64 * factor) as u8,
+                )
+            }
+            other => *other,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,3 +453,74 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 use std::str;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_from_hex_valid() {
+        assert_eq!(Color::from_hex("#ff0000"), Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(Color::from_hex("00ff00"), Some(Color::Rgb(0, 255, 0)));
+        assert_eq!(Color::from_hex("#1e1e2e"), Some(Color::Rgb(30, 30, 46)));
+    }
+
+    #[test]
+    fn color_from_hex_invalid() {
+        assert_eq!(Color::from_hex(""), None);
+        assert_eq!(Color::from_hex("#fff"), None);
+        assert_eq!(Color::from_hex("zzzzzz"), None);
+    }
+
+    #[test]
+    fn color_lighten() {
+        let c = Color::Rgb(100, 100, 100);
+        let lighter = c.lighten(0.5);
+        match lighter {
+            Color::Rgb(r, g, b) => {
+                assert!(r > 100);
+                assert!(g > 100);
+                assert!(b > 100);
+            }
+            _ => panic!("expected Rgb"),
+        }
+    }
+
+    #[test]
+    fn color_darken() {
+        let c = Color::Rgb(200, 200, 200);
+        let darker = c.darken(0.5);
+        match darker {
+            Color::Rgb(r, g, b) => {
+                assert!(r < 200);
+                assert!(g < 200);
+                assert!(b < 200);
+            }
+            _ => panic!("expected Rgb"),
+        }
+    }
+
+    #[test]
+    fn color_lighten_non_rgb_is_noop() {
+        let c = Color::Red;
+        assert_eq!(c.lighten(0.5), Color::Red);
+    }
+
+    #[test]
+    fn visible_len_plain() {
+        assert_eq!(visible_len("hello"), 5);
+        assert_eq!(visible_len(""), 0);
+    }
+
+    #[test]
+    fn visible_len_with_ansi() {
+        assert_eq!(visible_len("\x1b[31mhello\x1b[0m"), 5);
+        assert_eq!(visible_len("\x1b[1;32mtest\x1b[0m"), 4);
+    }
+
+    #[test]
+    fn strip_ansi_removes_codes() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("plain"), "plain");
+    }
+}

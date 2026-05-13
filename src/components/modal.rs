@@ -1,3 +1,4 @@
+use crate::element::{BoxElement, BorderStyle as ElBorder, Element, FlexDirection, TextElement};
 use crate::style::{visible_len, Border, Color, Style};
 
 pub struct Modal {
@@ -160,5 +161,107 @@ impl Modal {
 impl Default for Modal {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Modal {
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let mut children: Vec<Element<Msg>> = Vec::new();
+
+        if !self.title.is_empty() {
+            children.push(Element::Text(
+                TextElement::new(&self.title).bold().fg(self.title_color),
+            ));
+            children.push(Element::Text(TextElement::new("")));
+        }
+
+        if !self.body.is_empty() {
+            for line in self.body.lines() {
+                children.push(Element::Text(TextElement::new(line)));
+            }
+            children.push(Element::Text(TextElement::new("")));
+        }
+
+        for (i, opt) in self.options.iter().enumerate() {
+            let prefix = if i == self.selected { "▸ " } else { "  " };
+            let text = format!("{}{}", prefix, opt);
+            if i == self.selected {
+                children.push(Element::Text(
+                    TextElement::new(text).bold().fg(self.selected_color),
+                ));
+            } else {
+                children.push(Element::Text(TextElement::new(text)));
+            }
+        }
+
+        let border = match self.border {
+            Border::Rounded => ElBorder::Rounded,
+            Border::Single => ElBorder::Single,
+            Border::Double => ElBorder::Double,
+            Border::Thick => ElBorder::Thick,
+            _ => ElBorder::Rounded,
+        };
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .border(border)
+                .border_color(self.border_color)
+                .padding(1)
+                .children(children),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modal_update_next() {
+        let mut modal = Modal::new().options(vec!["A", "B", "C"]);
+        modal.update(ModalMsg::Next);
+        assert_eq!(modal.confirm(), 1);
+        modal.update(ModalMsg::Next);
+        assert_eq!(modal.confirm(), 2);
+        modal.update(ModalMsg::Next);
+        assert_eq!(modal.confirm(), 0); // wraps
+    }
+
+    #[test]
+    fn modal_update_prev() {
+        let mut modal = Modal::new().options(vec!["A", "B", "C"]);
+        modal.update(ModalMsg::Prev);
+        assert_eq!(modal.confirm(), 2); // wraps to end
+    }
+
+    #[test]
+    fn modal_select_returns_index() {
+        let mut modal = Modal::new().options(vec!["X", "Y"]);
+        let result = modal.update(ModalMsg::Select(1));
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn modal_cancel_returns_none() {
+        let mut modal = Modal::new().options(vec!["X"]);
+        let result = modal.update(ModalMsg::Cancel);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn modal_element_has_content() {
+        let modal = Modal::new()
+            .title("Confirm")
+            .body("Are you sure?")
+            .options(vec!["Yes", "No"]);
+        let el: Element<()> = modal.element();
+        match el {
+            Element::Box(b) => {
+                // title + empty + body + empty + 2 options = 6
+                assert!(b.children.len() >= 5);
+            }
+            _ => panic!("expected Box"),
+        }
     }
 }
