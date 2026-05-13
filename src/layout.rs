@@ -188,3 +188,79 @@ fn truncate_to_width(s: &str, width: usize) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_constraint() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Fixed(10))
+            .item("B", Constraint::Fixed(20));
+        let sizes = layout.resolve_sizes(80);
+        assert_eq!(sizes, vec![10, 20]);
+    }
+
+    #[test]
+    fn percentage_constraint() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Percentage(50))
+            .item("B", Constraint::Percentage(50));
+        let sizes = layout.resolve_sizes(80);
+        assert_eq!(sizes, vec![40, 40]);
+    }
+
+    #[test]
+    fn fill_distributes_remaining() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Fixed(20))
+            .item("B", Constraint::Fill)
+            .item("C", Constraint::Fixed(10));
+        let sizes = layout.resolve_sizes(80);
+        assert_eq!(sizes[0], 20);
+        assert_eq!(sizes[1], 50);
+        assert_eq!(sizes[2], 10);
+    }
+
+    #[test]
+    fn multiple_fills_share_equally() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Fill)
+            .item("B", Constraint::Fill);
+        let sizes = layout.resolve_sizes(80);
+        assert_eq!(sizes[0], 40);
+        assert_eq!(sizes[1], 40);
+    }
+
+    #[test]
+    fn render_horizontal_basic() {
+        let layout = Layout::horizontal()
+            .item("left", Constraint::Fixed(6))
+            .item("right", Constraint::Fixed(6));
+        let output = layout.render(12);
+        assert!(output.contains("left"));
+        assert!(output.contains("right"));
+    }
+
+    #[test]
+    fn render_vertical_basic() {
+        let layout = Layout::vertical()
+            .item("top", Constraint::Fixed(1))
+            .item("bottom", Constraint::Fixed(1));
+        let output = layout.render(2);
+        assert!(output.contains("top"));
+        assert!(output.contains("bottom"));
+    }
+
+    #[test]
+    fn pad_or_truncate_pads() {
+        assert_eq!(pad_or_truncate("hi", 5), "hi   ");
+    }
+
+    #[test]
+    fn pad_or_truncate_truncates() {
+        let result = pad_or_truncate("hello world", 5);
+        assert_eq!(result.len(), 5);
+    }
+}

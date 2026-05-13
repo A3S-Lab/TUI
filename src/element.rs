@@ -245,6 +245,16 @@ impl<Msg> BoxElement<Msg> {
         }
     }
 
+    /// Create a row container (flex-direction: row).
+    pub fn row() -> Self {
+        Self::new().direction(FlexDirection::Row)
+    }
+
+    /// Create a column container (flex-direction: column).
+    pub fn col() -> Self {
+        Self::new().direction(FlexDirection::Column)
+    }
+
     pub fn direction(mut self, d: FlexDirection) -> Self {
         self.style.flex_direction = d;
         self
