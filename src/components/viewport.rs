@@ -1,3 +1,4 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
 use crate::style::visible_len;
 
@@ -143,6 +144,28 @@ impl Viewport {
         }
 
         result
+    }
+
+    /// Render visible lines as an Element tree.
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let h = self.height as usize;
+        let end = (self.offset + h).min(self.lines.len());
+
+        let mut children: Vec<Element<Msg>> = self.lines[self.offset..end]
+            .iter()
+            .map(|line| Element::Text(TextElement::new(line.as_str())))
+            .collect();
+
+        let visible_count = end - self.offset;
+        for _ in visible_count..h {
+            children.push(Element::Text(TextElement::new("")));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
     }
 
     fn max_offset(&self) -> usize {
