@@ -1,3 +1,4 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{visible_len, Color, Style};
 
 pub struct StatusBar {
@@ -42,6 +43,32 @@ impl StatusBar {
     pub fn bg(mut self, color: Color) -> Self {
         self.bg = color;
         self
+    }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let mut children: Vec<Element<Msg>> = Vec::new();
+
+        if !self.left.is_empty() {
+            children.push(Element::Text(TextElement::new(&self.left).fg(self.fg)));
+        }
+
+        children.push(Element::Spacer);
+
+        if !self.center.is_empty() {
+            children.push(Element::Text(TextElement::new(&self.center).fg(self.fg)));
+            children.push(Element::Spacer);
+        }
+
+        if !self.right.is_empty() {
+            children.push(Element::Text(TextElement::new(&self.right).fg(self.fg)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .bg(self.bg)
+                .children(children),
+        )
     }
 
     pub fn view(&self, width: u16) -> String {

@@ -12,7 +12,7 @@ pub fn paint<Msg>(
 ) -> Grid {
     let mut grid = Grid::new(width, height);
     let mut idx = 0;
-    paint_element(&mut grid, root, layout, &mut idx);
+    paint_element(&mut grid, root, layout, &mut idx, width, height);
     grid
 }
 
@@ -21,9 +21,17 @@ fn paint_element<Msg>(
     element: &Element<Msg>,
     layout: &LayoutResult,
     idx: &mut usize,
+    grid_w: u16,
+    grid_h: u16,
 ) {
     let node = &layout.nodes[*idx];
     *idx += 1;
+
+    // Early culling: skip elements entirely outside the visible area
+    if node.x >= grid_w || node.y >= grid_h {
+        skip_children(element, layout, idx);
+        return;
+    }
 
     match element {
         Element::Box(box_el) => {
@@ -44,7 +52,7 @@ fn paint_element<Msg>(
             }
 
             for child in &box_el.children {
-                paint_element(grid, child, layout, idx);
+                paint_element(grid, child, layout, idx, grid_w, grid_h);
             }
         }
         Element::Text(text_el) => {
@@ -65,15 +73,30 @@ fn paint_element<Msg>(
                 if line_idx >= max_h {
                     break;
                 }
+                let row_y = node.y + line_idx as u16;
+                if row_y >= grid_h {
+                    break;
+                }
                 let display_line = match text_el.wrap {
                     TextWrap::Truncate => truncate_str(line, max_w),
                     _ => line.to_string(),
                 };
-                grid.write_str(node.x, node.y + line_idx as u16, &display_line, &style);
+                grid.write_str(node.x, row_y, &display_line, &style);
             }
         }
         Element::Spacer => {}
         Element::_Phantom(_) => {}
+    }
+}
+
+/// Skip over child nodes in the layout index without rendering.
+fn skip_children<Msg>(element: &Element<Msg>, layout: &LayoutResult, idx: &mut usize) {
+    if let Element::Box(box_el) = element {
+        for child in &box_el.children {
+            let _ = &layout.nodes[*idx];
+            *idx += 1;
+            skip_children(child, layout, idx);
+        }
     }
 }
 
