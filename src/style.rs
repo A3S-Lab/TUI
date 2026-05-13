@@ -120,6 +120,21 @@ impl Color {
             other => *other,
         }
     }
+
+    /// Create a grayscale color (0 = black, 255 = white).
+    pub fn gray(level: u8) -> Self {
+        Color::Rgb(level, level, level)
+    }
+
+    /// Create an RGB color.
+    pub fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Color::Rgb(r, g, b)
+    }
+
+    /// Create a color from ANSI 256 palette index.
+    pub fn ansi(n: u8) -> Self {
+        Color::Ansi256(n)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -522,5 +537,22 @@ mod tests {
     fn strip_ansi_removes_codes() {
         assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
         assert_eq!(strip_ansi("plain"), "plain");
+    }
+
+    #[test]
+    fn color_gray() {
+        assert_eq!(Color::gray(128), Color::Rgb(128, 128, 128));
+        assert_eq!(Color::gray(0), Color::Rgb(0, 0, 0));
+        assert_eq!(Color::gray(255), Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn color_rgb_constructor() {
+        assert_eq!(Color::rgb(10, 20, 30), Color::Rgb(10, 20, 30));
+    }
+
+    #[test]
+    fn color_ansi_constructor() {
+        assert_eq!(Color::ansi(196), Color::Ansi256(196));
     }
 }

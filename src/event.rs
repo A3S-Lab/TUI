@@ -24,6 +24,46 @@ pub struct KeyEvent {
     pub modifiers: KeyModifiers,
 }
 
+impl KeyEvent {
+    /// Check if this is a specific character (without modifiers).
+    pub fn is_char(&self, c: char) -> bool {
+        self.code == KeyCode::Char(c) && self.modifiers == KeyModifiers::NONE
+    }
+
+    /// Check if this is Ctrl+<char>.
+    pub fn is_ctrl(&self, c: char) -> bool {
+        self.code == KeyCode::Char(c) && self.modifiers.contains(KeyModifiers::CONTROL)
+    }
+
+    /// Check if this is Alt+<char>.
+    pub fn is_alt(&self, c: char) -> bool {
+        self.code == KeyCode::Char(c) && self.modifiers.contains(KeyModifiers::ALT)
+    }
+
+    /// Check if this matches a specific key code (ignoring modifiers).
+    pub fn is_key(&self, code: KeyCode) -> bool {
+        self.code == code
+    }
+
+    /// Check if Escape was pressed.
+    pub fn is_esc(&self) -> bool {
+        self.code == KeyCode::Esc
+    }
+
+    /// Check if Enter was pressed.
+    pub fn is_enter(&self) -> bool {
+        self.code == KeyCode::Enter
+    }
+
+    /// Check if any character key was pressed (returns the char).
+    pub fn char(&self) -> Option<char> {
+        match self.code {
+            KeyCode::Char(c) => Some(c),
+            _ => None,
+        }
+    }
+}
+
 /// A mouse event with position and button state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MouseEvent {
@@ -98,5 +138,48 @@ fn convert_mouse_kind(kind: CtMouseEventKind) -> MouseEventKind {
         CtMouseEventKind::ScrollUp => MouseEventKind::ScrollUp,
         CtMouseEventKind::ScrollLeft => MouseEventKind::ScrollLeft,
         CtMouseEventKind::ScrollRight => MouseEventKind::ScrollRight,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_char() {
+        let e = KeyEvent { code: KeyCode::Char('q'), modifiers: KeyModifiers::NONE };
+        assert!(e.is_char('q'));
+        assert!(!e.is_char('x'));
+    }
+
+    #[test]
+    fn is_ctrl() {
+        let e = KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL };
+        assert!(e.is_ctrl('c'));
+        assert!(!e.is_ctrl('x'));
+        let plain = KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE };
+        assert!(!plain.is_ctrl('c'));
+    }
+
+    #[test]
+    fn is_alt() {
+        let e = KeyEvent { code: KeyCode::Char('x'), modifiers: KeyModifiers::ALT };
+        assert!(e.is_alt('x'));
+    }
+
+    #[test]
+    fn is_key() {
+        let e = KeyEvent { code: KeyCode::Enter, modifiers: KeyModifiers::NONE };
+        assert!(e.is_key(KeyCode::Enter));
+        assert!(e.is_enter());
+        assert!(!e.is_esc());
+    }
+
+    #[test]
+    fn char_extraction() {
+        let e = KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::NONE };
+        assert_eq!(e.char(), Some('a'));
+        let esc = KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE };
+        assert_eq!(esc.char(), None);
     }
 }
