@@ -51,6 +51,23 @@ pub fn tick<M: Send + 'static>(duration: Duration, m: M) -> Cmd<M> {
     })
 }
 
+/// Alias for [`tick`] — produce a message after a delay.
+pub fn delay<M: Send + 'static>(duration: Duration, m: M) -> Cmd<M> {
+    tick(duration, m)
+}
+
+/// Run an async operation and map its result to a message.
+///
+/// Useful for I/O operations like HTTP requests or file reads.
+pub fn perform<M, F, Fut>(f: F) -> Cmd<M>
+where
+    M: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = M> + Send + 'static,
+{
+    Box::pin(async move { CmdResult::Msg(f().await) })
+}
+
 /// Quit the program.
 pub fn quit<M: Send + 'static>() -> Cmd<M> {
     Box::pin(async move { CmdResult::Quit })

@@ -9,6 +9,8 @@ pub struct TextInput {
     placeholder: String,
     focused: bool,
     char_limit: Option<usize>,
+    mask_char: Option<char>,
+    prefix: String,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +27,8 @@ impl TextInput {
             placeholder: String::new(),
             focused: true,
             char_limit: None,
+            mask_char: None,
+            prefix: String::new(),
         }
     }
 
@@ -35,6 +39,18 @@ impl TextInput {
 
     pub fn with_char_limit(mut self, limit: usize) -> Self {
         self.char_limit = Some(limit);
+        self
+    }
+
+    /// Enable password mode — display a mask character instead of actual input.
+    pub fn with_mask(mut self, ch: char) -> Self {
+        self.mask_char = Some(ch);
+        self
+    }
+
+    /// Set a prefix displayed before the input (e.g., "> " or "$ ").
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
         self
     }
 
@@ -109,12 +125,20 @@ impl TextInput {
     }
 
     pub fn view(&self) -> String {
+        let mut out = self.prefix.clone();
+
         if self.value.is_empty() && !self.placeholder.is_empty() {
-            return format!("\x1b[2m{}\x1b[0m", self.placeholder);
+            out.push_str(&format!("\x1b[2m{}\x1b[0m", self.placeholder));
+            return out;
         }
 
-        let mut out = String::new();
-        for (i, ch) in self.value.chars().enumerate() {
+        let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
+            vec![mask; self.value.len()]
+        } else {
+            self.value.chars().collect()
+        };
+
+        for (i, &ch) in display_chars.iter().enumerate() {
             if i == self.cursor && self.focused {
                 out.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
             } else {
@@ -129,13 +153,20 @@ impl TextInput {
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         if self.value.is_empty() && !self.placeholder.is_empty() {
+            let text = format!("{}{}", self.prefix, self.placeholder);
             return Element::Text(
-                TextElement::new(&self.placeholder).dim().fg(Color::BrightBlack),
+                TextElement::new(text).dim().fg(Color::BrightBlack),
             );
         }
 
-        let mut display = String::new();
-        for (i, ch) in self.value.chars().enumerate() {
+        let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
+            vec![mask; self.value.len()]
+        } else {
+            self.value.chars().collect()
+        };
+
+        let mut display = self.prefix.clone();
+        for (i, &ch) in display_chars.iter().enumerate() {
             if i == self.cursor && self.focused {
                 display.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
             } else {
@@ -229,5 +260,20 @@ mod tests {
         input.handle_key(&key(KeyCode::Home));
         input.handle_key(&key(KeyCode::Delete));
         assert_eq!(input.value(), "bc");
+    }
+
+    #[test]
+    fn mask_mode() {
+        let input = TextInput::new().with_mask('*');
+        assert_eq!(input.mask_char, Some('*'));
+    }
+
+    #[test]
+    fn prefix_in_view() {
+        let mut input = TextInput::new().with_prefix("> ");
+        input.set_value("hello");
+        input.blur();
+        let view = input.view();
+        assert!(view.starts_with("> "));
     }
 }

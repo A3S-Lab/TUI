@@ -17,6 +17,7 @@ use futures_util::StreamExt;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// Builder for configuring and running an element-based TUI program.
@@ -103,10 +104,11 @@ impl ElementProgram {
         Self::run_inner(model, TerminalOptions::default(), 60).await
     }
 
+    #[allow(unused_assignments)]
     async fn run_inner<M: ElementModel>(
         mut model: M,
         options: TerminalOptions,
-        _fps: u32,
+        fps: u32,
     ) -> io::Result<()>
     where
         M::Msg: From<Event>,
@@ -116,6 +118,9 @@ impl ElementProgram {
 
         let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<M::Msg>();
         let quit_flag = Arc::new(AtomicBool::new(false));
+        let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
+        let mut last_render = Instant::now();
+        let mut dirty = false;
 
         if let Some(cmd) = model.init() {
             Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
@@ -148,6 +153,7 @@ impl ElementProgram {
                             if let Some(cmd) = model.update(msg) {
                                 Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                             }
+                            dirty = true;
                         }
                         Some(Err(_)) => break,
                         None => break,
@@ -157,6 +163,7 @@ impl ElementProgram {
                     if let Some(cmd) = model.update(msg) {
                         Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                     }
+                    dirty = true;
                 }
             }
 
@@ -164,11 +171,15 @@ impl ElementProgram {
                 break;
             }
 
-            let (w, h) = Terminal::size().unwrap_or((width, height));
-            let element = model.view();
-            let layout = layout_engine.compute(&element, w, h);
-            let grid = paint::paint(&element, &layout, w, h);
-            diff_renderer.render(&mut terminal, grid)?;
+            if dirty && last_render.elapsed() >= frame_duration {
+                let (w, h) = Terminal::size().unwrap_or((width, height));
+                let element = model.view();
+                let layout = layout_engine.compute(&element, w, h);
+                let grid = paint::paint(&element, &layout, w, h);
+                diff_renderer.render(&mut terminal, grid)?;
+                last_render = Instant::now();
+                dirty = false;
+            }
         }
 
         terminal.exit()?;
