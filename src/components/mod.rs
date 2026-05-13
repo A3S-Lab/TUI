@@ -1,5 +1,6 @@
 pub mod alert;
 pub mod badge;
+pub mod breadcrumb;
 pub mod confirm;
 pub mod divider;
 pub mod list;
@@ -19,6 +20,7 @@ pub mod viewport;
 
 pub use alert::{Alert, AlertKind};
 pub use badge::Badge;
+pub use breadcrumb::Breadcrumb;
 pub use confirm::{Confirm, ConfirmMsg};
 pub use divider::{divider, divider_with};
 pub use list::List;

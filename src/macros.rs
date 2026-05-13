@@ -36,7 +36,7 @@ macro_rules! spacer {
 
 #[cfg(test)]
 mod tests {
-    use crate::element::{Element, FlexDirection, BoxElement, TextElement};
+    use crate::element::{Element, FlexDirection};
 
     #[test]
     fn col_macro_creates_column() {

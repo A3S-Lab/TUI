@@ -154,3 +154,113 @@ fn draw_border(
         grid.set(x + w - 1, row, Cell::styled(vt, &style));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+    use crate::layout_engine::LayoutEngine;
+    use crate::style::Color;
+
+    fn render(el: &Element<()>, w: u16, h: u16) -> Grid {
+        let mut engine = LayoutEngine::new();
+        let layout = engine.compute(el, w, h);
+        paint(el, &layout, w, h)
+    }
+
+    #[test]
+    fn paint_text_at_origin() {
+        let el: Element<()> = Element::Text(TextElement::new("Hi"));
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).ch, 'H');
+        assert_eq!(grid.get(1, 0).ch, 'i');
+        assert_eq!(grid.get(2, 0).ch, ' ');
+    }
+
+    #[test]
+    fn paint_text_with_style() {
+        let el: Element<()> = Element::Text(TextElement::new("X").bold().fg(Color::Red));
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).ch, 'X');
+        assert!(grid.get(0, 0).bold);
+        assert_eq!(grid.get(0, 0).fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn paint_box_background() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .bg(Color::Blue)
+                .width(Dimension::Points(5.0))
+                .height(Dimension::Points(3.0)),
+        );
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).bg, Some(Color::Blue));
+        assert_eq!(grid.get(4, 2).bg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn paint_border_corners() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .border(BorderStyle::Rounded)
+                .width(Dimension::Points(5.0))
+                .height(Dimension::Points(3.0)),
+        );
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).ch, '╭');
+        assert_eq!(grid.get(4, 0).ch, '╮');
+        assert_eq!(grid.get(0, 2).ch, '╰');
+        assert_eq!(grid.get(4, 2).ch, '╯');
+    }
+
+    #[test]
+    fn paint_column_layout() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("A")))
+                .child(Element::Text(TextElement::new("B"))),
+        );
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).ch, 'A');
+        assert_eq!(grid.get(0, 1).ch, 'B');
+    }
+
+    #[test]
+    fn paint_row_layout() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Text(TextElement::new("X")))
+                .child(Element::Text(TextElement::new("Y"))),
+        );
+        let grid = render(&el, 10, 5);
+        assert_eq!(grid.get(0, 0).ch, 'X');
+        assert_eq!(grid.get(1, 0).ch, 'Y');
+    }
+
+    #[test]
+    fn paint_truncate_str() {
+        assert_eq!(truncate_str("hello world", 5), "hello");
+        assert_eq!(truncate_str("hi", 10), "hi");
+        assert_eq!(truncate_str("", 5), "");
+    }
+
+    #[test]
+    fn paint_offscreen_culled() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("visible")))
+                .child(Element::Text(TextElement::new("also visible")))
+                .child(Element::Text(TextElement::new("offscreen"))),
+        );
+        // Only 2 rows tall — third child should be culled
+        let grid = render(&el, 20, 2);
+        assert_eq!(grid.get(0, 0).ch, 'v');
+        assert_eq!(grid.get(0, 1).ch, 'a');
+    }
+}
