@@ -1,3 +1,6 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::style::Color;
+
 pub struct List<T> {
     items: Vec<T>,
     cursor: usize,
@@ -87,6 +90,29 @@ impl<T: std::fmt::Display> List<T> {
             lines.push(render_item(&self.items[i], selected));
         }
         lines.join("\n")
+    }
+
+    /// Render as an Element tree. Each item is displayed with a cursor indicator.
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let end = (self.offset + self.height).min(self.items.len());
+        let children: Vec<Element<Msg>> = (self.offset..end)
+            .map(|i| {
+                let selected = i == self.cursor;
+                let prefix = if selected { "▸ " } else { "  " };
+                let text = format!("{}{}", prefix, self.items[i]);
+                if selected {
+                    Element::Text(TextElement::new(text).bold().fg(Color::Cyan))
+                } else {
+                    Element::Text(TextElement::new(text))
+                }
+            })
+            .collect();
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
     }
 
     fn adjust_offset(&mut self) {

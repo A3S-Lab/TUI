@@ -1,3 +1,6 @@
+//! Streaming markdown renderer for real-time content (e.g., LLM token output).
+
+use crate::element::Element;
 use crate::markdown::Markdown;
 
 pub struct StreamingMarkdown {
@@ -30,6 +33,10 @@ impl StreamingMarkdown {
 
     pub fn view(&self) -> String {
         self.rendered_lines.join("\n")
+    }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        self.md.render_element(&self.buffer)
     }
 
     pub fn line_count(&self) -> usize {

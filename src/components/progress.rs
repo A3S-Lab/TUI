@@ -1,3 +1,4 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{Color, Style};
 
 pub struct Progress {
@@ -50,6 +51,36 @@ impl Progress {
     pub fn show_percentage(mut self, show: bool) -> Self {
         self.show_percentage = show;
         self
+    }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let bar_width = if self.show_percentage {
+            self.width.saturating_sub(5) as usize
+        } else {
+            self.width as usize
+        };
+
+        let filled_count = (self.value * bar_width as f64).round() as usize;
+        let empty_count = bar_width.saturating_sub(filled_count);
+
+        let filled_str = self.filled_char.to_string().repeat(filled_count);
+        let empty_str = self.empty_char.to_string().repeat(empty_count);
+
+        let mut children: Vec<Element<Msg>> = vec![
+            Element::Text(TextElement::new(filled_str).fg(self.filled_color)),
+            Element::Text(TextElement::new(empty_str).fg(self.empty_color)),
+        ];
+
+        if self.show_percentage {
+            let pct = format!(" {:3.0}%", self.value * 100.0);
+            children.push(Element::Text(TextElement::new(pct)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .children(children),
+        )
     }
 
     pub fn view(&self) -> String {

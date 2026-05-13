@@ -1,63 +1,135 @@
+//! Element tree and styling primitives for declarative UI.
+//!
+//! This module provides the core building blocks for constructing terminal UIs:
+//! - [`Element`]: The main UI tree structure (Box, Text, Spacer)
+//! - [`BoxElement`]: Container with Flexbox layout
+//! - [`TextElement`]: Styled text content
+//! - Layout enums: [`FlexDirection`], [`AlignItems`], [`JustifyContent`]
+//! - Styling types: [`Dimension`], [`Edges`], [`BorderStyle`]
+
 use crate::style::Color;
 use std::marker::PhantomData;
 
+/// Flexbox layout direction (row or column).
+///
+/// # Examples
+///
+/// ```
+/// use a3s_tui::element::{BoxElement, FlexDirection};
+///
+/// let row: BoxElement<()> = BoxElement::new().direction(FlexDirection::Row);
+/// let col: BoxElement<()> = BoxElement::new().direction(FlexDirection::Column);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FlexDirection {
+    /// Horizontal layout (left to right).
     #[default]
     Row,
+    /// Vertical layout (top to bottom).
     Column,
 }
 
+/// Cross-axis alignment for flex items.
+///
+/// Controls how items are aligned perpendicular to the flex direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AlignItems {
+    /// Align to the start of the cross axis.
     Start,
+    /// Center items on the cross axis.
     Center,
+    /// Align to the end of the cross axis.
     End,
+    /// Stretch items to fill the cross axis (default).
     #[default]
     Stretch,
 }
 
+/// Main-axis alignment for flex items.
+///
+/// Controls how items are distributed along the flex direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JustifyContent {
+    /// Pack items at the start (default).
     #[default]
     Start,
+    /// Center items.
     Center,
+    /// Pack items at the end.
     End,
+    /// Distribute items with space between them.
     SpaceBetween,
+    /// Distribute items with space around them.
     SpaceAround,
+    /// Distribute items with equal space around them.
     SpaceEvenly,
 }
 
+/// Size dimension (auto, fixed points, or percentage).
+///
+/// # Examples
+///
+/// ```
+/// use a3s_tui::element::Dimension;
+///
+/// let auto = Dimension::Auto;
+/// let fixed = Dimension::Points(100.0);
+/// let percent = Dimension::Percent(50.0);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Dimension {
+    /// Automatically calculate size based on content.
     #[default]
     Auto,
+    /// Fixed size in terminal cells.
     Points(f32),
+    /// Percentage of parent size (0.0 to 100.0).
     Percent(f32),
 }
 
+/// Overflow behavior for content that exceeds container bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Overflow {
+    /// Content overflows visibly (default).
     #[default]
     Visible,
+    /// Clip content at container bounds.
     Hidden,
 }
 
+/// Text wrapping behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextWrap {
+    /// Wrap text at word boundaries.
     Wrap,
+    /// Truncate text with ellipsis.
     Truncate,
+    /// No wrapping (overflow).
     NoWrap,
 }
 
+/// Border style for box elements.
+///
+/// # Examples
+///
+/// ```
+/// use a3s_tui::element::{BoxElement, BorderStyle};
+///
+/// let box_elem: BoxElement<()> = BoxElement::new().border(BorderStyle::Rounded);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorderStyle {
+    /// Single-line border (─│┌┐└┘).
     Single,
+    /// Double-line border (═║╔╗╚╝).
     Double,
+    /// Rounded corners (─│╭╮╰╯).
     Rounded,
+    /// Thick border (━┃┏┓┗┛).
     Thick,
 }
 
+/// Spacing values for padding and margin (top, right, bottom, left).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Edges {
     pub top: u16,
@@ -67,14 +139,17 @@ pub struct Edges {
 }
 
 impl Edges {
+    /// Set all four edges to the same value.
     pub fn all(v: u16) -> Self {
         Self { top: v, right: v, bottom: v, left: v }
     }
+    /// Set horizontal (x) and vertical (y) edges separately.
     pub fn xy(x: u16, y: u16) -> Self {
         Self { top: y, right: x, bottom: y, left: x }
     }
 }
 
+/// Text styling properties (color, weight, decoration).
 #[derive(Debug, Clone, Default)]
 pub struct TextStyle {
     pub fg: Option<Color>,
@@ -86,6 +161,7 @@ pub struct TextStyle {
     pub strikethrough: bool,
 }
 
+/// Flexbox container style properties.
 #[derive(Debug, Clone, Default)]
 pub struct BoxStyle {
     pub flex_direction: FlexDirection,
@@ -110,19 +186,50 @@ pub struct BoxStyle {
 }
 
 
+/// A node in the UI element tree.
+///
+/// Elements are the building blocks of the declarative UI. Use `col![]` and `row![]`
+/// macros for concise construction.
 pub enum Element<Msg> {
+    /// A container with Flexbox layout.
     Box(BoxElement<Msg>),
+    /// Styled text content.
     Text(TextElement),
+    /// Flexible space that expands to fill available room.
     Spacer,
     _Phantom(PhantomData<Msg>),
 }
 
+/// A Flexbox container element that holds child elements.
+///
+/// Use the builder pattern to configure layout and styling:
+///
+/// ```
+/// use a3s_tui::element::{BoxElement, FlexDirection, BorderStyle, Dimension};
+///
+/// let container = BoxElement::<()>::new()
+///     .direction(FlexDirection::Column)
+///     .padding(1)
+///     .gap(1)
+///     .border(BorderStyle::Rounded)
+///     .width(Dimension::Percent(100.0));
+/// ```
 pub struct BoxElement<Msg> {
     pub children: Vec<Element<Msg>>,
     pub style: BoxStyle,
     _phantom: PhantomData<Msg>,
 }
 
+/// A styled text element.
+///
+/// ```
+/// use a3s_tui::element::TextElement;
+/// use a3s_tui::style::Color;
+///
+/// let text = TextElement::new("Hello, world!")
+///     .bold()
+///     .fg(Color::Cyan);
+/// ```
 pub struct TextElement {
     pub content: String,
     pub style: TextStyle,
@@ -287,5 +394,79 @@ impl TextElement {
     pub fn wrap(mut self, w: TextWrap) -> Self {
         self.wrap = w;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edges_all() {
+        let e = Edges::all(5);
+        assert_eq!(e.top, 5);
+        assert_eq!(e.right, 5);
+        assert_eq!(e.bottom, 5);
+        assert_eq!(e.left, 5);
+    }
+
+    #[test]
+    fn edges_xy() {
+        let e = Edges::xy(3, 7);
+        assert_eq!(e.left, 3);
+        assert_eq!(e.right, 3);
+        assert_eq!(e.top, 7);
+        assert_eq!(e.bottom, 7);
+    }
+
+    #[test]
+    fn text_element_builder() {
+        let t = TextElement::new("hello")
+            .bold()
+            .italic()
+            .fg(Color::Red)
+            .bg(Color::Blue);
+        assert_eq!(t.content, "hello");
+        assert!(t.style.bold);
+        assert!(t.style.italic);
+        assert_eq!(t.style.fg, Some(Color::Red));
+        assert_eq!(t.style.bg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn box_element_builder() {
+        let b = BoxElement::<()>::new()
+            .direction(FlexDirection::Column)
+            .padding(2)
+            .gap(1)
+            .border(BorderStyle::Rounded)
+            .bg(Color::Black);
+        assert_eq!(b.style.flex_direction, FlexDirection::Column);
+        assert_eq!(b.style.padding, Edges::all(2));
+        assert_eq!(b.style.gap, 1);
+        assert_eq!(b.style.border, Some(BorderStyle::Rounded));
+        assert_eq!(b.style.bg, Some(Color::Black));
+    }
+
+    #[test]
+    fn box_element_children() {
+        let b = BoxElement::<()>::new()
+            .child(Element::Text(TextElement::new("a")))
+            .child(Element::Text(TextElement::new("b")))
+            .child(Element::Spacer);
+        assert_eq!(b.children.len(), 3);
+    }
+
+    #[test]
+    fn box_element_flex_properties() {
+        let b = BoxElement::<()>::new()
+            .flex_grow(2.0)
+            .flex_shrink(0.5)
+            .width(Dimension::Points(100.0))
+            .height(Dimension::Percent(50.0));
+        assert_eq!(b.style.flex_grow, 2.0);
+        assert_eq!(b.style.flex_shrink, 0.5);
+        assert_eq!(b.style.width, Dimension::Points(100.0));
+        assert_eq!(b.style.height, Dimension::Percent(50.0));
     }
 }

@@ -1,3 +1,5 @@
+//! Color, style, and text formatting utilities.
+
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

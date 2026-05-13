@@ -1,4 +1,6 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
+use crate::style::Color;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub struct Textarea {
@@ -290,5 +292,141 @@ impl Textarea {
 impl Default for Textarea {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Textarea {
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
+            return Element::Text(
+                TextElement::new(&self.placeholder).dim().fg(Color::BrightBlack),
+            );
+        }
+
+        let h = self.height as usize;
+        let end = (self.offset + h).min(self.lines.len());
+        let visible = &self.lines[self.offset..end];
+
+        let mut children: Vec<Element<Msg>> = Vec::new();
+        for (i, line) in visible.iter().enumerate() {
+            let row = self.offset + i;
+            if row == self.cursor_row && self.focused {
+                children.push(Element::Text(TextElement::new(self.render_line_with_cursor(line))));
+            } else {
+                children.push(Element::Text(TextElement::new(line.as_str())));
+            }
+        }
+
+        for _ in children.len()..h {
+            children.push(Element::Text(TextElement::new("~").dim().fg(Color::BrightBlack)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent { code, modifiers: KeyModifiers::NONE }
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent { code, modifiers: KeyModifiers::CONTROL }
+    }
+
+    #[test]
+    fn typing_text() {
+        let mut ta = Textarea::new();
+        ta.handle_key(&key(KeyCode::Char('h')));
+        ta.handle_key(&key(KeyCode::Char('i')));
+        assert_eq!(ta.value(), "hi");
+    }
+
+    #[test]
+    fn newline_creates_new_line() {
+        let mut ta = Textarea::new();
+        ta.handle_key(&key(KeyCode::Char('a')));
+        ta.handle_key(&key(KeyCode::Enter));
+        ta.handle_key(&key(KeyCode::Char('b')));
+        assert_eq!(ta.value(), "a\nb");
+    }
+
+    #[test]
+    fn backspace_joins_lines() {
+        let mut ta = Textarea::new();
+        ta.set_value("ab\ncd");
+        ta.cursor_row = 1;
+        ta.cursor_col = 0;
+        ta.handle_key(&key(KeyCode::Backspace));
+        assert_eq!(ta.value(), "abcd");
+    }
+
+    #[test]
+    fn cursor_movement() {
+        let mut ta = Textarea::new();
+        ta.set_value("hello\nworld");
+        ta.cursor_row = 1;
+        ta.cursor_col = 5;
+        ta.handle_key(&key(KeyCode::Up));
+        assert_eq!(ta.cursor_row, 0);
+        ta.handle_key(&key(KeyCode::Home));
+        assert_eq!(ta.cursor_col, 0);
+        ta.handle_key(&key(KeyCode::End));
+        assert_eq!(ta.cursor_col, 5);
+    }
+
+    #[test]
+    fn ctrl_a_and_e() {
+        let mut ta = Textarea::new();
+        ta.set_value("test");
+        ta.cursor_col = 2;
+        ta.handle_key(&ctrl(KeyCode::Char('a')));
+        assert_eq!(ta.cursor_col, 0);
+        ta.handle_key(&ctrl(KeyCode::Char('e')));
+        assert_eq!(ta.cursor_col, 4);
+    }
+
+    #[test]
+    fn ctrl_k_kills_line() {
+        let mut ta = Textarea::new();
+        ta.set_value("hello world");
+        ta.cursor_col = 5;
+        ta.handle_key(&ctrl(KeyCode::Char('k')));
+        assert_eq!(ta.value(), "hello");
+    }
+
+    #[test]
+    fn char_limit() {
+        let mut ta = Textarea::new().with_char_limit(3);
+        ta.handle_key(&key(KeyCode::Char('a')));
+        ta.handle_key(&key(KeyCode::Char('b')));
+        ta.handle_key(&key(KeyCode::Char('c')));
+        ta.handle_key(&key(KeyCode::Char('d')));
+        assert_eq!(ta.value(), "abc");
+    }
+
+    #[test]
+    fn clear_resets() {
+        let mut ta = Textarea::new();
+        ta.set_value("some\ntext");
+        ta.clear();
+        assert_eq!(ta.value(), "");
+        assert_eq!(ta.cursor_row, 0);
+        assert_eq!(ta.cursor_col, 0);
+    }
+
+    #[test]
+    fn submit_on_enter() {
+        let mut ta = Textarea::new().with_submit_on_enter(true);
+        ta.handle_key(&key(KeyCode::Char('x')));
+        let msg = ta.handle_key(&key(KeyCode::Enter));
+        assert!(matches!(msg, Some(TextareaMsg::Submit(s)) if s == "x"));
     }
 }

@@ -1,3 +1,4 @@
+use crate::event::{MouseEvent, MouseEventKind};
 use crate::style::visible_len;
 
 pub struct Viewport {
@@ -111,6 +112,19 @@ impl Viewport {
         self.offset >= self.max_offset()
     }
 
+    /// Handle mouse scroll events.
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.update(ViewportMsg::ScrollUp(3));
+            }
+            MouseEventKind::ScrollDown => {
+                self.update(ViewportMsg::ScrollDown(3));
+            }
+            _ => {}
+        }
+    }
+
     pub fn view(&self) -> String {
         let h = self.height as usize;
         let end = (self.offset + h).min(self.lines.len());
@@ -200,4 +214,84 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_content_and_view() {
+        let mut vp = Viewport::new(80, 3);
+        vp.set_content("line1\nline2\nline3");
+        let view = vp.view();
+        assert!(view.contains("line1"));
+        assert!(view.contains("line3"));
+    }
+
+    #[test]
+    fn scroll_down() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("a\nb\nc\nd\ne");
+        assert_eq!(vp.total_lines(), 5);
+        vp.update(ViewportMsg::ScrollDown(2));
+        let view = vp.view();
+        assert!(view.contains("c"));
+    }
+
+    #[test]
+    fn scroll_up() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("a\nb\nc\nd");
+        vp.update(ViewportMsg::ScrollDown(3));
+        vp.update(ViewportMsg::ScrollUp(1));
+        let view = vp.view();
+        assert!(view.contains("c"));
+    }
+
+    #[test]
+    fn auto_scroll_to_bottom() {
+        let mut vp = Viewport::new(80, 2);
+        vp.set_content("a\nb\nc\nd\ne");
+        assert!(vp.at_bottom());
+    }
+
+    #[test]
+    fn page_up_down() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("1\n2\n3\n4\n5\n6\n7\n8");
+        vp.update(ViewportMsg::PageDown);
+        vp.update(ViewportMsg::PageDown);
+        vp.update(ViewportMsg::PageUp);
+        let view = vp.view();
+        assert!(view.contains("3"));
+    }
+
+    #[test]
+    fn top_and_bottom() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("a\nb\nc\nd\ne");
+        vp.update(ViewportMsg::Bottom);
+        assert!(vp.at_bottom());
+        vp.update(ViewportMsg::Top);
+        assert_eq!(vp.scroll_percent(), 0);
+    }
+
+    #[test]
+    fn append_content() {
+        let mut vp = Viewport::new(80, 3);
+        vp.set_content("first");
+        vp.append("\nsecond");
+        assert!(vp.total_lines() >= 2);
+        let view = vp.view();
+        assert!(view.contains("second"));
+    }
+
+    #[test]
+    fn clear_resets() {
+        let mut vp = Viewport::new(80, 3);
+        vp.set_content("hello\nworld");
+        vp.clear();
+        assert_eq!(vp.total_lines(), 0);
+    }
 }

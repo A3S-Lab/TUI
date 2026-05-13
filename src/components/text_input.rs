@@ -1,4 +1,6 @@
+use crate::element::{Element, TextElement};
 use crate::event::KeyEvent;
+use crate::style::Color;
 use crossterm::event::KeyCode;
 
 pub struct TextInput {
@@ -124,10 +126,108 @@ impl TextInput {
         }
         out
     }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        if self.value.is_empty() && !self.placeholder.is_empty() {
+            return Element::Text(
+                TextElement::new(&self.placeholder).dim().fg(Color::BrightBlack),
+            );
+        }
+
+        let mut display = String::new();
+        for (i, ch) in self.value.chars().enumerate() {
+            if i == self.cursor && self.focused {
+                display.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
+            } else {
+                display.push(ch);
+            }
+        }
+        if self.cursor == self.value.len() && self.focused {
+            display.push_str("\x1b[7m \x1b[0m");
+        }
+
+        Element::Text(TextElement::new(display))
+    }
 }
 
 impl Default for TextInput {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent { code, modifiers: KeyModifiers::NONE }
+    }
+
+    #[test]
+    fn typing_characters() {
+        let mut input = TextInput::new();
+        input.handle_key(&key(KeyCode::Char('h')));
+        input.handle_key(&key(KeyCode::Char('i')));
+        assert_eq!(input.value(), "hi");
+    }
+
+    #[test]
+    fn backspace_deletes() {
+        let mut input = TextInput::new();
+        input.handle_key(&key(KeyCode::Char('a')));
+        input.handle_key(&key(KeyCode::Char('b')));
+        input.handle_key(&key(KeyCode::Backspace));
+        assert_eq!(input.value(), "a");
+    }
+
+    #[test]
+    fn cursor_movement() {
+        let mut input = TextInput::new();
+        input.set_value("hello");
+        input.handle_key(&key(KeyCode::Home));
+        assert_eq!(input.cursor, 0);
+        input.handle_key(&key(KeyCode::End));
+        assert_eq!(input.cursor, 5);
+        input.handle_key(&key(KeyCode::Left));
+        assert_eq!(input.cursor, 4);
+        input.handle_key(&key(KeyCode::Right));
+        assert_eq!(input.cursor, 5);
+    }
+
+    #[test]
+    fn char_limit() {
+        let mut input = TextInput::new().with_char_limit(3);
+        input.handle_key(&key(KeyCode::Char('a')));
+        input.handle_key(&key(KeyCode::Char('b')));
+        input.handle_key(&key(KeyCode::Char('c')));
+        input.handle_key(&key(KeyCode::Char('d')));
+        assert_eq!(input.value(), "abc");
+    }
+
+    #[test]
+    fn submit_returns_value() {
+        let mut input = TextInput::new();
+        input.set_value("test");
+        let msg = input.handle_key(&key(KeyCode::Enter));
+        assert!(matches!(msg, Some(TextInputMsg::Submit(s)) if s == "test"));
+    }
+
+    #[test]
+    fn blur_ignores_input() {
+        let mut input = TextInput::new();
+        input.blur();
+        input.handle_key(&key(KeyCode::Char('x')));
+        assert_eq!(input.value(), "");
+    }
+
+    #[test]
+    fn delete_key() {
+        let mut input = TextInput::new();
+        input.set_value("abc");
+        input.handle_key(&key(KeyCode::Home));
+        input.handle_key(&key(KeyCode::Delete));
+        assert_eq!(input.value(), "bc");
     }
 }

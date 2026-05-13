@@ -1,12 +1,15 @@
 use std::time::Duration;
 
 use crate::cmd::{self, Cmd};
+use crate::element::{Element, TextElement};
+use crate::style::Color;
 
 pub struct Spinner {
     frames: Vec<&'static str>,
     current: usize,
     title: String,
     active: bool,
+    color: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +25,7 @@ impl Spinner {
             current: 0,
             title: String::new(),
             active: true,
+            color: Color::Cyan,
         }
     }
 
@@ -32,6 +36,11 @@ impl Spinner {
 
     pub fn with_frames(mut self, frames: Vec<&'static str>) -> Self {
         self.frames = frames;
+        self
+    }
+
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
         self
     }
 
@@ -51,6 +60,19 @@ impl Spinner {
 
     pub fn stop(&mut self) {
         self.active = false;
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        if self.active {
+            let text = format!("{} {}", self.frames[self.current], self.title);
+            Element::Text(TextElement::new(text).fg(self.color))
+        } else {
+            Element::Text(TextElement::new(&self.title))
+        }
     }
 
     pub fn view(&self) -> String {

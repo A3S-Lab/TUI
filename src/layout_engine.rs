@@ -1,3 +1,7 @@
+//! Flexbox layout engine powered by Taffy.
+//!
+//! Converts the Element tree into absolute positions using CSS Flexbox rules.
+
 use crate::element::{
     AlignItems as ElAlignItems, BoxStyle, Dimension, Element, FlexDirection as ElFlexDir,
     JustifyContent as ElJustify, Overflow as ElOverflow, TextWrap,
@@ -259,4 +263,103 @@ fn count_wrapped_lines(text: &str, width: usize) -> usize {
         }
     }
     total.max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+
+    #[test]
+    fn layout_single_text() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Text(TextElement::new("Hello"));
+        let result = engine.compute(&el, 80, 24);
+        assert!(!result.nodes.is_empty());
+        assert_eq!(result.nodes[0].width, 5);
+        assert_eq!(result.nodes[0].height, 1);
+    }
+
+    #[test]
+    fn layout_column_stacks_vertically() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("Line 1")))
+                .child(Element::Text(TextElement::new("Line 2"))),
+        );
+        let result = engine.compute(&el, 80, 24);
+        assert!(result.nodes.len() >= 3);
+        let child1 = &result.nodes[1];
+        let child2 = &result.nodes[2];
+        assert!(child2.y > child1.y);
+    }
+
+    #[test]
+    fn layout_row_places_side_by_side() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Text(TextElement::new("Left")))
+                .child(Element::Text(TextElement::new("Right"))),
+        );
+        let result = engine.compute(&el, 80, 24);
+        assert!(result.nodes.len() >= 3);
+        let child1 = &result.nodes[1];
+        let child2 = &result.nodes[2];
+        assert!(child2.x > child1.x);
+        assert_eq!(child1.y, child2.y);
+    }
+
+    #[test]
+    fn layout_spacer_expands() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .width(Dimension::Points(80.0))
+                .child(Element::Text(TextElement::new("L")))
+                .child(Element::Spacer)
+                .child(Element::Text(TextElement::new("R"))),
+        );
+        let result = engine.compute(&el, 80, 24);
+        assert!(result.nodes.len() >= 4);
+        let left = &result.nodes[1];
+        let right = &result.nodes[3];
+        assert_eq!(left.x, 0);
+        assert_eq!(right.x, 79);
+    }
+
+    #[test]
+    fn layout_padding_offsets_children() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .padding(2)
+                .child(Element::Text(TextElement::new("Hi"))),
+        );
+        let result = engine.compute(&el, 80, 24);
+        let child = &result.nodes[1];
+        assert_eq!(child.x, 2);
+        assert_eq!(child.y, 2);
+    }
+
+    #[test]
+    fn layout_gap_adds_spacing() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .gap(1)
+                .child(Element::Text(TextElement::new("A")))
+                .child(Element::Text(TextElement::new("B"))),
+        );
+        let result = engine.compute(&el, 80, 24);
+        let child1 = &result.nodes[1];
+        let child2 = &result.nodes[2];
+        assert_eq!(child2.y - child1.y, 2);
+    }
 }

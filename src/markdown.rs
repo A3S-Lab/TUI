@@ -1,3 +1,7 @@
+//! Markdown-to-terminal renderer with syntax highlighting.
+//!
+//! Supports CommonMark via comrak and code highlighting via syntect.
+
 use comrak::{parse_document, Arena, Options};
 use comrak::nodes::{AstNode, NodeValue};
 use syntect::highlighting::{ThemeSet, Style as SynStyle};
@@ -298,4 +302,23 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+// Element-based rendering for the new Ink-like architecture
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+
+impl Markdown {
+    pub fn render_element<Msg>(&self, input: &str) -> Element<Msg> {
+        let rendered = self.render(input);
+        let children: Vec<Element<Msg>> = rendered
+            .lines()
+            .map(|line| Element::Text(TextElement::new(line)))
+            .collect();
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
 }

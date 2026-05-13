@@ -1,3 +1,5 @@
+//! Paints an Element tree onto a cell grid using computed layout positions.
+
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::LayoutResult;

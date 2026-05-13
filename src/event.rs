@@ -1,20 +1,30 @@
+//! Terminal event types (keyboard, mouse, resize, focus).
+
 use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind as CtMouseEventKind};
 
+/// A terminal event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// Keyboard input.
     Key(KeyEvent),
+    /// Mouse input.
     Mouse(MouseEvent),
+    /// Terminal window resized.
     Resize { width: u16, height: u16 },
+    /// Terminal gained focus.
     FocusGained,
+    /// Terminal lost focus.
     FocusLost,
 }
 
+/// A keyboard event with key code and modifiers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
 }
 
+/// A mouse event with position and button state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MouseEvent {
     pub kind: MouseEventKind,
@@ -23,6 +33,7 @@ pub struct MouseEvent {
     pub modifiers: KeyModifiers,
 }
 
+/// The type of mouse action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MouseEventKind {
     Down(MouseButton),

@@ -1,5 +1,9 @@
+//! Focus management for navigating between interactive components.
+
+/// Unique identifier for a focusable element.
 pub type FocusId = u32;
 
+/// Manages focus state across multiple focusable elements.
 pub struct FocusManager {
     focusable: Vec<FocusId>,
     current: Option<usize>,
@@ -82,5 +86,93 @@ impl FocusManager {
 impl Default for FocusManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_sets_initial_focus() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        assert_eq!(fm.current(), Some(1));
+        assert!(fm.is_focused(1));
+    }
+
+    #[test]
+    fn focus_next_cycles() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        assert_eq!(fm.current(), Some(1));
+        fm.focus_next();
+        assert_eq!(fm.current(), Some(2));
+        fm.focus_next();
+        assert_eq!(fm.current(), Some(3));
+        fm.focus_next();
+        assert_eq!(fm.current(), Some(1));
+    }
+
+    #[test]
+    fn focus_prev_cycles() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.focus_prev();
+        assert_eq!(fm.current(), Some(3));
+        fm.focus_prev();
+        assert_eq!(fm.current(), Some(2));
+    }
+
+    #[test]
+    fn unregister_adjusts_focus() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.focus_next();
+        fm.focus_next();
+        assert_eq!(fm.current(), Some(3));
+        fm.unregister(3);
+        assert_eq!(fm.current(), Some(2));
+    }
+
+    #[test]
+    fn unregister_all_clears_focus() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.unregister(1);
+        assert_eq!(fm.current(), None);
+    }
+
+    #[test]
+    fn focus_specific_id() {
+        let mut fm = FocusManager::new();
+        fm.register(10);
+        fm.register(20);
+        fm.register(30);
+        fm.focus(20);
+        assert!(fm.is_focused(20));
+        assert!(!fm.is_focused(10));
+    }
+
+    #[test]
+    fn clear_removes_all() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.clear();
+        assert_eq!(fm.current(), None);
+    }
+
+    #[test]
+    fn focus_next_on_empty_is_noop() {
+        let mut fm = FocusManager::new();
+        fm.focus_next();
+        assert_eq!(fm.current(), None);
     }
 }

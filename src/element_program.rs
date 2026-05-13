@@ -1,3 +1,9 @@
+//! Element-based program runner with Flexbox layout and incremental rendering.
+//!
+//! This module provides [`ElementProgramBuilder`] for running applications that
+//! use the [`ElementModel`] trait with automatic layout computation and diff-based
+//! terminal rendering.
+
 use crate::cmd::{Cmd, CmdResult};
 use crate::diff::DiffRenderer;
 use crate::event::Event;
@@ -13,6 +19,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Builder for configuring and running an element-based TUI program.
+///
+/// ```rust,no_run
+/// # use a3s_tui::{ElementProgramBuilder, ElementModel, Element, Event, cmd::Cmd};
+/// # struct App;
+/// # enum Msg {}
+/// # impl From<Event> for Msg { fn from(_: Event) -> Self { todo!() } }
+/// # impl ElementModel for App {
+/// #     type Msg = Msg;
+/// #     fn update(&mut self, _: Msg) -> Option<Cmd<Msg>> { None }
+/// #     fn view(&self) -> Element<Msg> { todo!() }
+/// # }
+/// # async fn run() -> std::io::Result<()> {
+/// ElementProgramBuilder::new(App)
+///     .with_alt_screen()
+///     .with_fps(30)
+///     .run()
+///     .await
+/// # }
+/// ```
 pub struct ElementProgramBuilder<M: ElementModel> {
     model: M,
     alt_screen: bool,

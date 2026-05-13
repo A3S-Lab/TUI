@@ -1,5 +1,11 @@
+//! Cell grid for terminal rendering.
+//!
+//! The grid is a 2D array of [`Cell`]s representing the terminal screen buffer.
+//! Each cell holds a character and its styling attributes.
+
 use crate::style::Color;
 
+/// A single terminal cell with character and style.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cell {
     pub ch: char,
@@ -154,4 +160,105 @@ pub struct CellChange {
     pub x: u16,
     pub y: u16,
     pub cell: Cell,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_new_creates_empty_cells() {
+        let grid = Grid::new(10, 5);
+        assert_eq!(grid.width, 10);
+        assert_eq!(grid.height, 5);
+        assert_eq!(grid.cells.len(), 5);
+        assert_eq!(grid.cells[0].len(), 10);
+        assert_eq!(grid.get(0, 0).ch, ' ');
+    }
+
+    #[test]
+    fn grid_set_and_get() {
+        let mut grid = Grid::new(10, 5);
+        let cell = Cell::with_char('X');
+        grid.set(3, 2, cell.clone());
+        assert_eq!(grid.get(3, 2).ch, 'X');
+    }
+
+    #[test]
+    fn grid_set_out_of_bounds_is_noop() {
+        let mut grid = Grid::new(10, 5);
+        grid.set(15, 2, Cell::with_char('X'));
+        grid.set(3, 10, Cell::with_char('Y'));
+    }
+
+    #[test]
+    fn grid_write_str() {
+        let mut grid = Grid::new(20, 5);
+        let style = CellStyle::default();
+        grid.write_str(2, 1, "hello", &style);
+        assert_eq!(grid.get(2, 1).ch, 'h');
+        assert_eq!(grid.get(3, 1).ch, 'e');
+        assert_eq!(grid.get(4, 1).ch, 'l');
+        assert_eq!(grid.get(5, 1).ch, 'l');
+        assert_eq!(grid.get(6, 1).ch, 'o');
+    }
+
+    #[test]
+    fn grid_write_str_clips_at_boundary() {
+        let mut grid = Grid::new(5, 1);
+        let style = CellStyle::default();
+        grid.write_str(3, 0, "hello", &style);
+        assert_eq!(grid.get(3, 0).ch, 'h');
+        assert_eq!(grid.get(4, 0).ch, 'e');
+    }
+
+    #[test]
+    fn grid_fill_bg() {
+        let mut grid = Grid::new(10, 5);
+        grid.fill_bg(1, 1, 3, 2, Color::Red);
+        assert_eq!(grid.get(1, 1).bg, Some(Color::Red));
+        assert_eq!(grid.get(3, 2).bg, Some(Color::Red));
+        assert_eq!(grid.get(0, 0).bg, None);
+    }
+
+    #[test]
+    fn grid_diff_detects_changes() {
+        let grid1 = Grid::new(5, 3);
+        let mut grid2 = Grid::new(5, 3);
+        grid2.set(2, 1, Cell::with_char('A'));
+
+        let changes = grid1.diff(&grid2);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].x, 2);
+        assert_eq!(changes[0].y, 1);
+        assert_eq!(changes[0].cell.ch, 'A');
+    }
+
+    #[test]
+    fn grid_diff_no_changes() {
+        let grid1 = Grid::new(5, 3);
+        let grid2 = Grid::new(5, 3);
+        let changes = grid1.diff(&grid2);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn cell_ansi_plain() {
+        let cell = Cell::with_char('A');
+        assert_eq!(cell.to_ansi(), "A");
+    }
+
+    #[test]
+    fn cell_ansi_styled() {
+        let cell = Cell {
+            ch: 'B',
+            bold: true,
+            fg: Some(Color::Red),
+            ..Default::default()
+        };
+        let ansi = cell.to_ansi();
+        assert!(ansi.contains("\x1b["));
+        assert!(ansi.contains("1"));
+        assert!(ansi.contains('B'));
+    }
 }

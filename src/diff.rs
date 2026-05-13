@@ -1,3 +1,5 @@
+//! Incremental diff renderer — only redraws cells that changed between frames.
+
 use crate::grid::{CellChange, Grid};
 use crate::terminal::Terminal;
 use crossterm::{cursor, queue};
