@@ -200,6 +200,52 @@ pub enum Element<Msg> {
     _Phantom(PhantomData<Msg>),
 }
 
+impl<Msg> Element<Msg> {
+    /// Create a text element.
+    pub fn text(content: impl Into<String>) -> Self {
+        Element::Text(TextElement::new(content))
+    }
+
+    /// Check if this is a Box element.
+    pub fn is_box(&self) -> bool {
+        matches!(self, Element::Box(_))
+    }
+
+    /// Check if this is a Text element.
+    pub fn is_text(&self) -> bool {
+        matches!(self, Element::Text(_))
+    }
+
+    /// Check if this is a Spacer.
+    pub fn is_spacer(&self) -> bool {
+        matches!(self, Element::Spacer)
+    }
+
+    /// Get the text content if this is a Text element.
+    pub fn text_content(&self) -> Option<&str> {
+        match self {
+            Element::Text(t) => Some(&t.content),
+            _ => None,
+        }
+    }
+
+    /// Get the children if this is a Box element.
+    pub fn children(&self) -> Option<&[Element<Msg>]> {
+        match self {
+            Element::Box(b) => Some(&b.children),
+            _ => None,
+        }
+    }
+
+    /// Count total children (0 for non-Box elements).
+    pub fn child_count(&self) -> usize {
+        match self {
+            Element::Box(b) => b.children.len(),
+            _ => 0,
+        }
+    }
+}
+
 /// A Flexbox container element that holds child elements.
 ///
 /// Use the builder pattern to configure layout and styling:

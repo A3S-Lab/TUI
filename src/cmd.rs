@@ -77,3 +77,70 @@ pub fn quit<M: Send + 'static>() -> Cmd<M> {
 pub fn none<M: Send + 'static>() -> Cmd<M> {
     Box::pin(async move { CmdResult::None })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn msg_produces_message() {
+        let cmd = msg::<String>("hello".to_string());
+        match cmd.await {
+            CmdResult::Msg(m) => assert_eq!(m, "hello"),
+            _ => panic!("expected Msg"),
+        }
+    }
+
+    #[tokio::test]
+    async fn quit_produces_quit() {
+        let cmd = quit::<()>();
+        assert!(matches!(cmd.await, CmdResult::Quit));
+    }
+
+    #[tokio::test]
+    async fn none_produces_none() {
+        let cmd = none::<()>();
+        assert!(matches!(cmd.await, CmdResult::None));
+    }
+
+    #[tokio::test]
+    async fn tick_delays_then_produces() {
+        let start = std::time::Instant::now();
+        let cmd = tick(Duration::from_millis(10), 42u32);
+        match cmd.await {
+            CmdResult::Msg(m) => {
+                assert_eq!(m, 42);
+                assert!(start.elapsed() >= Duration::from_millis(10));
+            }
+            _ => panic!("expected Msg"),
+        }
+    }
+
+    #[tokio::test]
+    async fn perform_runs_async() {
+        let cmd = perform(|| async { 1 + 2 });
+        match cmd.await {
+            CmdResult::Msg(m) => assert_eq!(m, 3),
+            _ => panic!("expected Msg"),
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_produces_batch() {
+        let cmds = vec![msg(1), msg(2)];
+        let cmd = batch(cmds);
+        match cmd.await {
+            CmdResult::Batch(b) => assert_eq!(b.len(), 2),
+            _ => panic!("expected Batch"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cmd_from_closure() {
+        let c = cmd(|| async { "result".to_string() });
+        match c.await {
+            CmdResult::Msg(m) => assert_eq!(m, "result"),
+            _ => panic!("expected Msg"),
+        }
+    }
+}

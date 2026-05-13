@@ -110,3 +110,55 @@ impl Default for StatusBar {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::strip_ansi;
+
+    #[test]
+    fn empty_status_bar() {
+        let sb = StatusBar::new();
+        let view = sb.view(40);
+        let plain = strip_ansi(&view);
+        assert_eq!(plain.len(), 40);
+    }
+
+    #[test]
+    fn left_content() {
+        let sb = StatusBar::new().left("hello");
+        let view = sb.view(40);
+        let plain = strip_ansi(&view);
+        assert!(plain.starts_with("hello"));
+    }
+
+    #[test]
+    fn right_content() {
+        let sb = StatusBar::new().right("end");
+        let view = sb.view(40);
+        let plain = strip_ansi(&view);
+        assert!(plain.ends_with("end"));
+    }
+
+    #[test]
+    fn left_and_right() {
+        let sb = StatusBar::new().left("L").right("R");
+        let view = sb.view(20);
+        let plain = strip_ansi(&view);
+        assert!(plain.starts_with('L'));
+        assert!(plain.ends_with('R'));
+        assert_eq!(plain.len(), 20);
+    }
+
+    #[test]
+    fn element_produces_row() {
+        let sb = StatusBar::new().left("a").right("b");
+        let el: Element<()> = sb.element();
+        match el {
+            Element::Box(b) => {
+                assert_eq!(b.style.flex_direction, crate::element::FlexDirection::Row);
+            }
+            _ => panic!("expected Box"),
+        }
+    }
+}

@@ -52,20 +52,77 @@ impl Cell {
     }
 
     pub fn to_ansi(&self) -> String {
-        let mut codes = Vec::new();
-        if self.bold { codes.push("1".to_string()); }
-        if self.dim { codes.push("2".to_string()); }
-        if self.italic { codes.push("3".to_string()); }
-        if self.underline { codes.push("4".to_string()); }
-        if self.strikethrough { codes.push("9".to_string()); }
-        if let Some(ref c) = self.fg { codes.push(c.fg_ansi()); }
-        if let Some(ref c) = self.bg { codes.push(c.bg_ansi()); }
+        use std::fmt::Write;
 
-        if codes.is_empty() {
-            self.ch.to_string()
-        } else {
-            format!("\x1b[{}m{}\x1b[0m", codes.join(";"), self.ch)
+        let has_style = self.bold || self.dim || self.italic || self.underline
+            || self.strikethrough || self.fg.is_some() || self.bg.is_some();
+
+        if !has_style {
+            return self.ch.to_string();
         }
+
+        let mut out = String::with_capacity(24);
+        out.push_str("\x1b[");
+        let mut first = true;
+
+        macro_rules! push_code {
+            ($code:expr) => {
+                if !first { out.push(';'); }
+                let _ = write!(out, "{}", $code);
+                #[allow(unused_assignments)]
+                { first = false; }
+            };
+        }
+
+        if self.bold { push_code!("1"); }
+        if self.dim { push_code!("2"); }
+        if self.italic { push_code!("3"); }
+        if self.underline { push_code!("4"); }
+        if self.strikethrough { push_code!("9"); }
+        if let Some(ref c) = self.fg { push_code!(c.fg_ansi()); }
+        if let Some(ref c) = self.bg { push_code!(c.bg_ansi()); }
+
+        out.push('m');
+        out.push(self.ch);
+        out.push_str("\x1b[0m");
+        out
+    }
+
+    /// Write ANSI representation into an existing buffer (avoids allocation).
+    pub fn write_ansi(&self, buf: &mut String) {
+        use std::fmt::Write;
+
+        let has_style = self.bold || self.dim || self.italic || self.underline
+            || self.strikethrough || self.fg.is_some() || self.bg.is_some();
+
+        if !has_style {
+            buf.push(self.ch);
+            return;
+        }
+
+        buf.push_str("\x1b[");
+        let mut first = true;
+
+        macro_rules! push_code {
+            ($code:expr) => {
+                if !first { buf.push(';'); }
+                let _ = write!(buf, "{}", $code);
+                #[allow(unused_assignments)]
+                { first = false; }
+            };
+        }
+
+        if self.bold { push_code!("1"); }
+        if self.dim { push_code!("2"); }
+        if self.italic { push_code!("3"); }
+        if self.underline { push_code!("4"); }
+        if self.strikethrough { push_code!("9"); }
+        if let Some(ref c) = self.fg { push_code!(c.fg_ansi()); }
+        if let Some(ref c) = self.bg { push_code!(c.bg_ansi()); }
+
+        buf.push('m');
+        buf.push(self.ch);
+        buf.push_str("\x1b[0m");
     }
 }
 

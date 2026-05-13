@@ -31,7 +31,7 @@ impl DiffRenderer {
     }
 
     fn full_paint(&self, terminal: &mut Terminal, grid: &Grid) -> io::Result<()> {
-        let mut output = String::new();
+        let mut output = String::with_capacity((grid.width as usize * grid.height as usize) * 4);
         output.push_str("\x1b[H\x1b[2J");
 
         for row in 0..grid.height {
@@ -39,7 +39,7 @@ impl DiffRenderer {
                 output.push_str("\r\n");
             }
             for col in 0..grid.width {
-                output.push_str(&grid.cells[row as usize][col as usize].to_ansi());
+                grid.cells[row as usize][col as usize].write_ansi(&mut output);
             }
         }
 
