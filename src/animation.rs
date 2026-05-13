@@ -1,7 +1,6 @@
 //! Animation system for smooth transitions and timed effects.
 //!
-//! Provides [`Animation`] for interpolating values over time, and [`Transition`]
-//! for animating between states with easing functions.
+//! Provides [`Transition`] for animating between states with easing functions.
 
 use std::time::{Duration, Instant};
 

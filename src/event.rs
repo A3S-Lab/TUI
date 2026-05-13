@@ -30,12 +30,12 @@ impl KeyEvent {
         self.code == KeyCode::Char(c) && self.modifiers == KeyModifiers::NONE
     }
 
-    /// Check if this is Ctrl+<char>.
+    /// Check if this is Ctrl+`char`.
     pub fn is_ctrl(&self, c: char) -> bool {
         self.code == KeyCode::Char(c) && self.modifiers.contains(KeyModifiers::CONTROL)
     }
 
-    /// Check if this is Alt+<char>.
+    /// Check if this is Alt+`char`.
     pub fn is_alt(&self, c: char) -> bool {
         self.code == KeyCode::Char(c) && self.modifiers.contains(KeyModifiers::ALT)
     }
