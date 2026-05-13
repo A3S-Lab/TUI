@@ -24,6 +24,7 @@ taffy = "0.7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+insta = "1.40"
 
 [[example]]
 name = "counter"

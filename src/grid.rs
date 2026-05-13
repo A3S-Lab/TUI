@@ -210,6 +210,20 @@ impl Grid {
 
         changes
     }
+
+    /// Convert grid to a string representation (for testing/debugging).
+    pub fn render_to_string(&self) -> String {
+        let mut output = String::with_capacity((self.width as usize * self.height as usize) * 4);
+        for y in 0..self.height {
+            if y > 0 {
+                output.push('\n');
+            }
+            for x in 0..self.width {
+                self.cells[y as usize][x as usize].write_ansi(&mut output);
+            }
+        }
+        output
+    }
 }
 
 #[derive(Debug)]
