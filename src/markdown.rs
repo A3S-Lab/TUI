@@ -322,3 +322,84 @@ impl Markdown {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::strip_ansi;
+
+    #[test]
+    fn render_plain_text() {
+        let md = Markdown::new();
+        let output = md.render("hello world");
+        let plain = strip_ansi(&output);
+        assert!(plain.contains("hello world"));
+    }
+
+    #[test]
+    fn render_heading() {
+        let md = Markdown::new();
+        let output = md.render("# Title");
+        let plain = strip_ansi(&output);
+        assert!(plain.contains("Title"));
+    }
+
+    #[test]
+    fn render_code_block() {
+        let md = Markdown::new();
+        let output = md.render("```\nlet x = 1;\n```");
+        let plain = strip_ansi(&output);
+        assert!(plain.contains("let x = 1"));
+    }
+
+    #[test]
+    fn render_bold() {
+        let md = Markdown::new();
+        let output = md.render("**bold text**");
+        assert!(output.contains("bold text"));
+    }
+
+    #[test]
+    fn render_list() {
+        let md = Markdown::new();
+        let output = md.render("- item 1\n- item 2");
+        let plain = strip_ansi(&output);
+        assert!(plain.contains("item 1"));
+        assert!(plain.contains("item 2"));
+    }
+
+    #[test]
+    fn render_blockquote() {
+        let md = Markdown::new();
+        let output = md.render("> quoted text");
+        let plain = strip_ansi(&output);
+        assert!(plain.contains("quoted text"));
+    }
+
+    #[test]
+    fn render_element_produces_box() {
+        let md = Markdown::new();
+        let el: Element<()> = md.render_element("# Hello\n\nWorld");
+        match el {
+            Element::Box(b) => assert!(!b.children.is_empty()),
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn with_width_wraps() {
+        let md = Markdown::new().with_width(10);
+        let output = md.render("this is a long sentence that should wrap");
+        let lines: Vec<&str> = output.lines().collect();
+        assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn wrap_text_basic() {
+        let lines = wrap_text("hello world foo bar", 10);
+        assert!(lines.len() >= 2);
+        for line in &lines {
+            assert!(crate::style::visible_len(line) <= 10);
+        }
+    }
+}

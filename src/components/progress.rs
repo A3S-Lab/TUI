@@ -114,3 +114,55 @@ impl Default for Progress {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_value_is_zero() {
+        let p = Progress::new();
+        assert_eq!(p.value, 0.0);
+    }
+
+    #[test]
+    fn value_clamps() {
+        let p = Progress::new().value(1.5);
+        assert_eq!(p.value, 1.0);
+        let p2 = Progress::new().value(-0.5);
+        assert_eq!(p2.value, 0.0);
+    }
+
+    #[test]
+    fn set_value() {
+        let mut p = Progress::new();
+        p.set_value(0.75);
+        assert_eq!(p.value, 0.75);
+    }
+
+    #[test]
+    fn view_contains_percentage() {
+        let p = Progress::new().value(0.5);
+        let view = p.view();
+        assert!(view.contains("50%"));
+    }
+
+    #[test]
+    fn view_without_percentage() {
+        let p = Progress::new().value(0.5).show_percentage(false);
+        let view = p.view();
+        assert!(!view.contains('%'));
+    }
+
+    #[test]
+    fn element_produces_row() {
+        let p = Progress::new().value(0.5);
+        let el: Element<()> = p.element();
+        match el {
+            Element::Box(b) => {
+                assert_eq!(b.style.flex_direction, FlexDirection::Row);
+            }
+            _ => panic!("expected Box"),
+        }
+    }
+}

@@ -89,3 +89,48 @@ impl Default for Spinner {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_spinner_is_active() {
+        let s = Spinner::new();
+        assert!(s.is_active());
+    }
+
+    #[test]
+    fn tick_advances_frame() {
+        let mut s = Spinner::new();
+        let first = s.frames[0];
+        s.tick();
+        assert_eq!(s.current, 1);
+        assert_ne!(s.frames[s.current], first);
+    }
+
+    #[test]
+    fn tick_wraps_around() {
+        let mut s = Spinner::new();
+        for _ in 0..s.frames.len() {
+            s.tick();
+        }
+        assert_eq!(s.current, 0);
+    }
+
+    #[test]
+    fn stop_prevents_tick() {
+        let mut s = Spinner::new();
+        s.stop();
+        assert!(!s.is_active());
+        s.tick();
+        assert_eq!(s.current, 0);
+    }
+
+    #[test]
+    fn with_title() {
+        let s = Spinner::new().with_title("Loading");
+        let view = s.view();
+        assert!(view.contains("Loading"));
+    }
+}

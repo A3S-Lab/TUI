@@ -123,3 +123,75 @@ impl<T: std::fmt::Display> List<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_state() {
+        let list = List::new(vec!["a", "b", "c"], 5);
+        assert_eq!(list.selected_index(), 0);
+        assert_eq!(list.selected(), Some(&"a"));
+    }
+
+    #[test]
+    fn navigate_down() {
+        let mut list = List::new(vec!["a", "b", "c"], 5);
+        list.update(ListMsg::Down);
+        assert_eq!(list.selected_index(), 1);
+    }
+
+    #[test]
+    fn navigate_up() {
+        let mut list = List::new(vec!["a", "b", "c"], 5);
+        list.update(ListMsg::Down);
+        list.update(ListMsg::Up);
+        assert_eq!(list.selected_index(), 0);
+    }
+
+    #[test]
+    fn bounds_check() {
+        let mut list = List::new(vec!["a", "b"], 5);
+        list.update(ListMsg::Up);
+        assert_eq!(list.selected_index(), 0);
+        list.update(ListMsg::Down);
+        list.update(ListMsg::Down);
+        assert_eq!(list.selected_index(), 1);
+    }
+
+    #[test]
+    fn select_specific() {
+        let mut list = List::new(vec!["a", "b", "c"], 5);
+        list.update(ListMsg::Select(2));
+        assert_eq!(list.selected_index(), 2);
+    }
+
+    #[test]
+    fn home_and_end() {
+        let mut list = List::new(vec!["a", "b", "c", "d"], 5);
+        list.update(ListMsg::End);
+        assert_eq!(list.selected_index(), 3);
+        list.update(ListMsg::Home);
+        assert_eq!(list.selected_index(), 0);
+    }
+
+    #[test]
+    fn scrolling_adjusts_offset() {
+        let mut list = List::new(vec!["a", "b", "c", "d", "e"], 3);
+        list.update(ListMsg::Down);
+        list.update(ListMsg::Down);
+        list.update(ListMsg::Down);
+        assert_eq!(list.selected_index(), 3);
+        assert!(list.offset > 0);
+    }
+
+    #[test]
+    fn set_items() {
+        let mut list = List::new(vec!["a", "b", "c"], 5);
+        list.update(ListMsg::End);
+        list.set_items(vec!["x", "y"]);
+        assert_eq!(list.selected_index(), 1);
+        assert_eq!(list.items().len(), 2);
+    }
+}

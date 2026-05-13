@@ -28,3 +28,30 @@ impl Badge {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn badge_default_color() {
+        let badge = Badge::new("test");
+        assert_eq!(badge.color, Color::Cyan);
+    }
+
+    #[test]
+    fn badge_custom_color() {
+        let badge = Badge::new("OK").color(Color::Green);
+        assert_eq!(badge.color, Color::Green);
+    }
+
+    #[test]
+    fn badge_element() {
+        let badge = Badge::new("v1.0");
+        let el: Element<()> = badge.element();
+        match el {
+            Element::Box(b) => assert_eq!(b.children.len(), 1),
+            _ => panic!("expected Box"),
+        }
+    }
+}

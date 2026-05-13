@@ -61,3 +61,36 @@ impl Alert {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alert_without_title() {
+        let alert = Alert::new(AlertKind::Info, "message");
+        let el: Element<()> = alert.element();
+        match el {
+            Element::Box(b) => assert_eq!(b.children.len(), 2),
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn alert_with_title() {
+        let alert = Alert::new(AlertKind::Success, "done").title("Status");
+        let el: Element<()> = alert.element();
+        match el {
+            Element::Box(b) => assert_eq!(b.children.len(), 2),
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn alert_kinds() {
+        for kind in [AlertKind::Info, AlertKind::Success, AlertKind::Warning, AlertKind::Error] {
+            let alert = Alert::new(kind, "test");
+            let _el: Element<()> = alert.element();
+        }
+    }
+}
