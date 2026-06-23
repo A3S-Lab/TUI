@@ -68,7 +68,13 @@ impl Terminal {
             cursor::MoveTo(0, 0),
             terminal::Clear(terminal::ClearType::All),
         )?;
-        write!(self.stdout, "{}", content)?;
+        // Raw mode: '\n' is line-feed only and does NOT reset the column, so a
+        // bare multi-line write makes each line start where the previous ended
+        // (a staircase). Position every line at column 0 explicitly.
+        for (row, line) in content.lines().enumerate() {
+            queue!(self.stdout, cursor::MoveTo(0, row as u16))?;
+            write!(self.stdout, "{}", line)?;
+        }
         self.stdout.flush()
     }
 
