@@ -154,9 +154,7 @@ impl TextInput {
     pub fn element<Msg>(&self) -> Element<Msg> {
         if self.value.is_empty() && !self.placeholder.is_empty() {
             let text = format!("{}{}", self.prefix, self.placeholder);
-            return Element::Text(
-                TextElement::new(text).dim().fg(Color::BrightBlack),
-            );
+            return Element::Text(TextElement::new(text).dim().fg(Color::BrightBlack));
         }
 
         let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
@@ -193,7 +191,10 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]

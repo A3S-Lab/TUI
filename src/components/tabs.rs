@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::event::{KeyEvent, MouseEvent, MouseEventKind, MouseButton};
+use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::Color;
 use crossterm::event::KeyCode;
 
@@ -25,9 +25,15 @@ impl Tabs {
         }
     }
 
-    pub fn focus(&mut self) { self.focused = true; }
-    pub fn blur(&mut self) { self.focused = false; }
-    pub fn active(&self) -> usize { self.active }
+    pub fn focus(&mut self) {
+        self.focused = true;
+    }
+    pub fn blur(&mut self) {
+        self.focused = false;
+    }
+    pub fn active(&self) -> usize {
+        self.active
+    }
     pub fn set_active(&mut self, idx: usize) {
         if idx < self.labels.len() {
             self.active = idx;
@@ -40,19 +46,25 @@ impl Tabs {
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TabsMsg> {
-        if !self.focused { return None; }
+        if !self.focused {
+            return None;
+        }
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => {
                 if self.active > 0 {
                     self.active -= 1;
                     Some(TabsMsg::Changed(self.active))
-                } else { None }
+                } else {
+                    None
+                }
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 if self.active + 1 < self.labels.len() {
                     self.active += 1;
                     Some(TabsMsg::Changed(self.active))
-                } else { None }
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -60,7 +72,9 @@ impl Tabs {
 
     /// Handle mouse click to select a tab.
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<TabsMsg> {
-        if !self.focused { return None; }
+        if !self.focused {
+            return None;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let click_x = mouse.column.saturating_sub(self.x_offset) as usize;
@@ -85,7 +99,10 @@ impl Tabs {
             let padded = format!(" {} ", label);
             if i == self.active {
                 children.push(Element::Text(
-                    TextElement::new(padded).bold().fg(Color::BrightWhite).bg(Color::Blue),
+                    TextElement::new(padded)
+                        .bold()
+                        .fg(Color::BrightWhite)
+                        .bg(Color::Blue),
                 ));
             } else {
                 children.push(Element::Text(
@@ -111,7 +128,10 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]

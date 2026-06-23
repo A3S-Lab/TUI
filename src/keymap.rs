@@ -98,7 +98,9 @@ impl<A: Clone> Keymap<A> {
 
     pub fn resolve(&self, event: &KeyEvent) -> Option<A> {
         let binding = KeyBinding::from(event);
-        self.bindings.get(&binding).map(|(action, _)| action.clone())
+        self.bindings
+            .get(&binding)
+            .map(|(action, _)| action.clone())
     }
 
     pub fn help(&self) -> Vec<(String, String)> {
@@ -212,8 +214,8 @@ mod tests {
 
     #[test]
     fn keymap_unbind() {
-        let mut keymap = Keymap::new()
-            .bind(KeyBinding::new(KeyCode::Char('q')), Action::Quit, "Quit");
+        let mut keymap =
+            Keymap::new().bind(KeyBinding::new(KeyCode::Char('q')), Action::Quit, "Quit");
         keymap.unbind(&KeyBinding::new(KeyCode::Char('q')));
         let event = KeyEvent {
             code: KeyCode::Char('q'),
@@ -225,8 +227,16 @@ mod tests {
     #[test]
     fn keymap_help_lists_bindings() {
         let keymap = Keymap::new()
-            .bind(KeyBinding::new(KeyCode::Char('q')), Action::Quit, "Quit app")
-            .bind(KeyBinding::new(KeyCode::Char('?')), Action::Help, "Show help");
+            .bind(
+                KeyBinding::new(KeyCode::Char('q')),
+                Action::Quit,
+                "Quit app",
+            )
+            .bind(
+                KeyBinding::new(KeyCode::Char('?')),
+                Action::Help,
+                "Show help",
+            );
         let help = keymap.help();
         assert_eq!(help.len(), 2);
     }

@@ -1,9 +1,11 @@
 use a3s_tui::cmd;
 use a3s_tui::components::{Alert, AlertKind, Badge, Select, Table, Tabs};
 use a3s_tui::element::{BoxElement, FlexDirection, TextElement};
-use a3s_tui::style::Color;
-use a3s_tui::{col, row, Element, ElementModel, ElementProgramBuilder, Event, KeyCode, KeyModifiers};
 use a3s_tui::event::KeyEvent;
+use a3s_tui::style::Color;
+use a3s_tui::{
+    col, row, Element, ElementModel, ElementProgramBuilder, Event, KeyCode, KeyModifiers,
+};
 
 struct Demo {
     tabs: Tabs,
@@ -20,9 +22,14 @@ enum Msg {
 impl From<Event> for Msg {
     fn from(event: Event) -> Self {
         match &event {
-            Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) => Msg::Quit,
-            Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers })
-                if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                ..
+            }) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+            }) if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
             _ => Msg::Event(event),
         }
     }
@@ -53,9 +60,15 @@ impl ElementModel for Demo {
             BoxElement::new()
                 .direction(FlexDirection::Row)
                 .bg(Color::BrightBlack)
-                .child(Element::Text(TextElement::new(" a3s-tui Component Demo").bold().fg(Color::White)))
+                .child(Element::Text(
+                    TextElement::new(" a3s-tui Component Demo")
+                        .bold()
+                        .fg(Color::White),
+                ))
                 .child(Element::Spacer)
-                .child(Element::Text(TextElement::new("q to quit ").fg(Color::BrightWhite))),
+                .child(Element::Text(
+                    TextElement::new("q to quit ").fg(Color::BrightWhite),
+                )),
         );
 
         let tabs_view = self.tabs.element();

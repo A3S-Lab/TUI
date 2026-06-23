@@ -40,10 +40,7 @@ mod tests {
 
     #[test]
     fn col_macro_creates_column() {
-        let el: Element<()> = col![
-            text!("a"),
-            text!("b"),
-        ];
+        let el: Element<()> = col![text!("a"), text!("b"),];
         match el {
             Element::Box(b) => {
                 assert_eq!(b.style.flex_direction, FlexDirection::Column);
@@ -55,11 +52,7 @@ mod tests {
 
     #[test]
     fn row_macro_creates_row() {
-        let el: Element<()> = row![
-            text!("x"),
-            text!("y"),
-            text!("z"),
-        ];
+        let el: Element<()> = row![text!("x"), text!("y"), text!("z"),];
         match el {
             Element::Box(b) => {
                 assert_eq!(b.style.flex_direction, FlexDirection::Row);
@@ -87,11 +80,7 @@ mod tests {
     #[test]
     fn nested_macros() {
         let el: Element<()> = col![
-            row![
-                text!("left"),
-                spacer!(),
-                text!("right"),
-            ],
+            row![text!("left"), spacer!(), text!("right"),],
             text!("bottom"),
         ];
         match el {

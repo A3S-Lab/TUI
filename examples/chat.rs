@@ -323,10 +323,26 @@ async fn main() -> std::io::Result<()> {
     let (width, height) = a3s_tui::terminal::Terminal::size().unwrap_or((80, 24));
 
     let keymap = Keymap::new()
-        .bind(KeyBinding::new(KeyCode::PageUp), Action::ScrollUp, "Scroll up")
-        .bind(KeyBinding::new(KeyCode::PageDown), Action::ScrollDown, "Scroll down")
-        .bind(KeyBinding::ctrl(KeyCode::Home), Action::ScrollTop, "Scroll to top")
-        .bind(KeyBinding::ctrl(KeyCode::End), Action::ScrollBottom, "Scroll to bottom");
+        .bind(
+            KeyBinding::new(KeyCode::PageUp),
+            Action::ScrollUp,
+            "Scroll up",
+        )
+        .bind(
+            KeyBinding::new(KeyCode::PageDown),
+            Action::ScrollDown,
+            "Scroll down",
+        )
+        .bind(
+            KeyBinding::ctrl(KeyCode::Home),
+            Action::ScrollTop,
+            "Scroll to top",
+        )
+        .bind(
+            KeyBinding::ctrl(KeyCode::End),
+            Action::ScrollBottom,
+            "Scroll to bottom",
+        );
 
     let app = App {
         viewport: Viewport::new(width, height.saturating_sub(7)),

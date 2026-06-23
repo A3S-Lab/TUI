@@ -47,7 +47,8 @@ impl ElementModel for Dashboard {
                 self.cpu_usage = (self.cpu_usage + 0.02).min(0.95);
                 self.memory_usage = 0.65 + (self.uptime_seconds as f64 * 0.001).sin() * 0.1;
                 self.disk_usage = 0.42;
-                self.requests_per_sec = 150 + ((self.uptime_seconds as f64 * 0.5).sin() * 50.0) as u32;
+                self.requests_per_sec =
+                    150 + ((self.uptime_seconds as f64 * 0.5).sin() * 50.0) as u32;
 
                 Some(cmd::tick(Duration::from_millis(100), Msg::Tick))
             }
@@ -58,7 +59,7 @@ impl ElementModel for Dashboard {
         let title = Element::Text(
             TextElement::new("System Dashboard")
                 .bold()
-                .fg(Color::BrightCyan)
+                .fg(Color::BrightCyan),
         );
 
         // Metrics section
@@ -165,7 +166,7 @@ impl ElementModel for Dashboard {
             BoxElement::new()
                 .direction(FlexDirection::Column)
                 .padding(2)
-                .child(content)
+                .child(content),
         )
     }
 }

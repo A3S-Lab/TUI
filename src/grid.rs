@@ -35,7 +35,10 @@ impl Default for Cell {
 
 impl Cell {
     pub fn with_char(ch: char) -> Self {
-        Self { ch, ..Default::default() }
+        Self {
+            ch,
+            ..Default::default()
+        }
     }
 
     pub fn styled(ch: char, style: &CellStyle) -> Self {
@@ -54,8 +57,13 @@ impl Cell {
     pub fn to_ansi(&self) -> String {
         use std::fmt::Write;
 
-        let has_style = self.bold || self.dim || self.italic || self.underline
-            || self.strikethrough || self.fg.is_some() || self.bg.is_some();
+        let has_style = self.bold
+            || self.dim
+            || self.italic
+            || self.underline
+            || self.strikethrough
+            || self.fg.is_some()
+            || self.bg.is_some();
 
         if !has_style {
             return self.ch.to_string();
@@ -67,20 +75,38 @@ impl Cell {
 
         macro_rules! push_code {
             ($code:expr) => {
-                if !first { out.push(';'); }
+                if !first {
+                    out.push(';');
+                }
                 let _ = write!(out, "{}", $code);
                 #[allow(unused_assignments)]
-                { first = false; }
+                {
+                    first = false;
+                }
             };
         }
 
-        if self.bold { push_code!("1"); }
-        if self.dim { push_code!("2"); }
-        if self.italic { push_code!("3"); }
-        if self.underline { push_code!("4"); }
-        if self.strikethrough { push_code!("9"); }
-        if let Some(ref c) = self.fg { push_code!(c.fg_ansi()); }
-        if let Some(ref c) = self.bg { push_code!(c.bg_ansi()); }
+        if self.bold {
+            push_code!("1");
+        }
+        if self.dim {
+            push_code!("2");
+        }
+        if self.italic {
+            push_code!("3");
+        }
+        if self.underline {
+            push_code!("4");
+        }
+        if self.strikethrough {
+            push_code!("9");
+        }
+        if let Some(ref c) = self.fg {
+            push_code!(c.fg_ansi());
+        }
+        if let Some(ref c) = self.bg {
+            push_code!(c.bg_ansi());
+        }
 
         out.push('m');
         out.push(self.ch);
@@ -92,8 +118,13 @@ impl Cell {
     pub fn write_ansi(&self, buf: &mut String) {
         use std::fmt::Write;
 
-        let has_style = self.bold || self.dim || self.italic || self.underline
-            || self.strikethrough || self.fg.is_some() || self.bg.is_some();
+        let has_style = self.bold
+            || self.dim
+            || self.italic
+            || self.underline
+            || self.strikethrough
+            || self.fg.is_some()
+            || self.bg.is_some();
 
         if !has_style {
             buf.push(self.ch);
@@ -105,20 +136,38 @@ impl Cell {
 
         macro_rules! push_code {
             ($code:expr) => {
-                if !first { buf.push(';'); }
+                if !first {
+                    buf.push(';');
+                }
                 let _ = write!(buf, "{}", $code);
                 #[allow(unused_assignments)]
-                { first = false; }
+                {
+                    first = false;
+                }
             };
         }
 
-        if self.bold { push_code!("1"); }
-        if self.dim { push_code!("2"); }
-        if self.italic { push_code!("3"); }
-        if self.underline { push_code!("4"); }
-        if self.strikethrough { push_code!("9"); }
-        if let Some(ref c) = self.fg { push_code!(c.fg_ansi()); }
-        if let Some(ref c) = self.bg { push_code!(c.bg_ansi()); }
+        if self.bold {
+            push_code!("1");
+        }
+        if self.dim {
+            push_code!("2");
+        }
+        if self.italic {
+            push_code!("3");
+        }
+        if self.underline {
+            push_code!("4");
+        }
+        if self.strikethrough {
+            push_code!("9");
+        }
+        if let Some(ref c) = self.fg {
+            push_code!(c.fg_ansi());
+        }
+        if let Some(ref c) = self.bg {
+            push_code!(c.bg_ansi());
+        }
 
         buf.push('m');
         buf.push(self.ch);
@@ -146,7 +195,11 @@ pub struct Grid {
 impl Grid {
     pub fn new(width: u16, height: u16) -> Self {
         let cells = vec![vec![Cell::default(); width as usize]; height as usize];
-        Self { cells, width, height }
+        Self {
+            cells,
+            width,
+            height,
+        }
     }
 
     pub fn get(&self, x: u16, y: u16) -> &Cell {
@@ -192,7 +245,11 @@ impl Grid {
                 let old = &self.cells[y as usize][x as usize];
                 let new = &other.cells[y as usize][x as usize];
                 if old != new {
-                    changes.push(CellChange { x, y, cell: new.clone() });
+                    changes.push(CellChange {
+                        x,
+                        y,
+                        cell: new.clone(),
+                    });
                 }
             }
         }
@@ -202,7 +259,11 @@ impl Grid {
                 for x in 0..other.width {
                     let cell = &other.cells[y as usize][x as usize];
                     if *cell != Cell::default() {
-                        changes.push(CellChange { x, y, cell: cell.clone() });
+                        changes.push(CellChange {
+                            x,
+                            y,
+                            cell: cell.clone(),
+                        });
                     }
                 }
             }

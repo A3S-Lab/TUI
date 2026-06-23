@@ -53,7 +53,11 @@ impl ElementModel for FormApp {
             }
             Msg::PrevField => {
                 self.blur_all();
-                self.focused_field = if self.focused_field == 0 { 2 } else { self.focused_field - 1 };
+                self.focused_field = if self.focused_field == 0 {
+                    2
+                } else {
+                    self.focused_field - 1
+                };
                 self.focus_current();
                 None
             }
@@ -68,9 +72,15 @@ impl ElementModel for FormApp {
             Msg::KeyPress(event) => {
                 if let Event::Key(key_event) = event {
                     match self.focused_field {
-                        0 => { self.name.handle_key(&key_event); }
-                        1 => { self.email.handle_key(&key_event); }
-                        2 => { self.password.handle_key(&key_event); }
+                        0 => {
+                            self.name.handle_key(&key_event);
+                        }
+                        1 => {
+                            self.email.handle_key(&key_event);
+                        }
+                        2 => {
+                            self.password.handle_key(&key_event);
+                        }
                         _ => {}
                     }
                 }
@@ -83,7 +93,7 @@ impl ElementModel for FormApp {
         let title = Element::Text(
             TextElement::new("User Registration Form")
                 .bold()
-                .fg(Color::Cyan)
+                .fg(Color::Cyan),
         );
 
         let name_label = Element::Text(TextElement::new("Name:").fg(Color::BrightBlack));
@@ -97,7 +107,7 @@ impl ElementModel for FormApp {
 
         let help = Element::Text(
             TextElement::new("Tab: next | Shift+Tab: prev | Ctrl+S: submit | Ctrl+Q: quit")
-                .fg(Color::gray(150))
+                .fg(Color::gray(150)),
         );
 
         let mut content = col![
@@ -138,7 +148,7 @@ impl ElementModel for FormApp {
             BoxElement::new()
                 .direction(FlexDirection::Column)
                 .padding(2)
-                .child(content)
+                .child(content),
         )
     }
 }

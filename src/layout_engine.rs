@@ -53,14 +53,12 @@ impl LayoutEngine {
         let mut result_nodes = Vec::with_capacity(nodes.len());
         self.collect_layout(&nodes, root_id, 0.0, 0.0, &mut result_nodes);
 
-        LayoutResult { nodes: result_nodes }
+        LayoutResult {
+            nodes: result_nodes,
+        }
     }
 
-    fn build_node<Msg>(
-        &mut self,
-        element: &Element<Msg>,
-        node_list: &mut Vec<NodeId>,
-    ) -> NodeId {
+    fn build_node<Msg>(&mut self, element: &Element<Msg>, node_list: &mut Vec<NodeId>) -> NodeId {
         match element {
             Element::Box(box_el) => {
                 let child_ids: Vec<NodeId> = box_el

@@ -1,4 +1,4 @@
-use crate::element::{BoxElement, BorderStyle, Element, TextElement};
+use crate::element::{BorderStyle, BoxElement, Element, TextElement};
 use crate::style::Color;
 
 pub struct Badge {
@@ -24,7 +24,9 @@ impl Badge {
             BoxElement::new()
                 .border(BorderStyle::Rounded)
                 .border_color(self.color)
-                .child(Element::Text(TextElement::new(&self.label).fg(self.color).bold())),
+                .child(Element::Text(
+                    TextElement::new(&self.label).fg(self.color).bold(),
+                )),
         )
     }
 }

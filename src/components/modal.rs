@@ -1,4 +1,4 @@
-use crate::element::{BoxElement, BorderStyle as ElBorder, Element, FlexDirection, TextElement};
+use crate::element::{BorderStyle as ElBorder, BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{visible_len, Border, Color, Style};
 
 pub struct Modal {
@@ -69,7 +69,10 @@ impl Modal {
             }
             ModalMsg::Prev => {
                 if !self.options.is_empty() {
-                    self.selected = self.selected.checked_sub(1).unwrap_or(self.options.len() - 1);
+                    self.selected = self
+                        .selected
+                        .checked_sub(1)
+                        .unwrap_or(self.options.len() - 1);
                 }
                 None
             }
@@ -89,10 +92,7 @@ impl Modal {
         let mut inner_lines = Vec::new();
 
         if !self.title.is_empty() {
-            let title_styled = Style::new()
-                .bold()
-                .fg(self.title_color)
-                .render(&self.title);
+            let title_styled = Style::new().bold().fg(self.title_color).render(&self.title);
             inner_lines.push(title_styled);
             inner_lines.push(String::new());
         }
@@ -107,7 +107,10 @@ impl Modal {
         for (i, opt) in self.options.iter().enumerate() {
             let prefix = if i == self.selected { "▸ " } else { "  " };
             let styled = if i == self.selected {
-                Style::new().bold().fg(self.selected_color).render(&format!("{}{}", prefix, opt))
+                Style::new()
+                    .bold()
+                    .fg(self.selected_color)
+                    .render(&format!("{}{}", prefix, opt))
             } else {
                 format!("{}{}", prefix, opt)
             };

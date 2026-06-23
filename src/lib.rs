@@ -88,8 +88,8 @@ pub mod style;
 pub mod terminal;
 pub mod theme;
 
-pub use cmd::Cmd;
 pub use animation::{Easing, FrameAnimation, Transition};
+pub use cmd::Cmd;
 pub use element::{
     AlignItems, BorderStyle, BoxElement, BoxStyle, Dimension, Edges, Element, FlexDirection,
     JustifyContent, Overflow, TextElement, TextStyle, TextWrap,

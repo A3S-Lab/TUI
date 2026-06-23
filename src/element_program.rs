@@ -209,7 +209,9 @@ impl ElementProgram {
                             let r = c.await;
                             match r {
                                 CmdResult::Quit => quit2.store(true, Ordering::Relaxed),
-                                CmdResult::Msg(m) => { let _ = tx2.send(m); }
+                                CmdResult::Msg(m) => {
+                                    let _ = tx2.send(m);
+                                }
                                 _ => {}
                             }
                         });

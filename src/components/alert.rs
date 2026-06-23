@@ -1,4 +1,4 @@
-use crate::element::{BoxElement, BorderStyle, Element, FlexDirection, TextElement};
+use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::style::Color;
 
 #[derive(Debug, Clone, Copy)]
@@ -41,12 +41,12 @@ impl Alert {
 
         if !self.title.is_empty() {
             children.push(Element::Text(
-                TextElement::new(format!("{} {}", icon, self.title)).bold().fg(color),
+                TextElement::new(format!("{} {}", icon, self.title))
+                    .bold()
+                    .fg(color),
             ));
         } else {
-            children.push(Element::Text(
-                TextElement::new(icon).bold().fg(color),
-            ));
+            children.push(Element::Text(TextElement::new(icon).bold().fg(color)));
         }
 
         children.push(Element::Text(TextElement::new(&self.body)));
@@ -88,7 +88,12 @@ mod tests {
 
     #[test]
     fn alert_kinds() {
-        for kind in [AlertKind::Info, AlertKind::Success, AlertKind::Warning, AlertKind::Error] {
+        for kind in [
+            AlertKind::Info,
+            AlertKind::Success,
+            AlertKind::Warning,
+            AlertKind::Error,
+        ] {
             let alert = Alert::new(kind, "test");
             let _el: Element<()> = alert.element();
         }

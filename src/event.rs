@@ -147,29 +147,44 @@ mod tests {
 
     #[test]
     fn is_char() {
-        let e = KeyEvent { code: KeyCode::Char('q'), modifiers: KeyModifiers::NONE };
+        let e = KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::NONE,
+        };
         assert!(e.is_char('q'));
         assert!(!e.is_char('x'));
     }
 
     #[test]
     fn is_ctrl() {
-        let e = KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL };
+        let e = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+        };
         assert!(e.is_ctrl('c'));
         assert!(!e.is_ctrl('x'));
-        let plain = KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE };
+        let plain = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::NONE,
+        };
         assert!(!plain.is_ctrl('c'));
     }
 
     #[test]
     fn is_alt() {
-        let e = KeyEvent { code: KeyCode::Char('x'), modifiers: KeyModifiers::ALT };
+        let e = KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::ALT,
+        };
         assert!(e.is_alt('x'));
     }
 
     #[test]
     fn is_key() {
-        let e = KeyEvent { code: KeyCode::Enter, modifiers: KeyModifiers::NONE };
+        let e = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+        };
         assert!(e.is_key(KeyCode::Enter));
         assert!(e.is_enter());
         assert!(!e.is_esc());
@@ -177,9 +192,15 @@ mod tests {
 
     #[test]
     fn char_extraction() {
-        let e = KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::NONE };
+        let e = KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+        };
         assert_eq!(e.char(), Some('a'));
-        let esc = KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE };
+        let esc = KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+        };
         assert_eq!(esc.char(), None);
     }
 }

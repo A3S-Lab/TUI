@@ -85,7 +85,9 @@ impl Tree {
         };
 
         if is_root {
-            lines.push(Element::Text(TextElement::new(&node.label).bold().fg(color)));
+            lines.push(Element::Text(
+                TextElement::new(&node.label).bold().fg(color),
+            ));
         } else {
             let text = format!("{}{}", prefix, node.label);
             lines.push(Element::Text(TextElement::new(text).fg(color)));

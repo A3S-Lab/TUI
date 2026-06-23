@@ -28,11 +28,19 @@ impl MultiSelect {
         }
     }
 
-    pub fn focus(&mut self) { self.focused = true; }
-    pub fn blur(&mut self) { self.focused = false; }
+    pub fn focus(&mut self) {
+        self.focused = true;
+    }
+    pub fn blur(&mut self) {
+        self.focused = false;
+    }
 
     pub fn selected_indices(&self) -> Vec<usize> {
-        self.checked.iter().enumerate().filter_map(|(i, &b)| if b { Some(i) } else { None }).collect()
+        self.checked
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &b)| if b { Some(i) } else { None })
+            .collect()
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<MultiSelectMsg> {
@@ -54,9 +62,7 @@ impl MultiSelect {
                 self.checked[self.cursor] = !self.checked[self.cursor];
                 Some(MultiSelectMsg::Toggle(self.cursor))
             }
-            KeyCode::Enter => {
-                Some(MultiSelectMsg::Submit(self.selected_indices()))
-            }
+            KeyCode::Enter => Some(MultiSelectMsg::Submit(self.selected_indices())),
             _ => None,
         }
     }
@@ -92,7 +98,10 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]

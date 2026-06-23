@@ -25,10 +25,18 @@ impl Select {
         }
     }
 
-    pub fn focus(&mut self) { self.focused = true; }
-    pub fn blur(&mut self) { self.focused = false; }
-    pub fn selected_index(&self) -> usize { self.cursor }
-    pub fn selected_value(&self) -> &str { &self.items[self.cursor] }
+    pub fn focus(&mut self) {
+        self.focused = true;
+    }
+    pub fn blur(&mut self) {
+        self.focused = false;
+    }
+    pub fn selected_index(&self) -> usize {
+        self.cursor
+    }
+    pub fn selected_value(&self) -> &str {
+        &self.items[self.cursor]
+    }
 
     /// Set the vertical offset for mouse click calculations.
     pub fn set_y_offset(&mut self, y: u16) {
@@ -50,9 +58,10 @@ impl Select {
                 }
                 None
             }
-            KeyCode::Enter => {
-                Some(SelectMsg::Selected(self.cursor, self.items[self.cursor].clone()))
-            }
+            KeyCode::Enter => Some(SelectMsg::Selected(
+                self.cursor,
+                self.items[self.cursor].clone(),
+            )),
             _ => None,
         }
     }
@@ -67,7 +76,10 @@ impl Select {
                 let row = mouse.row.saturating_sub(self.y_offset) as usize;
                 if row < self.items.len() {
                     self.cursor = row;
-                    Some(SelectMsg::Selected(self.cursor, self.items[self.cursor].clone()))
+                    Some(SelectMsg::Selected(
+                        self.cursor,
+                        self.items[self.cursor].clone(),
+                    ))
                 } else {
                     None
                 }
@@ -106,7 +118,10 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]

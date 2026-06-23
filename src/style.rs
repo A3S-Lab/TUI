@@ -151,28 +151,48 @@ impl Border {
         match self {
             Border::None => None,
             Border::Single => Some(BorderChars {
-                tl: '┌', tr: '┐', bl: '└', br: '┘',
-                h: '─', v: '│',
+                tl: '┌',
+                tr: '┐',
+                bl: '└',
+                br: '┘',
+                h: '─',
+                v: '│',
             }),
             Border::Double => Some(BorderChars {
-                tl: '╔', tr: '╗', bl: '╚', br: '╝',
-                h: '═', v: '║',
+                tl: '╔',
+                tr: '╗',
+                bl: '╚',
+                br: '╝',
+                h: '═',
+                v: '║',
             }),
             Border::Rounded => Some(BorderChars {
-                tl: '╭', tr: '╮', bl: '╰', br: '╯',
-                h: '─', v: '│',
+                tl: '╭',
+                tr: '╮',
+                bl: '╰',
+                br: '╯',
+                h: '─',
+                v: '│',
             }),
             Border::Thick => Some(BorderChars {
-                tl: '┏', tr: '┓', bl: '┗', br: '┛',
-                h: '━', v: '┃',
+                tl: '┏',
+                tr: '┓',
+                bl: '┗',
+                br: '┛',
+                h: '━',
+                v: '┃',
             }),
         }
     }
 }
 
 struct BorderChars {
-    tl: char, tr: char, bl: char, br: char,
-    h: char, v: char,
+    tl: char,
+    tr: char,
+    bl: char,
+    br: char,
+    h: char,
+    v: char,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,41 +250,104 @@ impl Style {
         }
     }
 
-    pub fn fg(mut self, color: Color) -> Self { self.fg = Some(color); self }
-    pub fn bg(mut self, color: Color) -> Self { self.bg = Some(color); self }
-    pub fn bold(mut self) -> Self { self.bold = true; self }
-    pub fn italic(mut self) -> Self { self.italic = true; self }
-    pub fn underline(mut self) -> Self { self.underline = true; self }
-    pub fn strikethrough(mut self) -> Self { self.strikethrough = true; self }
-    pub fn dim(mut self) -> Self { self.dim = true; self }
-    pub fn reverse(mut self) -> Self { self.reverse = true; self }
+    pub fn fg(mut self, color: Color) -> Self {
+        self.fg = Some(color);
+        self
+    }
+    pub fn bg(mut self, color: Color) -> Self {
+        self.bg = Some(color);
+        self
+    }
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+    pub fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
+        self
+    }
+    pub fn dim(mut self) -> Self {
+        self.dim = true;
+        self
+    }
+    pub fn reverse(mut self) -> Self {
+        self.reverse = true;
+        self
+    }
 
-    pub fn padding_top(mut self, n: u16) -> Self { self.padding[0] = n; self }
-    pub fn padding_right(mut self, n: u16) -> Self { self.padding[1] = n; self }
-    pub fn padding_bottom(mut self, n: u16) -> Self { self.padding[2] = n; self }
-    pub fn padding_left(mut self, n: u16) -> Self { self.padding[3] = n; self }
+    pub fn padding_top(mut self, n: u16) -> Self {
+        self.padding[0] = n;
+        self
+    }
+    pub fn padding_right(mut self, n: u16) -> Self {
+        self.padding[1] = n;
+        self
+    }
+    pub fn padding_bottom(mut self, n: u16) -> Self {
+        self.padding[2] = n;
+        self
+    }
+    pub fn padding_left(mut self, n: u16) -> Self {
+        self.padding[3] = n;
+        self
+    }
 
     pub fn padding(mut self, vertical: u16, horizontal: u16) -> Self {
         self.padding = [vertical, horizontal, vertical, horizontal];
         self
     }
 
-    pub fn margin_top(mut self, n: u16) -> Self { self.margin[0] = n; self }
-    pub fn margin_right(mut self, n: u16) -> Self { self.margin[1] = n; self }
-    pub fn margin_bottom(mut self, n: u16) -> Self { self.margin[2] = n; self }
-    pub fn margin_left(mut self, n: u16) -> Self { self.margin[3] = n; self }
+    pub fn margin_top(mut self, n: u16) -> Self {
+        self.margin[0] = n;
+        self
+    }
+    pub fn margin_right(mut self, n: u16) -> Self {
+        self.margin[1] = n;
+        self
+    }
+    pub fn margin_bottom(mut self, n: u16) -> Self {
+        self.margin[2] = n;
+        self
+    }
+    pub fn margin_left(mut self, n: u16) -> Self {
+        self.margin[3] = n;
+        self
+    }
 
     pub fn margin(mut self, vertical: u16, horizontal: u16) -> Self {
         self.margin = [vertical, horizontal, vertical, horizontal];
         self
     }
 
-    pub fn border(mut self, border: Border) -> Self { self.border = border; self }
-    pub fn border_fg(mut self, color: Color) -> Self { self.border_fg = Some(color); self }
+    pub fn border(mut self, border: Border) -> Self {
+        self.border = border;
+        self
+    }
+    pub fn border_fg(mut self, color: Color) -> Self {
+        self.border_fg = Some(color);
+        self
+    }
 
-    pub fn width(mut self, w: u16) -> Self { self.width = Some(w); self }
-    pub fn height(mut self, h: u16) -> Self { self.height = Some(h); self }
-    pub fn align(mut self, a: Align) -> Self { self.align = a; self }
+    pub fn width(mut self, w: u16) -> Self {
+        self.width = Some(w);
+        self
+    }
+    pub fn height(mut self, h: u16) -> Self {
+        self.height = Some(h);
+        self
+    }
+    pub fn align(mut self, a: Align) -> Self {
+        self.align = a;
+        self
+    }
 
     pub fn render(&self, content: &str) -> String {
         let lines: Vec<&str> = content.lines().collect();
@@ -303,13 +386,7 @@ impl Style {
         for _ in 0..self.padding[0] {
             let pad_line = if has_border {
                 let bc = border_chars.as_ref().unwrap();
-                format!(
-                    "{}{}{}{}",
-                    margin_left,
-                    bc.v,
-                    " ".repeat(inner_width),
-                    bc.v
-                )
+                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
             } else {
                 format!("{}{}", margin_left, " ".repeat(inner_width))
             };
@@ -341,13 +418,7 @@ impl Style {
         for _ in 0..self.padding[2] {
             let pad_line = if has_border {
                 let bc = border_chars.as_ref().unwrap();
-                format!(
-                    "{}{}{}{}",
-                    margin_left,
-                    bc.v,
-                    " ".repeat(inner_width),
-                    bc.v
-                )
+                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
             } else {
                 format!("{}{}", margin_left, " ".repeat(inner_width))
             };
@@ -412,14 +483,30 @@ impl Style {
 
     fn apply_text_style(&self, text: &str) -> String {
         let mut codes = Vec::new();
-        if self.bold { codes.push("1".to_string()); }
-        if self.dim { codes.push("2".to_string()); }
-        if self.italic { codes.push("3".to_string()); }
-        if self.underline { codes.push("4".to_string()); }
-        if self.reverse { codes.push("7".to_string()); }
-        if self.strikethrough { codes.push("9".to_string()); }
-        if let Some(ref c) = self.fg { codes.push(c.fg_code()); }
-        if let Some(ref c) = self.bg { codes.push(c.bg_code()); }
+        if self.bold {
+            codes.push("1".to_string());
+        }
+        if self.dim {
+            codes.push("2".to_string());
+        }
+        if self.italic {
+            codes.push("3".to_string());
+        }
+        if self.underline {
+            codes.push("4".to_string());
+        }
+        if self.reverse {
+            codes.push("7".to_string());
+        }
+        if self.strikethrough {
+            codes.push("9".to_string());
+        }
+        if let Some(ref c) = self.fg {
+            codes.push(c.fg_code());
+        }
+        if let Some(ref c) = self.bg {
+            codes.push(c.bg_code());
+        }
 
         if codes.is_empty() {
             text.to_string()
