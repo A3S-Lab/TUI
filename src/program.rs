@@ -100,10 +100,15 @@ impl Program {
                 break;
             }
 
+            // Terminal events (keystrokes) render immediately for responsive
+            // input echo; internal messages (e.g. streaming deltas) stay
+            // frame-throttled to avoid flicker.
+            let mut immediate = false;
             tokio::select! {
                 event = event_stream.next() => {
                     match event {
                         Some(Ok(ct_event)) => {
+                            immediate = true;
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
@@ -126,7 +131,11 @@ impl Program {
             }
 
             let view = model.view();
-            renderer.render_if_changed(&mut terminal, &view)?;
+            if immediate {
+                renderer.render(&mut terminal, &view)?;
+            } else {
+                renderer.render_if_changed(&mut terminal, &view)?;
+            }
         }
 
         terminal.exit()?;

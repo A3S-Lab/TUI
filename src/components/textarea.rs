@@ -202,22 +202,46 @@ impl Textarea {
     }
 
     fn render_line_with_cursor(&self, line: &str) -> String {
-        let mut out = String::new();
+        use unicode_width::UnicodeWidthChar;
         let chars: Vec<char> = line.chars().collect();
+        let width = (self.width as usize).max(1);
+        let cw = |c: char| UnicodeWidthChar::width(c).unwrap_or(0);
 
+        // Display column of the cursor (CJK glyphs are 2 columns wide).
+        let cursor_disp: usize = chars.iter().take(self.cursor_col).map(|&c| cw(c)).sum();
+        // Horizontal scroll so the cursor stays in view, keeping 1 column of
+        // right margin for the cursor block.
+        let start = cursor_disp.saturating_sub(width.saturating_sub(1));
+
+        let mut out = String::new();
+        let mut disp = 0usize; // absolute display column scanned
+        let mut shown = 0usize; // visible columns emitted
         for (i, &ch) in chars.iter().enumerate() {
+            let w = cw(ch);
+            if disp < start {
+                disp += w; // starts before the scroll window — skip wholly
+                continue;
+            }
+            if shown + w > width {
+                break; // right edge reached
+            }
             if i == self.cursor_col {
-                out.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
+                out.push_str(&format!("\x1b[7m{ch}\x1b[0m"));
             } else {
                 out.push(ch);
             }
+            disp += w;
+            shown += w;
         }
-
-        if self.cursor_col >= chars.len() {
+        // Cursor sitting at end of line: draw a block if it fits the window.
+        if self.cursor_col >= chars.len() && shown < width {
             out.push_str("\x1b[7m \x1b[0m");
         }
-
         out
+    }
+
+    pub fn set_width(&mut self, w: u16) {
+        self.width = w;
     }
 
     // cursor_col is a CHAR index; convert to a byte offset before String ops.
@@ -415,6 +439,20 @@ mod tests {
         ta.handle_key(&key(KeyCode::Delete)); // deletes 'b' at col 2
         assert_eq!(ta.value(), "你好c世界");
         let _ = ta.view();
+    }
+
+    #[test]
+    fn cjk_cursor_stays_in_view_when_line_overflows() {
+        // Narrow box; type a long CJK line. The visible render must never exceed
+        // the width and must always include the cursor block at the end.
+        let mut ta = Textarea::new().with_width(8).with_height(1);
+        for c in "你好世界你好世界".chars() {
+            ta.handle_key(&key(KeyCode::Char(c)));
+        }
+        let line = ta.view();
+        let visible = crate::style::visible_len(&line); // ANSI-stripped display width
+        assert!(visible <= 8, "rendered width {visible} exceeds box width 8");
+        assert!(line.contains("\x1b[7m"), "cursor block must be visible");
     }
 
     #[test]
