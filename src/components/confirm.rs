@@ -1,5 +1,5 @@
-use crate::element::{BoxElement, BorderStyle, Element, FlexDirection, TextElement};
-use crate::event::{KeyEvent, MouseEvent, MouseEventKind, MouseButton};
+use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
+use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::Color;
 use crossterm::event::KeyCode;
 
@@ -91,9 +91,7 @@ impl Confirm {
                     .bg(Color::Red),
             )
         } else {
-            Element::Text(
-                TextElement::new(format!("  {}  ", self.no_label)).fg(Color::BrightBlack),
-            )
+            Element::Text(TextElement::new(format!("  {}  ", self.no_label)).fg(Color::BrightBlack))
         };
 
         let buttons = Element::Box(
@@ -123,7 +121,10 @@ mod tests {
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent { code, modifiers: KeyModifiers::NONE }
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]
@@ -180,8 +181,7 @@ mod tests {
 
     #[test]
     fn custom_labels() {
-        let confirm = Confirm::new("Proceed?")
-            .with_labels("Continue", "Abort");
+        let confirm = Confirm::new("Proceed?").with_labels("Continue", "Abort");
         assert_eq!(confirm.yes_label, "Continue");
         assert_eq!(confirm.no_label, "Abort");
     }

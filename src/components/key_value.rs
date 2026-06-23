@@ -53,9 +53,13 @@ impl KeyValue {
                 Element::Box(
                     BoxElement::new()
                         .direction(FlexDirection::Row)
-                        .child(Element::Text(TextElement::new(key.as_str()).fg(self.key_color)))
+                        .child(Element::Text(
+                            TextElement::new(key.as_str()).fg(self.key_color),
+                        ))
                         .child(Element::Text(TextElement::new(&self.separator)))
-                        .child(Element::Text(TextElement::new(value.as_str()).fg(self.value_color))),
+                        .child(Element::Text(
+                            TextElement::new(value.as_str()).fg(self.value_color),
+                        )),
                 )
             })
             .collect();

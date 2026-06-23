@@ -4,12 +4,7 @@ use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::LayoutResult;
 
-pub fn paint<Msg>(
-    root: &Element<Msg>,
-    layout: &LayoutResult,
-    width: u16,
-    height: u16,
-) -> Grid {
+pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
     let mut idx = 0;
     paint_element(&mut grid, root, layout, &mut idx, width, height);

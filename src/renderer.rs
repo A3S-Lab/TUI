@@ -33,11 +33,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render_if_changed(
-        &mut self,
-        terminal: &mut Terminal,
-        view: &str,
-    ) -> io::Result<()> {
+    pub fn render_if_changed(&mut self, terminal: &mut Terminal, view: &str) -> io::Result<()> {
         let new_lines: Vec<&str> = view.lines().collect();
         let same = new_lines.len() == self.last_lines.len()
             && new_lines

@@ -141,11 +141,21 @@ pub struct Edges {
 impl Edges {
     /// Set all four edges to the same value.
     pub fn all(v: u16) -> Self {
-        Self { top: v, right: v, bottom: v, left: v }
+        Self {
+            top: v,
+            right: v,
+            bottom: v,
+            left: v,
+        }
     }
     /// Set horizontal (x) and vertical (y) edges separately.
     pub fn xy(x: u16, y: u16) -> Self {
-        Self { top: y, right: x, bottom: y, left: x }
+        Self {
+            top: y,
+            right: x,
+            bottom: y,
+            left: x,
+        }
     }
 }
 
@@ -184,7 +194,6 @@ pub struct BoxStyle {
     pub bg: Option<Color>,
     pub overflow: Overflow,
 }
-
 
 /// A node in the UI element tree.
 ///

@@ -66,8 +66,7 @@ impl<T: std::fmt::Display> List<T> {
                 self.cursor = self.cursor.saturating_sub(self.height);
             }
             ListMsg::PageDown => {
-                self.cursor =
-                    (self.cursor + self.height).min(self.items.len().saturating_sub(1));
+                self.cursor = (self.cursor + self.height).min(self.items.len().saturating_sub(1));
             }
             ListMsg::Home => {
                 self.cursor = 0;

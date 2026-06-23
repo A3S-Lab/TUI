@@ -1,7 +1,6 @@
 use a3s_tui::cmd;
 use a3s_tui::components::{
-    Breadcrumb, Confirm, KeyValue, Paragraph, Scrollbar,
-    ToastKind, ToastManager, Tree, TreeNode,
+    Breadcrumb, Confirm, KeyValue, Paragraph, Scrollbar, ToastKind, ToastManager, Tree, TreeNode,
 };
 use a3s_tui::element::{BoxElement, FlexDirection, TextElement};
 use a3s_tui::style::Color;
@@ -54,9 +53,15 @@ impl ElementModel for App {
                 None
             }
             Msg::AddToast => {
-                let kinds = [ToastKind::Info, ToastKind::Success, ToastKind::Warning, ToastKind::Error];
+                let kinds = [
+                    ToastKind::Info,
+                    ToastKind::Success,
+                    ToastKind::Warning,
+                    ToastKind::Error,
+                ];
                 let kind = kinds[self.tick_count as usize % 4];
-                self.toasts.push(kind, format!("Notification #{}", self.tick_count));
+                self.toasts
+                    .push(kind, format!("Notification #{}", self.tick_count));
                 None
             }
             Msg::Noop => None,
@@ -81,17 +86,23 @@ impl ElementModel for App {
             .active_color(Color::Cyan)
             .element();
 
-        let tree = Tree::new(TreeNode::branch("a3s-tui", vec![
-            TreeNode::branch("src", vec![
-                TreeNode::leaf("lib.rs"),
-                TreeNode::leaf("element.rs"),
-                TreeNode::branch("components", vec![
-                    TreeNode::leaf("toast.rs"),
-                    TreeNode::leaf("tree.rs"),
-                ]),
-            ]),
-            TreeNode::leaf("Cargo.toml"),
-        ]))
+        let tree = Tree::new(TreeNode::branch(
+            "a3s-tui",
+            vec![
+                TreeNode::branch(
+                    "src",
+                    vec![
+                        TreeNode::leaf("lib.rs"),
+                        TreeNode::leaf("element.rs"),
+                        TreeNode::branch(
+                            "components",
+                            vec![TreeNode::leaf("toast.rs"), TreeNode::leaf("tree.rs")],
+                        ),
+                    ],
+                ),
+                TreeNode::leaf("Cargo.toml"),
+            ],
+        ))
         .element();
 
         let kv = KeyValue::new()
@@ -105,7 +116,7 @@ impl ElementModel for App {
 
         let paragraph = Paragraph::new(
             "A3S TUI is a TEA framework for building terminal UIs with Flexbox layout, \
-             incremental rendering, and a rich component library."
+             incremental rendering, and a rich component library.",
         )
         .width(50)
         .indent(2)
@@ -131,10 +142,7 @@ impl ElementModel for App {
             Element::Text(TextElement::new("  About:").bold().fg(Color::White)),
             paragraph,
             Element::Text(TextElement::new("")),
-            row![
-                Element::Text(TextElement::new("  Scroll: ")),
-                scrollbar,
-            ],
+            row![Element::Text(TextElement::new("  Scroll: ")), scrollbar,],
         ];
 
         if !self.toasts.is_empty() {

@@ -2,11 +2,11 @@
 //!
 //! Supports CommonMark via comrak and code highlighting via syntect.
 
-use comrak::{parse_document, Arena, Options};
 use comrak::nodes::{AstNode, NodeValue};
-use syntect::highlighting::{ThemeSet, Style as SynStyle};
-use syntect::parsing::SyntaxSet;
+use comrak::{parse_document, Arena, Options};
 use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style as SynStyle, ThemeSet};
+use syntect::parsing::SyntaxSet;
 
 use crate::style::{visible_len, Color, Style};
 
@@ -47,12 +47,7 @@ impl Markdown {
         output.join("\n")
     }
 
-    fn render_node<'a>(
-        &self,
-        node: &'a AstNode<'a>,
-        output: &mut Vec<String>,
-        depth: usize,
-    ) {
+    fn render_node<'a>(&self, node: &'a AstNode<'a>, output: &mut Vec<String>, depth: usize) {
         match &node.data.borrow().value {
             NodeValue::Document => {
                 for child in node.children() {
@@ -83,8 +78,13 @@ impl Markdown {
                 let highlighted = self.highlight_code(&code, &lang);
 
                 let border_style = Style::new().fg(Color::BrightBlack);
-                let top = border_style.render(&format!("┌─ {} {}", if lang.is_empty() { "code" } else { &lang }, "─".repeat(self.width.saturating_sub(lang.len() + 5))));
-                let bottom = border_style.render(&format!("└{}", "─".repeat(self.width.saturating_sub(1))));
+                let top = border_style.render(&format!(
+                    "┌─ {} {}",
+                    if lang.is_empty() { "code" } else { &lang },
+                    "─".repeat(self.width.saturating_sub(lang.len() + 5))
+                ));
+                let bottom =
+                    border_style.render(&format!("└{}", "─".repeat(self.width.saturating_sub(1))));
 
                 output.push(top);
                 for line in highlighted.lines() {
@@ -262,10 +262,7 @@ fn heading_color(level: u8) -> Color {
 
 fn style_to_ansi(style: &SynStyle, text: &str) -> String {
     let fg = style.foreground;
-    format!(
-        "\x1b[38;2;{};{};{}m{}\x1b[0m",
-        fg.r, fg.g, fg.b, text
-    )
+    format!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text)
 }
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {

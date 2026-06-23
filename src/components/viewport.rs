@@ -78,8 +78,7 @@ impl Viewport {
                 self.offset = self.offset.saturating_sub(self.height as usize);
             }
             ViewportMsg::PageDown => {
-                self.offset =
-                    (self.offset + self.height as usize).min(self.max_offset());
+                self.offset = (self.offset + self.height as usize).min(self.max_offset());
             }
             ViewportMsg::Top => {
                 self.offset = 0;

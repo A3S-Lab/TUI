@@ -21,9 +21,14 @@ enum Msg {
 impl From<Event> for Msg {
     fn from(event: Event) -> Self {
         match &event {
-            Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) => Msg::Quit,
-            Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers })
-                if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                ..
+            }) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+            }) if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
             _ => Msg::Event(event),
         }
     }
@@ -74,17 +79,12 @@ impl ElementModel for App {
         );
 
         let event_display = Element::Text(
-            TextElement::new(format!("  Last event: {}", self.last_event))
-                .fg(Color::Yellow),
+            TextElement::new(format!("  Last event: {}", self.last_event)).fg(Color::Yellow),
         );
 
-        let tabs_label = Element::Text(
-            TextElement::new("  Click a tab:").bold(),
-        );
+        let tabs_label = Element::Text(TextElement::new("  Click a tab:").bold());
 
-        let select_label = Element::Text(
-            TextElement::new("  Click an item (or use j/k):").bold(),
-        );
+        let select_label = Element::Text(TextElement::new("  Click an item (or use j/k):").bold());
 
         col![
             header,

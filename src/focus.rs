@@ -74,7 +74,8 @@ impl FocusManager {
     }
 
     pub fn current(&self) -> Option<FocusId> {
-        self.current.and_then(|idx| self.focusable.get(idx).copied())
+        self.current
+            .and_then(|idx| self.focusable.get(idx).copied())
     }
 
     pub fn clear(&mut self) {

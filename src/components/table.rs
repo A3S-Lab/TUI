@@ -43,10 +43,19 @@ impl Table {
         let mut lines: Vec<Element<Msg>> = Vec::new();
 
         let header_text = self.format_row(&self.headers);
-        lines.push(Element::Text(TextElement::new(header_text).bold().fg(Color::BrightWhite)));
+        lines.push(Element::Text(
+            TextElement::new(header_text).bold().fg(Color::BrightWhite),
+        ));
 
-        let separator = self.col_widths.iter().map(|w| "─".repeat(*w + 2)).collect::<Vec<_>>().join("┼");
-        lines.push(Element::Text(TextElement::new(separator).fg(Color::BrightBlack)));
+        let separator = self
+            .col_widths
+            .iter()
+            .map(|w| "─".repeat(*w + 2))
+            .collect::<Vec<_>>()
+            .join("┼");
+        lines.push(Element::Text(
+            TextElement::new(separator).fg(Color::BrightBlack),
+        ));
 
         for row in &self.rows {
             let row_text = self.format_row(row);
@@ -107,8 +116,7 @@ mod tests {
 
     #[test]
     fn col_widths_expand() {
-        let table = Table::new(vec!["X"])
-            .row(vec!["longer text"]);
+        let table = Table::new(vec!["X"]).row(vec!["longer text"]);
         assert_eq!(table.col_widths[0], 11);
     }
 

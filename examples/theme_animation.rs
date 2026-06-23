@@ -4,7 +4,9 @@ use a3s_tui::components::Progress;
 use a3s_tui::element::{BoxElement, FlexDirection, TextElement};
 use a3s_tui::event::KeyEvent;
 use a3s_tui::theme::Theme;
-use a3s_tui::{col, row, Element, ElementModel, ElementProgramBuilder, Event, KeyCode, KeyModifiers};
+use a3s_tui::{
+    col, row, Element, ElementModel, ElementProgramBuilder, Event, KeyCode, KeyModifiers,
+};
 use std::time::Duration;
 
 struct App {
@@ -25,10 +27,18 @@ enum Msg {
 impl From<Event> for Msg {
     fn from(event: Event) -> Self {
         match &event {
-            Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) => Msg::Quit,
-            Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers })
-                if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
-            Event::Key(KeyEvent { code: KeyCode::Char('t'), .. }) => Msg::NextTheme,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                ..
+            }) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers,
+            }) if modifiers.contains(KeyModifiers::CONTROL) => Msg::Quit,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('t'),
+                ..
+            }) => Msg::NextTheme,
             _ => Msg::Noop,
         }
     }
@@ -50,9 +60,11 @@ impl ElementModel for App {
                 self.progress.tick();
 
                 if !self.progress.is_animating() && self.progress.value() >= 1.0 {
-                    self.progress.animate_to(0.0, Duration::from_millis(800), Easing::EaseInOut);
+                    self.progress
+                        .animate_to(0.0, Duration::from_millis(800), Easing::EaseInOut);
                 } else if !self.progress.is_animating() && self.progress.value() <= 0.0 {
-                    self.progress.animate_to(1.0, Duration::from_millis(1500), Easing::EaseOut);
+                    self.progress
+                        .animate_to(1.0, Duration::from_millis(1500), Easing::EaseOut);
                 }
 
                 Some(cmd::tick(Duration::from_millis(50), Msg::Tick))
@@ -85,7 +97,9 @@ impl ElementModel for App {
                 .direction(FlexDirection::Row)
                 .bg(theme.surface)
                 .child(Element::Text(
-                    TextElement::new(" Theme & Animation Demo").bold().fg(theme.fg),
+                    TextElement::new(" Theme & Animation Demo")
+                        .bold()
+                        .fg(theme.fg),
                 ))
                 .child(Element::Spacer)
                 .child(Element::Text(
@@ -93,9 +107,8 @@ impl ElementModel for App {
                 )),
         );
 
-        let theme_info = Element::Text(
-            TextElement::new(format!("  Theme: {}", theme_name)).fg(theme.primary),
-        );
+        let theme_info =
+            Element::Text(TextElement::new(format!("  Theme: {}", theme_name)).fg(theme.primary));
 
         let colors_row = row![
             Element::Text(TextElement::new("  ").fg(theme.fg)),
@@ -121,19 +134,15 @@ impl ElementModel for App {
             .empty_color(theme.muted)
             .element();
 
-        let progress_row = row![
-            Element::Text(TextElement::new("  ")),
-            progress_el,
-        ];
+        let progress_row = row![Element::Text(TextElement::new("  ")), progress_el,];
 
         let bar_width = 30;
         let pos = (progress_val * bar_width as f64) as usize;
         let bounce_bar: String = (0..bar_width)
             .map(|i| if i == pos { '●' } else { '─' })
             .collect();
-        let bounce_el = Element::Text(
-            TextElement::new(format!("  {}", bounce_bar)).fg(theme.secondary),
-        );
+        let bounce_el =
+            Element::Text(TextElement::new(format!("  {}", bounce_bar)).fg(theme.secondary));
 
         col![
             header,

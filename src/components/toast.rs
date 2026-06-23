@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::element::{BoxElement, BorderStyle, Element, FlexDirection, TextElement};
+use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::style::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

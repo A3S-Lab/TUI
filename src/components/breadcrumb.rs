@@ -100,12 +100,10 @@ mod tests {
         let bc = Breadcrumb::new(vec!["a", "b"]).separator(" / ");
         let el: Element<()> = bc.element();
         match el {
-            Element::Box(b) => {
-                match &b.children[1] {
-                    Element::Text(t) => assert_eq!(t.content, " / "),
-                    _ => panic!("expected separator text"),
-                }
-            }
+            Element::Box(b) => match &b.children[1] {
+                Element::Text(t) => assert_eq!(t.content, " / "),
+                _ => panic!("expected separator text"),
+            },
             _ => panic!("expected Box"),
         }
     }

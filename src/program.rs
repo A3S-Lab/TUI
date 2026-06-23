@@ -7,8 +7,8 @@ use crate::terminal::{Terminal, TerminalOptions};
 use crossterm::event::EventStream;
 use futures_util::StreamExt;
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct ProgramBuilder<M: Model> {
@@ -75,11 +75,7 @@ impl Program {
         Self::run_inner(model, TerminalOptions::default(), 60).await
     }
 
-    async fn run_inner<M: Model>(
-        mut model: M,
-        options: TerminalOptions,
-        fps: u32,
-    ) -> io::Result<()>
+    async fn run_inner<M: Model>(mut model: M, options: TerminalOptions, fps: u32) -> io::Result<()>
     where
         M::Msg: From<Event>,
     {

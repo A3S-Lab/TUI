@@ -78,7 +78,9 @@ impl Transition {
 
     /// Advance the animation. Call once per frame.
     pub fn tick(&mut self) {
-        let Some(started) = self.started_at else { return };
+        let Some(started) = self.started_at else {
+            return;
+        };
         let elapsed = started.elapsed();
         if elapsed >= self.duration {
             self.current = self.to;
@@ -190,8 +192,8 @@ impl FrameAnimation {
 
 /// Predefined spinner frame sets.
 pub mod spinners {
-    use std::time::Duration;
     use super::FrameAnimation;
+    use std::time::Duration;
 
     pub fn dots() -> FrameAnimation {
         FrameAnimation::new(
@@ -201,10 +203,7 @@ pub mod spinners {
     }
 
     pub fn line() -> FrameAnimation {
-        FrameAnimation::new(
-            vec!["-", "\\", "|", "/"],
-            Duration::from_millis(130),
-        )
+        FrameAnimation::new(vec!["-", "\\", "|", "/"], Duration::from_millis(130))
     }
 
     pub fn bounce() -> FrameAnimation {
@@ -283,10 +282,7 @@ mod tests {
 
     #[test]
     fn frame_animation_cycles() {
-        let mut anim = FrameAnimation::new(
-            vec!["a", "b", "c"],
-            Duration::from_millis(1),
-        );
+        let mut anim = FrameAnimation::new(vec!["a", "b", "c"], Duration::from_millis(1));
         assert_eq!(anim.frame(), "a");
         anim.tick(); // initializes last_tick
         std::thread::sleep(Duration::from_millis(5));
@@ -302,10 +298,7 @@ mod tests {
 
     #[test]
     fn frame_animation_stop_start() {
-        let mut anim = FrameAnimation::new(
-            vec!["x", "y"],
-            Duration::from_millis(1),
-        );
+        let mut anim = FrameAnimation::new(vec!["x", "y"], Duration::from_millis(1));
         anim.stop();
         assert!(!anim.is_active());
         anim.tick();
