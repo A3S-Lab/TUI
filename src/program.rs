@@ -94,6 +94,12 @@ impl Program {
 
         let view = model.view();
         renderer.render(&mut terminal, &view)?;
+        // Place the cursor on the first frame too, so the input is focused
+        // immediately (not only after the first key event).
+        match model.cursor() {
+            Some((col, row)) => terminal.show_cursor_at(col, row)?,
+            None => terminal.hide_cursor()?,
+        }
 
         loop {
             if quit_flag.load(Ordering::Relaxed) {

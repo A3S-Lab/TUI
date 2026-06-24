@@ -59,12 +59,14 @@ impl Markdown {
                 }
             }
             NodeValue::Heading(heading) => {
-                let text = self.collect_text(node);
-                let prefix = "#".repeat(heading.level as usize);
+                // Clean heading: bold + colour, no literal "#" (Claude-style). A
+                // left bar marks h1/h2 for a little hierarchy.
+                let text = self.collect_inline(node);
+                let lead = if heading.level <= 2 { "▌ " } else { "" };
                 let styled = Style::new()
                     .bold()
                     .fg(heading_color(heading.level))
-                    .render(&format!("{} {}", prefix, text));
+                    .render(&format!("{lead}{text}"));
                 output.push(styled);
                 output.push(String::new());
             }
@@ -111,13 +113,12 @@ impl Markdown {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
                 let text = self.collect_inline_from_children(node);
-                let indent = " ".repeat(depth * 2);
                 let text = if checked.is_some() {
                     text
                 } else {
                     Style::new().fg(Color::BrightBlack).render(&text)
                 };
-                output.push(format!("{indent}{mark} {text}"));
+                self.push_list_item(output, depth, &mark, 1, &text);
                 for child in node.children() {
                     if matches!(&child.data.borrow().value, NodeValue::List(_)) {
                         self.render_node(child, output, depth + 1);
@@ -130,10 +131,10 @@ impl Markdown {
                 } else {
                     "•".to_string()
                 };
-                let text = self.collect_inline_from_children(node);
-                let indent = " ".repeat(depth * 2);
+                let bw = bullet.chars().count();
                 let bullet_style = Style::new().fg(Color::Cyan).render(&bullet);
-                output.push(format!("{}{} {}", indent, bullet_style, text));
+                let text = self.collect_inline_from_children(node);
+                self.push_list_item(output, depth, &bullet_style, bw, &text);
 
                 for child in node.children() {
                     if matches!(&child.data.borrow().value, NodeValue::List(_)) {
@@ -201,6 +202,31 @@ impl Markdown {
                 for child in node.children() {
                     self.render_node(child, output, depth);
                 }
+            }
+        }
+    }
+
+    /// Push a list item, wrapping long text with a hanging indent so it lines
+    /// up under the first character after the bullet. `bullet` is pre-styled;
+    /// `bw` is its visible width.
+    fn push_list_item(
+        &self,
+        output: &mut Vec<String>,
+        depth: usize,
+        bullet: &str,
+        bw: usize,
+        text: &str,
+    ) {
+        let prefix_w = depth * 2 + bw + 1;
+        let indent = " ".repeat(depth * 2);
+        let hang = " ".repeat(prefix_w);
+        let avail = self.width.saturating_sub(prefix_w).max(8);
+        let wrapped = wrap_text(text, avail);
+        for (i, line) in wrapped.iter().enumerate() {
+            if i == 0 {
+                output.push(format!("{indent}{bullet} {line}"));
+            } else {
+                output.push(format!("{hang}{line}"));
             }
         }
     }

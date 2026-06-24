@@ -36,6 +36,11 @@ impl Viewport {
         self
     }
 
+    /// Pause/resume auto-follow (e.g. when the user scrolls up mid-stream).
+    pub fn set_auto_scroll(&mut self, auto: bool) {
+        self.auto_scroll = auto;
+    }
+
     pub fn set_content(&mut self, content: &str) {
         self.lines = self.wrap_content(content);
         if self.auto_scroll {
@@ -127,15 +132,16 @@ impl Viewport {
 
     pub fn view(&self) -> String {
         let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
-        let visible: Vec<&str> = self.lines[self.offset..end]
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        // Clamp the offset: after a resize re-wraps to fewer lines, a stale
+        // offset would slice past the end and blank the whole transcript.
+        let max_off = self.lines.len().saturating_sub(h);
+        let offset = self.offset.min(max_off);
+        let end = (offset + h).min(self.lines.len());
+        let visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
 
         let mut result = visible.join("\n");
 
-        let visible_count = end - self.offset;
+        let visible_count = end - offset;
         if visible_count < h {
             for _ in 0..(h - visible_count) {
                 result.push('\n');
@@ -198,6 +204,15 @@ impl Viewport {
 }
 
 fn wrap_line(s: &str, width: usize) -> Vec<String> {
+    // The gutter prefixes content with leading spaces (the left margin); keep
+    // that indent on wrapped continuation lines so they don't fall back to the
+    // screen edge.
+    let indent = s
+        .chars()
+        .take_while(|c| *c == ' ')
+        .count()
+        .min(width.saturating_sub(8));
+    let pad = " ".repeat(indent);
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0;
@@ -220,8 +235,8 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
         if current_width + cw > width && current_width > 0 {
             lines.push(current);
-            current = String::new();
-            current_width = 0;
+            current = pad.clone();
+            current_width = indent;
         }
         current.push(c);
         current_width += cw;
@@ -249,6 +264,31 @@ mod tests {
         let view = vp.view();
         assert!(view.contains("line1"));
         assert!(view.contains("line3"));
+    }
+
+    #[test]
+    fn stale_offset_after_shrink_does_not_blank_or_panic() {
+        // Regression: scroll up, then resize to far fewer lines. A stale offset
+        // must clamp instead of slicing past the end (which blanked the screen).
+        let mut vp = Viewport::new(80, 5).with_auto_scroll(false);
+        vp.set_content(&(1..=50).map(|i| i.to_string()).collect::<Vec<_>>().join("\n"));
+        vp.update(ViewportMsg::ScrollDown(40)); // offset deep in the content
+        vp.set_content("only\ntwo"); // now far fewer lines
+        let view = vp.view();
+        assert!(view.contains("only"), "clamped offset still shows content");
+    }
+
+    #[test]
+    fn wrapped_line_keeps_leading_indent() {
+        // A gutter-indented long line wraps; continuations keep the indent
+        // instead of falling back to column 0. (Width must exceed indent+8, or
+        // the indent is capped to keep usable wrap width.)
+        let mut vp = Viewport::new(40, 5);
+        vp.set_content(&format!("    {}", "x".repeat(60)));
+        let view = vp.view();
+        let wrapped: Vec<&str> = view.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(wrapped.len() >= 2, "long line wrapped");
+        assert!(wrapped[1].starts_with("    "), "continuation keeps indent");
     }
 
     #[test]
