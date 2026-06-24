@@ -92,6 +92,18 @@ impl Terminal {
         self.stdout.flush()
     }
 
+    /// Show the real terminal cursor at `(col, row)` (e.g. the input insertion
+    /// point). Drawn after content so it lands on top.
+    pub fn show_cursor_at(&mut self, col: u16, row: u16) -> io::Result<()> {
+        queue!(self.stdout, cursor::MoveTo(col, row), cursor::Show)?;
+        self.stdout.flush()
+    }
+
+    pub fn hide_cursor(&mut self) -> io::Result<()> {
+        queue!(self.stdout, cursor::Hide)?;
+        self.stdout.flush()
+    }
+
     pub fn write_raw(&mut self, s: &str) -> io::Result<()> {
         write!(self.stdout, "{}", s)
     }

@@ -24,6 +24,14 @@ pub trait Model: Send + 'static {
 
     /// Render the current state to a string.
     fn view(&self) -> String;
+
+    /// Where to place the real terminal cursor as `(column, row)`, or `None` to
+    /// keep it hidden. Returning a position shows a normal blinking cursor at the
+    /// text insertion point — the correct behaviour for input fields (including
+    /// wide CJK glyphs), instead of a faked reverse-video block.
+    fn cursor(&self) -> Option<(u16, u16)> {
+        None
+    }
 }
 
 /// A TEA model with Element tree rendering and Flexbox layout.

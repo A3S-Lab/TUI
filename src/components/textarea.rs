@@ -201,23 +201,48 @@ impl Textarea {
         result.join("\n")
     }
 
-    fn render_line_with_cursor(&self, line: &str) -> String {
-        use unicode_width::UnicodeWidthChar;
-        let chars: Vec<char> = line.chars().collect();
-        let width = (self.width as usize).max(1);
-        let cw = |c: char| UnicodeWidthChar::width(c).unwrap_or(0);
+    fn char_width(c: char) -> usize {
+        unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)
+    }
 
-        // Display column of the cursor (CJK glyphs are 2 columns wide).
-        let cursor_disp: usize = chars.iter().take(self.cursor_col).map(|&c| cw(c)).sum();
-        // Horizontal scroll so the cursor stays in view, keeping 1 column of
-        // right margin for the cursor block.
-        let start = cursor_disp.saturating_sub(width.saturating_sub(1));
+    /// First visible display column of the cursor's line (horizontal scroll), so
+    /// the insertion point stays on screen. CJK glyphs count as 2 columns.
+    fn scroll_start(&self) -> usize {
+        let width = (self.width as usize).max(1);
+        let cursor_disp = self.cursor_display_col_abs();
+        cursor_disp.saturating_sub(width.saturating_sub(1))
+    }
+
+    /// Absolute display column of the insertion point within its line.
+    fn cursor_display_col_abs(&self) -> usize {
+        self.lines
+            .get(self.cursor_row)
+            .map(|line| {
+                line.chars()
+                    .take(self.cursor_col)
+                    .map(Self::char_width)
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Display column of the insertion point relative to the visible window —
+    /// what a host needs to place the real terminal cursor.
+    pub fn cursor_display_col(&self) -> usize {
+        self.cursor_display_col_abs() - self.scroll_start()
+    }
+
+    /// Render the cursor's line as plain (horizontally scrolled) text; the real
+    /// terminal cursor marks the insertion point, so no reverse-video block here.
+    fn render_line_with_cursor(&self, line: &str) -> String {
+        let width = (self.width as usize).max(1);
+        let start = self.scroll_start();
 
         let mut out = String::new();
         let mut disp = 0usize; // absolute display column scanned
         let mut shown = 0usize; // visible columns emitted
-        for (i, &ch) in chars.iter().enumerate() {
-            let w = cw(ch);
+        for ch in line.chars() {
+            let w = Self::char_width(ch);
             if disp < start {
                 disp += w; // starts before the scroll window — skip wholly
                 continue;
@@ -225,17 +250,9 @@ impl Textarea {
             if shown + w > width {
                 break; // right edge reached
             }
-            if i == self.cursor_col {
-                out.push_str(&format!("\x1b[7m{ch}\x1b[0m"));
-            } else {
-                out.push(ch);
-            }
+            out.push(ch);
             disp += w;
             shown += w;
-        }
-        // Cursor sitting at end of line: draw a block if it fits the window.
-        if self.cursor_col >= chars.len() && shown < width {
-            out.push_str("\x1b[7m \x1b[0m");
         }
         out
     }
@@ -452,7 +469,13 @@ mod tests {
         let line = ta.view();
         let visible = crate::style::visible_len(&line); // ANSI-stripped display width
         assert!(visible <= 8, "rendered width {visible} exceeds box width 8");
-        assert!(line.contains("\x1b[7m"), "cursor block must be visible");
+        // Insertion point must stay within the visible window for the host to
+        // place the real cursor on it.
+        assert!(
+            ta.cursor_display_col() <= 8,
+            "cursor col {} out of view",
+            ta.cursor_display_col()
+        );
     }
 
     #[test]
