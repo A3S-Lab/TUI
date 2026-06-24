@@ -109,6 +109,10 @@ impl Program {
                     match event {
                         Some(Ok(ct_event)) => {
                             immediate = true;
+                            // A resize shifts every row — force a full clear+redraw.
+                            if matches!(ct_event, crossterm::event::Event::Resize(_, _)) {
+                                renderer.invalidate();
+                            }
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
@@ -135,6 +139,12 @@ impl Program {
                 renderer.render(&mut terminal, &view)?;
             } else {
                 renderer.render_if_changed(&mut terminal, &view)?;
+            }
+            // Place the real terminal cursor at the model's insertion point (or
+            // hide it). Done after rendering so it sits on top of the content.
+            match model.cursor() {
+                Some((col, row)) => terminal.show_cursor_at(col, row)?,
+                None => terminal.hide_cursor()?,
             }
         }
 

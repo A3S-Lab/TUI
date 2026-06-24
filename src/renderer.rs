@@ -20,6 +20,12 @@ impl Renderer {
         }
     }
 
+    /// Force the next render to be a full clear + redraw (e.g. after a resize,
+    /// where row positions shift and a diff would leave artifacts).
+    pub fn invalidate(&mut self) {
+        self.first_render = true;
+    }
+
     pub fn render(&mut self, terminal: &mut Terminal, view: &str) -> io::Result<()> {
         if self.first_render {
             terminal.draw(view)?;

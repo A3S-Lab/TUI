@@ -39,7 +39,11 @@ impl Markdown {
 
     pub fn render(&self, input: &str) -> String {
         let arena = Arena::new();
-        let options = Options::default();
+        let mut options = Options::default();
+        options.extension.table = true;
+        options.extension.strikethrough = true;
+        options.extension.autolink = true;
+        options.extension.tasklist = true;
         let root = parse_document(&arena, input, &options);
 
         let mut output = Vec::new();
@@ -70,7 +74,8 @@ impl Markdown {
                 for line in wrapped {
                     output.push(format!("{}{}", " ".repeat(depth * 2), line));
                 }
-                output.push(String::new());
+                // No trailing blank line — keeps chat messages tight (a model that
+                // writes one sentence per paragraph would otherwise be double-spaced).
             }
             NodeValue::CodeBlock(cb) => {
                 let lang = cb.info.clone();
@@ -98,6 +103,27 @@ impl Markdown {
                     self.render_node(child, output, depth);
                 }
             }
+            // Task-list item ("- [x]" / "- [ ]") — render as a plan checklist.
+            NodeValue::TaskItem(checked) => {
+                let mark = if checked.is_some() {
+                    Style::new().fg(Color::Green).bold().render("✔")
+                } else {
+                    Style::new().fg(Color::BrightBlack).render("□")
+                };
+                let text = self.collect_inline_from_children(node);
+                let indent = " ".repeat(depth * 2);
+                let text = if checked.is_some() {
+                    text
+                } else {
+                    Style::new().fg(Color::BrightBlack).render(&text)
+                };
+                output.push(format!("{indent}{mark} {text}"));
+                for child in node.children() {
+                    if matches!(&child.data.borrow().value, NodeValue::List(_)) {
+                        self.render_node(child, output, depth + 1);
+                    }
+                }
+            }
             NodeValue::Item(item) => {
                 let bullet = if item.list_type == comrak::nodes::ListType::Ordered {
                     format!("{}.", item.start)
@@ -120,7 +146,6 @@ impl Markdown {
                 let bar = Style::new().fg(Color::BrightBlack).render("│");
                 let styled_text = Style::new().italic().fg(Color::White).render(&text);
                 output.push(format!("{} {}", bar, styled_text));
-                output.push(String::new());
             }
             NodeValue::ThematicBreak => {
                 let rule = Style::new()
@@ -128,6 +153,49 @@ impl Markdown {
                     .render(&"─".repeat(self.width));
                 output.push(rule);
                 output.push(String::new());
+            }
+            NodeValue::Table(_) => {
+                let mut rows: Vec<Vec<String>> = Vec::new();
+                for row in node.children() {
+                    if matches!(&row.data.borrow().value, NodeValue::TableRow(_)) {
+                        rows.push(
+                            row.children()
+                                .map(|cell| self.collect_inline(cell).trim().to_string())
+                                .collect(),
+                        );
+                    }
+                }
+                if rows.is_empty() {
+                    return;
+                }
+                let ncols = rows.iter().map(Vec::len).max().unwrap_or(0);
+                let mut widths = vec![0usize; ncols];
+                for r in &rows {
+                    for (i, c) in r.iter().enumerate() {
+                        widths[i] = widths[i].max(visible_len(c));
+                    }
+                }
+                let border = Style::new().fg(Color::BrightBlack);
+                let rule = |l: &str, m: &str, r: &str| -> String {
+                    let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+                    border.render(&format!("{l}{}{r}", segs.join(m)))
+                };
+                let bar = border.render("│");
+                output.push(rule("┌", "┬", "┐"));
+                for (ri, cells) in rows.iter().enumerate() {
+                    let mut line = bar.clone();
+                    for (i, w) in widths.iter().enumerate() {
+                        let c = cells.get(i).map(String::as_str).unwrap_or("");
+                        let pad = w.saturating_sub(visible_len(c));
+                        line.push_str(&format!(" {c}{} ", " ".repeat(pad)));
+                        line.push_str(&bar);
+                    }
+                    output.push(line);
+                    if ri == 0 {
+                        output.push(rule("├", "┼", "┤"));
+                    }
+                }
+                output.push(rule("└", "┴", "┘"));
             }
             _ => {
                 for child in node.children() {
