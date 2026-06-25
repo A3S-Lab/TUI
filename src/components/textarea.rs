@@ -66,7 +66,14 @@ impl Textarea {
 
     fn fit_height(&mut self) {
         if let Some(max) = self.auto_grow_max {
-            self.height = (self.lines.len() as u16).clamp(1, max);
+            let n = self.lines.len() as u16;
+            self.height = n.clamp(1, max);
+            // The box grew to fit every line, so the internal scroll offset (set
+            // while the height was smaller, to follow the cursor) must reset —
+            // otherwise earlier lines stay scrolled out of view.
+            if n <= max {
+                self.offset = 0;
+            }
         }
     }
 
@@ -519,6 +526,21 @@ mod tests {
         ta.handle_key(&key(KeyCode::Enter));
         ta.handle_key(&key(KeyCode::Char('b')));
         assert_eq!(ta.value(), "a\nb");
+    }
+
+    #[test]
+    fn auto_grow_shows_all_lines_after_newline() {
+        // Regression: with auto-grow, adding a newline grew the height but left
+        // the scroll offset following the cursor, hiding the first line. The box
+        // must show BOTH lines (height grows, offset resets).
+        let mut ta = Textarea::new().with_height(1).with_auto_grow(8);
+        ta.handle_key(&key(KeyCode::Char('a')));
+        ta.handle_key(&key(KeyCode::Enter));
+        ta.handle_key(&key(KeyCode::Char('b')));
+        assert_eq!(ta.height(), 2, "box grew to two rows");
+        let view = ta.view();
+        assert!(view.contains('a'), "first line still visible");
+        assert!(view.contains('b'), "second line visible");
     }
 
     #[test]
