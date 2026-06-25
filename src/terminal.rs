@@ -1,6 +1,19 @@
 use crossterm::{cursor, execute, queue, terminal};
 use std::io::{self, Stdout, Write};
 
+/// Toggle mouse capture at runtime. Capture ON lets the app read wheel/scroll
+/// events but disables the terminal's native click-drag text selection; OFF
+/// restores it. `Terminal::exit` always disables, so leftover capture can't
+/// leak into the shell.
+pub fn set_mouse_capture(on: bool) {
+    let mut out = io::stdout();
+    let _ = if on {
+        execute!(out, crossterm::event::EnableMouseCapture)
+    } else {
+        execute!(out, crossterm::event::DisableMouseCapture)
+    };
+}
+
 pub struct Terminal {
     stdout: Stdout,
     alt_screen: bool,
@@ -62,9 +75,9 @@ impl Terminal {
         execute!(self.stdout, cursor::Show)?;
         // Harmless if nothing was pushed (empty stack / unsupported terminal).
         let _ = execute!(self.stdout, crossterm::event::PopKeyboardEnhancementFlags);
-        if self.mouse_support {
-            execute!(self.stdout, crossterm::event::DisableMouseCapture)?;
-        }
+        // Always disable — harmless if never enabled, and the app may have
+        // toggled capture on at runtime via `set_mouse_capture`.
+        let _ = execute!(self.stdout, crossterm::event::DisableMouseCapture);
         if self.alt_screen {
             execute!(self.stdout, terminal::LeaveAlternateScreen)?;
         }
