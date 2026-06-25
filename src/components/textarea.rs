@@ -14,6 +14,8 @@ pub struct Textarea {
     focused: bool,
     char_limit: Option<usize>,
     submit_on_enter: bool,
+    /// When set, the height auto-fits the line count, clamped to this max.
+    auto_grow_max: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,7 @@ impl Textarea {
             focused: true,
             char_limit: None,
             submit_on_enter: false,
+            auto_grow_max: None,
         }
     }
 
@@ -46,6 +49,25 @@ impl Textarea {
     pub fn with_height(mut self, h: u16) -> Self {
         self.height = h;
         self
+    }
+
+    /// Auto-fit the visible height to the number of lines (1..=max), so the box
+    /// grows with embedded newlines instead of scrolling a single row.
+    pub fn with_auto_grow(mut self, max: u16) -> Self {
+        self.auto_grow_max = Some(max.max(1));
+        self.fit_height();
+        self
+    }
+
+    /// Current visible height (rows). Grows with content when auto-grow is on.
+    pub fn height(&self) -> u16 {
+        self.height
+    }
+
+    fn fit_height(&mut self) {
+        if let Some(max) = self.auto_grow_max {
+            self.height = (self.lines.len() as u16).clamp(1, max);
+        }
     }
 
     pub fn with_width(mut self, w: u16) -> Self {
@@ -81,6 +103,7 @@ impl Textarea {
         }
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
+        self.fit_height();
     }
 
     pub fn clear(&mut self) {
@@ -88,6 +111,7 @@ impl Textarea {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.offset = 0;
+        self.fit_height();
     }
 
     pub fn total_chars(&self) -> usize {
@@ -99,7 +123,7 @@ impl Textarea {
             return None;
         }
 
-        match (key.code, key.modifiers) {
+        let result = match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) if self.submit_on_enter => {
                 Some(TextareaMsg::Submit(self.value()))
             }
@@ -180,7 +204,9 @@ impl Textarea {
                 None
             }
             _ => None,
-        }
+        };
+        self.fit_height();
+        result
     }
 
     pub fn view(&self) -> String {
