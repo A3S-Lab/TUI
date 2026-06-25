@@ -112,18 +112,9 @@ impl Markdown {
                 } else {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
-                let text = self.collect_inline_from_children(node);
-                let text = if checked.is_some() {
-                    text
-                } else {
-                    Style::new().fg(Color::BrightBlack).render(&text)
-                };
-                self.push_list_item(output, depth, &mark, 1, &text);
-                for child in node.children() {
-                    if matches!(&child.data.borrow().value, NodeValue::List(_)) {
-                        self.render_node(child, output, depth + 1);
-                    }
-                }
+                // Same structure as a list item: first paragraph is the checkbox
+                // label, the rest renders recursively at depth+1.
+                self.render_item_body(node, output, depth, &mark, 1, checked.is_none());
             }
             NodeValue::Item(item) => {
                 let bullet = if item.list_type == comrak::nodes::ListType::Ordered {
@@ -133,14 +124,11 @@ impl Markdown {
                 };
                 let bw = bullet.chars().count();
                 let bullet_style = Style::new().fg(Color::Rgb(122, 162, 247)).render(&bullet);
-                let text = self.collect_inline_from_children(node);
-                self.push_list_item(output, depth, &bullet_style, bw, &text);
-
-                for child in node.children() {
-                    if matches!(&child.data.borrow().value, NodeValue::List(_)) {
-                        self.render_node(child, output, depth + 1);
-                    }
-                }
+                // The item's first paragraph is its bulleted label; every other
+                // block child (nested list, code block, extra paragraph) renders
+                // through the normal recursive path at depth+1. (Flattening the
+                // whole subtree into the label is what rendered nested lists twice.)
+                self.render_item_body(node, output, depth, &bullet_style, bw, false);
             }
             NodeValue::BlockQuote => {
                 let text = self.collect_inline_from_children(node);
@@ -228,6 +216,43 @@ impl Markdown {
             } else {
                 output.push(format!("{hang}{line}"));
             }
+        }
+    }
+
+    /// Render a list-item body: the item's first paragraph becomes the bulleted
+    /// label; every other block child (nested list, code block, extra paragraph)
+    /// renders through the normal recursive path at `depth + 1`. This is the
+    /// single source of truth for item layout — no subtree flattening, so a
+    /// nested list renders once (as a sub-list), never also jammed into the label.
+    /// `dim` greys the label (unchecked task items).
+    fn render_item_body<'a>(
+        &self,
+        node: &'a AstNode<'a>,
+        output: &mut Vec<String>,
+        depth: usize,
+        bullet: &str,
+        bw: usize,
+        dim: bool,
+    ) {
+        let mut labeled = false;
+        for child in node.children() {
+            if !labeled && matches!(&child.data.borrow().value, NodeValue::Paragraph) {
+                let text = self.collect_inline(child);
+                let text = if dim {
+                    Style::new().fg(Color::BrightBlack).render(&text)
+                } else {
+                    text
+                };
+                self.push_list_item(output, depth, bullet, bw, &text);
+                labeled = true;
+            } else {
+                self.render_node(child, output, depth + 1);
+            }
+        }
+        // An item that starts with a sub-list (no leading paragraph) still gets a
+        // bullet so the nesting reads correctly.
+        if !labeled {
+            self.push_list_item(output, depth, bullet, bw, "");
         }
     }
 
@@ -458,6 +483,21 @@ mod tests {
         let plain = strip_ansi(&output);
         assert!(plain.contains("item 1"));
         assert!(plain.contains("item 2"));
+    }
+
+    #[test]
+    fn nested_list_item_not_duplicated() {
+        // A nested list must render ONCE (as a sub-list), not also flattened into
+        // the parent item's text — regression for "paragraph + its ordered list".
+        let md = Markdown::new();
+        let output = md.render("1. Parent\n   1. Child A\n   2. Child B");
+        let plain = strip_ansi(&output);
+        assert_eq!(
+            plain.matches("Child A").count(),
+            1,
+            "nested item rendered twice:\n{plain}"
+        );
+        assert_eq!(plain.matches("Child B").count(), 1);
     }
 
     #[test]
