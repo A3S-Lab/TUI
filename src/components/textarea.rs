@@ -107,6 +107,14 @@ impl Textarea {
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
+            // Shift/Alt+Enter inserts a newline instead of submitting (works in
+            // terminals that report the modifier; some fold it into plain Enter).
+            (KeyCode::Enter, m)
+                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
+            {
+                self.insert_newline();
+                Some(TextareaMsg::Changed(self.value()))
+            }
             (KeyCode::Char('j'), m) if m.contains(KeyModifiers::CONTROL) => {
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))

@@ -44,12 +44,24 @@ impl Terminal {
         if self.mouse_support {
             execute!(self.stdout, crossterm::event::EnableMouseCapture)?;
         }
+        // Kitty keyboard protocol where supported → modified keys like
+        // Shift+Enter are reported distinctly. Terminals without it ignore this.
+        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+            let _ = execute!(
+                self.stdout,
+                crossterm::event::PushKeyboardEnhancementFlags(
+                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
+        }
         execute!(self.stdout, cursor::Hide)?;
         Ok(())
     }
 
     pub fn exit(&mut self) -> io::Result<()> {
         execute!(self.stdout, cursor::Show)?;
+        // Harmless if nothing was pushed (empty stack / unsupported terminal).
+        let _ = execute!(self.stdout, crossterm::event::PopKeyboardEnhancementFlags);
         if self.mouse_support {
             execute!(self.stdout, crossterm::event::DisableMouseCapture)?;
         }
