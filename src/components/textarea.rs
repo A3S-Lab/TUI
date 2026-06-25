@@ -273,6 +273,12 @@ impl Textarea {
         self.cursor_display_col_abs() - self.scroll_start()
     }
 
+    /// The cursor's row within the visible window (for multi-line input — the
+    /// host places the real terminal cursor on this row).
+    pub fn cursor_row(&self) -> usize {
+        self.cursor_row.saturating_sub(self.offset)
+    }
+
     /// Render the cursor's line as plain (horizontally scrolled) text; the real
     /// terminal cursor marks the insertion point, so no reverse-video block here.
     fn render_line_with_cursor(&self, line: &str) -> String {
