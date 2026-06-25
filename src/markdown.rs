@@ -108,7 +108,7 @@ impl Markdown {
             // Task-list item ("- [x]" / "- [ ]") — render as a plan checklist.
             NodeValue::TaskItem(checked) => {
                 let mark = if checked.is_some() {
-                    Style::new().fg(Color::Rgb(152, 195, 121)).bold().render("✔")
+                    Style::new().fg(Color::Rgb(158, 206, 106)).bold().render("✔")
                 } else {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
@@ -132,7 +132,7 @@ impl Markdown {
                     "•".to_string()
                 };
                 let bw = bullet.chars().count();
-                let bullet_style = Style::new().fg(Color::Rgb(97, 175, 239)).render(&bullet);
+                let bullet_style = Style::new().fg(Color::Rgb(122, 162, 247)).render(&bullet);
                 let text = self.collect_inline_from_children(node);
                 self.push_list_item(output, depth, &bullet_style, bw, &text);
 
@@ -344,14 +344,14 @@ impl Default for Markdown {
     }
 }
 
-// Atom One Dark-aligned heading palette (cohesive RGB, not garish ANSI brights).
+// Tokyo Night heading palette (cohesive, low-saturation RGB).
 fn heading_color(level: u8) -> Color {
     match level {
-        1 => Color::Rgb(97, 175, 239),  // blue
-        2 => Color::Rgb(198, 120, 221), // purple
-        3 => Color::Rgb(86, 182, 194),  // cyan
-        4 => Color::Rgb(152, 195, 121), // green
-        _ => Color::Rgb(171, 178, 191), // soft fg
+        1 => Color::Rgb(122, 162, 247), // blue
+        2 => Color::Rgb(187, 154, 247), // purple
+        3 => Color::Rgb(125, 207, 255), // cyan
+        4 => Color::Rgb(158, 206, 106), // green
+        _ => Color::Rgb(192, 202, 245), // fg
     }
 }
 
