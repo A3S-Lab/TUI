@@ -317,6 +317,18 @@ impl Textarea {
         line.chars().count()
     }
 
+    /// Insert a (possibly multi-line) string at the cursor — used for paste, so
+    /// newlines become real line breaks instead of submitting the message.
+    pub fn insert_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            match ch {
+                '\n' => self.insert_newline(),
+                '\r' => {} // drop CR so CRLF pastes don't double-break
+                _ => self.insert_char(ch),
+            }
+        }
+    }
+
     fn insert_char(&mut self, c: char) {
         let off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
         self.lines[self.cursor_row].insert(off, c);
