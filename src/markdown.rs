@@ -23,7 +23,7 @@ impl Markdown {
             width: 80,
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
-            theme_name: "base16-ocean.dark".to_string(),
+            theme_name: "base16-eighties.dark".to_string(),
         }
     }
 
@@ -108,7 +108,10 @@ impl Markdown {
             // Task-list item ("- [x]" / "- [ ]") — render as a plan checklist.
             NodeValue::TaskItem(checked) => {
                 let mark = if checked.is_some() {
-                    Style::new().fg(Color::Rgb(158, 206, 106)).bold().render("✔")
+                    Style::new()
+                        .fg(Color::Rgb(158, 206, 106))
+                        .bold()
+                        .render("✔")
                 } else {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
