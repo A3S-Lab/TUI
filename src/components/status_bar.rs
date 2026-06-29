@@ -80,9 +80,12 @@ impl StatusBar {
         let mut line = String::new();
         line.push_str(&self.left);
 
-        let space_for_center = w.saturating_sub(left_width + right_width);
-        if center_width > 0 && space_for_center >= center_width {
-            let center_start = (w.saturating_sub(center_width)) / 2;
+        let right_start = w.saturating_sub(right_width);
+        let center_start = (w.saturating_sub(center_width)) / 2;
+        let center_fits = center_width > 0
+            && center_start > left_width
+            && center_start + center_width < right_start;
+        if center_fits {
             let pad_before = center_start.saturating_sub(left_width);
             line.push_str(&" ".repeat(pad_before));
             line.push_str(&self.center);
@@ -148,6 +151,21 @@ mod tests {
         assert!(plain.starts_with('L'));
         assert!(plain.ends_with('R'));
         assert_eq!(plain.len(), 20);
+    }
+
+    #[test]
+    fn hides_center_when_it_would_touch_left_or_right() {
+        let sb = StatusBar::new()
+            .left("left side is fairly long")
+            .center("center")
+            .right("right");
+        let view = sb.view(32);
+        let plain = strip_ansi(&view);
+
+        assert!(!plain.contains("longcenter"));
+        assert!(!plain.contains("centerright"));
+        assert!(!plain.contains("center"));
+        assert_eq!(plain.len(), 32);
     }
 
     #[test]

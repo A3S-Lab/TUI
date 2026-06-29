@@ -57,6 +57,10 @@ impl Terminal {
         if self.mouse_support {
             execute!(self.stdout, crossterm::event::EnableMouseCapture)?;
         }
+        // Bracketed paste: deliver a paste as one Event::Paste(text) instead of
+        // a stream of keystrokes, so multi-line paste fills the input rather than
+        // submitting line by line. Harmless where unsupported.
+        let _ = execute!(self.stdout, crossterm::event::EnableBracketedPaste);
         // Kitty keyboard protocol where supported → modified keys like
         // Shift+Enter are reported distinctly. Terminals without it ignore this.
         if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
@@ -78,6 +82,7 @@ impl Terminal {
         // Always disable — harmless if never enabled, and the app may have
         // toggled capture on at runtime via `set_mouse_capture`.
         let _ = execute!(self.stdout, crossterm::event::DisableMouseCapture);
+        let _ = execute!(self.stdout, crossterm::event::DisableBracketedPaste);
         if self.alt_screen {
             execute!(self.stdout, terminal::LeaveAlternateScreen)?;
         }

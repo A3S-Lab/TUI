@@ -271,7 +271,12 @@ mod tests {
         // Regression: scroll up, then resize to far fewer lines. A stale offset
         // must clamp instead of slicing past the end (which blanked the screen).
         let mut vp = Viewport::new(80, 5).with_auto_scroll(false);
-        vp.set_content(&(1..=50).map(|i| i.to_string()).collect::<Vec<_>>().join("\n"));
+        vp.set_content(
+            &(1..=50)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         vp.update(ViewportMsg::ScrollDown(40)); // offset deep in the content
         vp.set_content("only\ntwo"); // now far fewer lines
         let view = vp.view();

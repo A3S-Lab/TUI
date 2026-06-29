@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{truncate_visible, visible_len, Color, Style};
 
 /// A tree node for hierarchical display.
 pub struct TreeNode {
@@ -71,6 +71,31 @@ impl Tree {
         )
     }
 
+    pub fn view(&self, width: u16, height: usize) -> String {
+        let width = width as usize;
+        if width == 0 || height == 0 {
+            return String::new();
+        }
+
+        let mut lines = Vec::new();
+        self.render_node_lines(&self.root, &mut lines, "", true);
+        lines
+            .into_iter()
+            .take(height)
+            .map(|(line, color, bold)| {
+                let clipped = truncate_visible(&line, width);
+                let padded = pad_visible(&clipped, width);
+                let style = if bold {
+                    Style::new().fg(color).bold()
+                } else {
+                    Style::new().fg(color)
+                };
+                style.render(&padded)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn render_node<Msg>(
         &self,
         node: &TreeNode,
@@ -108,11 +133,56 @@ impl Tree {
             self.render_node(child, lines, &display_prefix, false);
         }
     }
+
+    fn render_node_lines(
+        &self,
+        node: &TreeNode,
+        lines: &mut Vec<(String, Color, bool)>,
+        prefix: &str,
+        is_root: bool,
+    ) {
+        let color = if node.children.is_empty() {
+            self.leaf_color
+        } else {
+            self.branch_color
+        };
+
+        if is_root {
+            lines.push((node.label.clone(), color, true));
+        } else {
+            lines.push((format!("{}{}", prefix, node.label), color, false));
+        }
+
+        let child_count = node.children.len();
+        for (i, child) in node.children.iter().enumerate() {
+            let is_last = i == child_count - 1;
+            let connector = if is_last { "└── " } else { "├── " };
+
+            let display_prefix = if is_root {
+                connector.to_string()
+            } else {
+                let base = prefix.replace("├── ", "│   ").replace("└── ", "    ");
+                format!("{}{}", base, connector)
+            };
+
+            self.render_node_lines(child, lines, &display_prefix, false);
+        }
+    }
+}
+
+fn pad_visible(s: &str, width: usize) -> String {
+    let len = visible_len(s);
+    if len >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - len))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::strip_ansi;
 
     #[test]
     fn single_leaf() {
@@ -154,5 +224,38 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn view_renders_connectors_and_padding() {
+        let tree = Tree::new(TreeNode::branch(
+            "root",
+            vec![TreeNode::leaf("one"), TreeNode::leaf("two")],
+        ));
+
+        let rendered = tree.view(16, 4);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("root"));
+        assert!(plain.contains("├── one"));
+        assert!(plain.contains("└── two"));
+        assert!(plain.lines().all(|line| visible_len(line) == 16));
+    }
+
+    #[test]
+    fn view_truncates_and_limits_height() {
+        let tree = Tree::new(TreeNode::branch(
+            "root-with-a-long-name",
+            vec![TreeNode::leaf("child"), TreeNode::leaf("hidden")],
+        ));
+
+        let rendered = tree.view(10, 2);
+        let plain = strip_ansi(&rendered);
+        let lines = plain.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains('…'));
+        assert!(plain.contains("child"));
+        assert!(!plain.contains("hidden"));
     }
 }

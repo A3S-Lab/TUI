@@ -1,6 +1,6 @@
 //! Color, style, and text formatting utilities.
 
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
@@ -530,6 +530,53 @@ impl Style {
 pub fn visible_len(s: &str) -> usize {
     let stripped = strip_ansi(s);
     UnicodeWidthStr::width(stripped.as_str())
+}
+
+/// Truncate a string to a visible width, preserving ANSI escape sequences.
+pub fn truncate_visible(s: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if visible_len(s) <= width {
+        return s.to_string();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+
+    let target = width - 1;
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    let mut used = 0;
+    let mut saw_ansi = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            saw_ansi = true;
+            out.push(ch);
+            out.push(chars.next().expect("peeked CSI introducer"));
+            for next in chars.by_ref() {
+                out.push(next);
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cw > target {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+
+    out.push('…');
+    if saw_ansi {
+        out.push_str("\x1b[0m");
+    }
+    out
 }
 
 /// Strip ANSI escape sequences from a string.
