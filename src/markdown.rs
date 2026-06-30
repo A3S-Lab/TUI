@@ -23,7 +23,7 @@ impl Markdown {
             width: 80,
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
-            theme_name: "base16-ocean.dark".to_string(),
+            theme_name: "base16-eighties.dark".to_string(),
         }
     }
 
@@ -59,12 +59,14 @@ impl Markdown {
                 }
             }
             NodeValue::Heading(heading) => {
-                let text = self.collect_text(node);
-                let prefix = "#".repeat(heading.level as usize);
+                // Clean heading: bold + colour, no literal "#" (Claude-style). A
+                // left bar marks h1/h2 for a little hierarchy.
+                let text = self.collect_inline(node);
+                let lead = if heading.level <= 2 { "▌ " } else { "" };
                 let styled = Style::new()
                     .bold()
                     .fg(heading_color(heading.level))
-                    .render(&format!("{} {}", prefix, text));
+                    .render(&format!("{lead}{text}"));
                 output.push(styled);
                 output.push(String::new());
             }
@@ -110,19 +112,9 @@ impl Markdown {
                 } else {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
-                let text = self.collect_inline_from_children(node);
-                let indent = " ".repeat(depth * 2);
-                let text = if checked.is_some() {
-                    text
-                } else {
-                    Style::new().fg(Color::BrightBlack).render(&text)
-                };
-                output.push(format!("{indent}{mark} {text}"));
-                for child in node.children() {
-                    if matches!(&child.data.borrow().value, NodeValue::List(_)) {
-                        self.render_node(child, output, depth + 1);
-                    }
-                }
+                // Same structure as a list item: first paragraph is the checkbox
+                // label, the rest renders recursively at depth+1.
+                self.render_item_body(node, output, depth, &mark, 1, checked.is_none());
             }
             NodeValue::Item(item) => {
                 let bullet = if item.list_type == comrak::nodes::ListType::Ordered {
@@ -130,16 +122,13 @@ impl Markdown {
                 } else {
                     "•".to_string()
                 };
-                let text = self.collect_inline_from_children(node);
-                let indent = " ".repeat(depth * 2);
-                let bullet_style = Style::new().fg(Color::Cyan).render(&bullet);
-                output.push(format!("{}{} {}", indent, bullet_style, text));
-
-                for child in node.children() {
-                    if matches!(&child.data.borrow().value, NodeValue::List(_)) {
-                        self.render_node(child, output, depth + 1);
-                    }
-                }
+                let bw = bullet.chars().count();
+                let bullet_style = Style::new().fg(Color::Rgb(122, 162, 247)).render(&bullet);
+                // The item's first paragraph is its bulleted label; every other
+                // block child (nested list, code block, extra paragraph) renders
+                // through the normal recursive path at depth+1. (Flattening the
+                // whole subtree into the label is what rendered nested lists twice.)
+                self.render_item_body(node, output, depth, &bullet_style, bw, false);
             }
             NodeValue::BlockQuote => {
                 let text = self.collect_inline_from_children(node);
@@ -202,6 +191,68 @@ impl Markdown {
                     self.render_node(child, output, depth);
                 }
             }
+        }
+    }
+
+    /// Push a list item, wrapping long text with a hanging indent so it lines
+    /// up under the first character after the bullet. `bullet` is pre-styled;
+    /// `bw` is its visible width.
+    fn push_list_item(
+        &self,
+        output: &mut Vec<String>,
+        depth: usize,
+        bullet: &str,
+        bw: usize,
+        text: &str,
+    ) {
+        let prefix_w = depth * 2 + bw + 1;
+        let indent = " ".repeat(depth * 2);
+        let hang = " ".repeat(prefix_w);
+        let avail = self.width.saturating_sub(prefix_w).max(8);
+        let wrapped = wrap_text(text, avail);
+        for (i, line) in wrapped.iter().enumerate() {
+            if i == 0 {
+                output.push(format!("{indent}{bullet} {line}"));
+            } else {
+                output.push(format!("{hang}{line}"));
+            }
+        }
+    }
+
+    /// Render a list-item body: the item's first paragraph becomes the bulleted
+    /// label; every other block child (nested list, code block, extra paragraph)
+    /// renders through the normal recursive path at `depth + 1`. This is the
+    /// single source of truth for item layout — no subtree flattening, so a
+    /// nested list renders once (as a sub-list), never also jammed into the label.
+    /// `dim` greys the label (unchecked task items).
+    fn render_item_body<'a>(
+        &self,
+        node: &'a AstNode<'a>,
+        output: &mut Vec<String>,
+        depth: usize,
+        bullet: &str,
+        bw: usize,
+        dim: bool,
+    ) {
+        let mut labeled = false;
+        for child in node.children() {
+            if !labeled && matches!(&child.data.borrow().value, NodeValue::Paragraph) {
+                let text = self.collect_inline(child);
+                let text = if dim {
+                    Style::new().fg(Color::BrightBlack).render(&text)
+                } else {
+                    text
+                };
+                self.push_list_item(output, depth, bullet, bw, &text);
+                labeled = true;
+            } else {
+                self.render_node(child, output, depth + 1);
+            }
+        }
+        // An item that starts with a sub-list (no leading paragraph) still gets a
+        // bullet so the nesting reads correctly.
+        if !labeled {
+            self.push_list_item(output, depth, bullet, bw, "");
         }
     }
 
@@ -318,13 +369,14 @@ impl Default for Markdown {
     }
 }
 
+// Tokyo Night heading palette (cohesive, low-saturation RGB).
 fn heading_color(level: u8) -> Color {
     match level {
-        1 => Color::BrightCyan,
-        2 => Color::BrightGreen,
-        3 => Color::BrightYellow,
-        4 => Color::BrightMagenta,
-        _ => Color::White,
+        1 => Color::Rgb(122, 162, 247), // blue
+        2 => Color::Rgb(187, 154, 247), // purple
+        3 => Color::Rgb(125, 207, 255), // cyan
+        4 => Color::Rgb(158, 206, 106), // green
+        _ => Color::Rgb(192, 202, 245), // fg
     }
 }
 
@@ -431,6 +483,21 @@ mod tests {
         let plain = strip_ansi(&output);
         assert!(plain.contains("item 1"));
         assert!(plain.contains("item 2"));
+    }
+
+    #[test]
+    fn nested_list_item_not_duplicated() {
+        // A nested list must render ONCE (as a sub-list), not also flattened into
+        // the parent item's text — regression for "paragraph + its ordered list".
+        let md = Markdown::new();
+        let output = md.render("1. Parent\n   1. Child A\n   2. Child B");
+        let plain = strip_ansi(&output);
+        assert_eq!(
+            plain.matches("Child A").count(),
+            1,
+            "nested item rendered twice:\n{plain}"
+        );
+        assert_eq!(plain.matches("Child B").count(), 1);
     }
 
     #[test]

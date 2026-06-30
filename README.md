@@ -17,7 +17,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Declarative UI** — describe what you want, not how to draw it
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
-- **Rich Components** — 16 ready-to-use components (tables, modals, text editors, etc.)
+- **Rich Components** — 58 ready-to-use components (tables, modals, help panels, text editors, etc.)
 
 ---
 
@@ -110,21 +110,64 @@ Run with `cargo run --example counter_element`.
 
 | Component | Description |
 |-----------|-------------|
+| `ActivityBlock` | In-flight activity line with optional live output tail |
 | `Alert` | Colored alerts (Success/Info/Warning/Error) |
 | `Badge` | Inline status badges |
+| `Breadcrumb` | Hierarchical path navigation |
+| `Checklist` | Status-aware task/TODO list |
+| `ChipStrip` | Compact colored chip strip with active chip styling |
+| `ChoicePrompt` | Numbered action picker for approvals and command choices |
+| `Confirm` | Keyboard, mouse, and line-rendered confirmation prompt |
+| `ConnectorBlock` | Connector-led compact output and task-summary rows |
+| `CursorLine` | Display-width-aware editor line with a block cursor |
+| `DataTable` | Responsive, scrollable data table |
+| `DetailPanel` | Compact selected-row details with metadata and actions |
+| `DiffView` | Unified diff renderer for edits, git panels, and tool output |
 | `Divider` | Horizontal/vertical separators |
+| `GitPanel` | Git status/log panel with selectable files, commits, diffs, and commit input |
+| `GutterBlock` | Transcript/message block with marker gutter and optional bubble background |
+| `HelpPanel` | Grouped shortcut and command help |
+| `InputBorder` | Input-area border line with context, effort, and ribbon variants |
+| `KeyValue` | Labeled metadata rows |
+| `LevelSlider` | Discrete level slider with tick labels and selected marker |
 | `List` | Scrollable list with selection |
+| `LogView` | Scrollable log/output panel with loading and empty states |
+| `MenuPanel` | Titled scroll-aware menu for command palettes and overlays |
+| `Meter` | Compact value meter |
+| `MetricTrend` | Metric with trend visualization |
+| `ModeLine` | Current mode row with shortcut hints |
 | `MultiSelect` | Multi-selection list with checkboxes |
-| `Select` | Single-selection dropdown |
-| `Table` | Data table with headers |
-| `Tabs` | Tab navigation |
-| `TextInput` | Single-line text input |
-| `Textarea` | Multi-line text editor with scrolling |
-| `Viewport` | Scrollable content container |
-| `Modal` | Overlay dialog |
-| `StatusBar` | Bottom status bar |
+| `OutputBlock` | Status-marked transcript/output block with tail preview |
+| `Paragraph` | Width-aware paragraph wrapping |
+| `PreviewPanel` | Selectable item list with a live preview section |
 | `Progress` | Progress bar |
+| `PromptLine` | Prompt-prefixed input text with aligned continuation rows |
+| `Scrollbar` | Scrollbar indicator |
+| `Select` | Single-selection dropdown |
+| `SessionStatus` | Agent/session footer row with context and live chips |
+| `ShimmerText` | Animated gliding highlight for activity text |
+| `SideNotePanel` | Compact side-channel question and answer panel |
+| `Sparkline` | Inline trend chart |
+| `SplitPane` | Two-column panel for IDE, git, memory, and detail views |
 | `Spinner` | Loading animation |
+| `StatusBar` | Bottom status bar |
+| `SubagentTracker` | Parallel subagent/background work tracker |
+| `Table` | Data table with headers |
+| `Tabs` | Tab navigation with metadata and per-tab accents |
+| `TabbedMenuPanel` | Colored tab strip with a scroll-aware selected list |
+| `TaskQueue` | Pinned running and queued task panel |
+| `TextInput` | Single-line text input |
+| `TextOverlay` | Compose transient overlay rows into a rendered text frame |
+| `Textarea` | Multi-line text editor with scrolling |
+| `Timeline` | Sectioned timeline with colored nodes and selected-row highlighting |
+| `ToolLogView` | Completed tool/command history with args and indented output |
+| `ToastManager` | Transient notifications |
+| `Tree` | Expandable tree view |
+| `TreePicker` | Selectable, scroll-aware file and hierarchy picker |
+| `Modal` | Overlay dialog |
+| `Viewport` | Scrollable content container with reusable text-selection helpers |
+| `WelcomeBanner` | First-run mascot/art banner with metadata, tips, and notices |
+| `WrappedPrefixBlock` | Wrapped callout/transcript block with aligned continuation prefix |
 
 ### Layout & Styling
 
@@ -141,7 +184,7 @@ Run with `cargo run --example counter_element`.
 - **Streaming Content** — Real-time text streaming (perfect for LLM outputs)
 - **Keymap System** — Vim-like key bindings
 - **Focus Management** — Tab navigation between components
-- **Mouse Support** — Click and scroll events (coming soon)
+- **Mouse Support** — Click, drag, and scroll events with component handlers
 
 ---
 
@@ -183,6 +226,19 @@ See `examples/chat.rs` for a complete chat UI with:
 - Modal dialogs
 - Scrollable viewport
 - Custom keybindings
+
+### Benchmarks
+
+Run `cargo bench --bench rendering` to measure hot rendering paths:
+- display-width helpers with ANSI and CJK text
+- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PromptLine`, `Scrollbar`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
+- mixed markdown rendering with task lists and code blocks
+
+### Integration Tests
+
+Run `cargo test --test terminal_integration` to exercise the headless terminal
+pipeline from Element trees through Flexbox layout, grid painting, ANSI snapshots,
+resize behavior, truncation, and incremental diff changes.
 
 ---
 
@@ -299,7 +355,7 @@ ElementProgramBuilder::new(model)
 | Rendering | Incremental | Full redraw | Incremental |
 | Async | Native (Tokio) | Manual | Callbacks |
 | Markdown | Built-in | External | External |
-| Components | 16 built-in | DIY | 10+ built-in |
+| Components | 58 built-in | DIY | 10+ built-in |
 
 ---
 
@@ -307,16 +363,17 @@ ElementProgramBuilder::new(model)
 
 - [x] TEA architecture
 - [x] Element tree + Flexbox layout
-- [x] 16 core components
+- [x] 58 core components
 - [x] Markdown rendering
 - [x] Streaming content
 - [x] Keymap system
-- [ ] Mouse event support
-- [ ] Grid layout
-- [ ] Animation system
-- [ ] Theme system
-- [ ] Performance benchmarks
-- [ ] Comprehensive test suite
+- [x] Mouse event support
+- [x] Grid layout
+- [x] Animation system
+- [x] Theme system
+- [x] Component and core unit tests
+- [x] Performance benchmarks
+- [x] End-to-end terminal integration tests
 
 ---
 

@@ -15,6 +15,9 @@ pub enum Event {
     FocusGained,
     /// Terminal lost focus.
     FocusLost,
+    /// Bracketed paste: the full pasted text in one event, so a multi-line
+    /// paste lands in the input instead of submitting line by line.
+    Paste(String),
 }
 
 /// A keyboard event with key code and modifiers.
@@ -112,10 +115,7 @@ impl From<crossterm::event::Event> for Event {
             },
             crossterm::event::Event::FocusGained => Event::FocusGained,
             crossterm::event::Event::FocusLost => Event::FocusLost,
-            crossterm::event::Event::Paste(_) => Event::Key(KeyEvent {
-                code: KeyCode::Null,
-                modifiers: KeyModifiers::NONE,
-            }),
+            crossterm::event::Event::Paste(text) => Event::Paste(text),
         }
     }
 }

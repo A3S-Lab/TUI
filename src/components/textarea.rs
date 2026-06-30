@@ -14,6 +14,8 @@ pub struct Textarea {
     focused: bool,
     char_limit: Option<usize>,
     submit_on_enter: bool,
+    /// When set, the height auto-fits the line count, clamped to this max.
+    auto_grow_max: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,7 @@ impl Textarea {
             focused: true,
             char_limit: None,
             submit_on_enter: false,
+            auto_grow_max: None,
         }
     }
 
@@ -46,6 +49,32 @@ impl Textarea {
     pub fn with_height(mut self, h: u16) -> Self {
         self.height = h;
         self
+    }
+
+    /// Auto-fit the visible height to the number of lines (1..=max), so the box
+    /// grows with embedded newlines instead of scrolling a single row.
+    pub fn with_auto_grow(mut self, max: u16) -> Self {
+        self.auto_grow_max = Some(max.max(1));
+        self.fit_height();
+        self
+    }
+
+    /// Current visible height (rows). Grows with content when auto-grow is on.
+    pub fn height(&self) -> u16 {
+        self.height
+    }
+
+    fn fit_height(&mut self) {
+        if let Some(max) = self.auto_grow_max {
+            let n = self.lines.len() as u16;
+            self.height = n.clamp(1, max);
+            // The box grew to fit every line, so the internal scroll offset (set
+            // while the height was smaller, to follow the cursor) must reset —
+            // otherwise earlier lines stay scrolled out of view.
+            if n <= max {
+                self.offset = 0;
+            }
+        }
     }
 
     pub fn with_width(mut self, w: u16) -> Self {
@@ -81,6 +110,7 @@ impl Textarea {
         }
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
+        self.fit_height();
     }
 
     pub fn clear(&mut self) {
@@ -88,6 +118,7 @@ impl Textarea {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.offset = 0;
+        self.fit_height();
     }
 
     pub fn total_chars(&self) -> usize {
@@ -99,11 +130,19 @@ impl Textarea {
             return None;
         }
 
-        match (key.code, key.modifiers) {
+        let result = match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) if self.submit_on_enter => {
                 Some(TextareaMsg::Submit(self.value()))
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
+                self.insert_newline();
+                Some(TextareaMsg::Changed(self.value()))
+            }
+            // Shift/Alt+Enter inserts a newline instead of submitting (works in
+            // terminals that report the modifier; some fold it into plain Enter).
+            (KeyCode::Enter, m)
+                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
+            {
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
@@ -172,7 +211,9 @@ impl Textarea {
                 None
             }
             _ => None,
-        }
+        };
+        self.fit_height();
+        result
     }
 
     pub fn view(&self) -> String {
@@ -232,6 +273,12 @@ impl Textarea {
         self.cursor_display_col_abs() - self.scroll_start()
     }
 
+    /// The cursor's row within the visible window (for multi-line input — the
+    /// host places the real terminal cursor on this row).
+    pub fn cursor_row(&self) -> usize {
+        self.cursor_row.saturating_sub(self.offset)
+    }
+
     /// Render the cursor's line as plain (horizontally scrolled) text; the real
     /// terminal cursor marks the insertion point, so no reverse-video block here.
     fn render_line_with_cursor(&self, line: &str) -> String {
@@ -268,6 +315,18 @@ impl Textarea {
 
     fn char_len(line: &str) -> usize {
         line.chars().count()
+    }
+
+    /// Insert a (possibly multi-line) string at the cursor — used for paste, so
+    /// newlines become real line breaks instead of submitting the message.
+    pub fn insert_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            match ch {
+                '\n' => self.insert_newline(),
+                '\r' => {} // drop CR so CRLF pastes don't double-break
+                _ => self.insert_char(ch),
+            }
+        }
     }
 
     fn insert_char(&mut self, c: char) {
@@ -485,6 +544,21 @@ mod tests {
         ta.handle_key(&key(KeyCode::Enter));
         ta.handle_key(&key(KeyCode::Char('b')));
         assert_eq!(ta.value(), "a\nb");
+    }
+
+    #[test]
+    fn auto_grow_shows_all_lines_after_newline() {
+        // Regression: with auto-grow, adding a newline grew the height but left
+        // the scroll offset following the cursor, hiding the first line. The box
+        // must show BOTH lines (height grows, offset resets).
+        let mut ta = Textarea::new().with_height(1).with_auto_grow(8);
+        ta.handle_key(&key(KeyCode::Char('a')));
+        ta.handle_key(&key(KeyCode::Enter));
+        ta.handle_key(&key(KeyCode::Char('b')));
+        assert_eq!(ta.height(), 2, "box grew to two rows");
+        let view = ta.view();
+        assert!(view.contains('a'), "first line still visible");
+        assert!(view.contains('b'), "second line visible");
     }
 
     #[test]

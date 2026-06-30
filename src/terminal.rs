@@ -1,6 +1,19 @@
 use crossterm::{cursor, execute, queue, terminal};
 use std::io::{self, Stdout, Write};
 
+/// Toggle mouse capture at runtime. Capture ON lets the app read wheel/scroll
+/// events but disables the terminal's native click-drag text selection; OFF
+/// restores it. `Terminal::exit` always disables, so leftover capture can't
+/// leak into the shell.
+pub fn set_mouse_capture(on: bool) {
+    let mut out = io::stdout();
+    let _ = if on {
+        execute!(out, crossterm::event::EnableMouseCapture)
+    } else {
+        execute!(out, crossterm::event::DisableMouseCapture)
+    };
+}
+
 pub struct Terminal {
     stdout: Stdout,
     alt_screen: bool,
@@ -44,15 +57,32 @@ impl Terminal {
         if self.mouse_support {
             execute!(self.stdout, crossterm::event::EnableMouseCapture)?;
         }
+        // Bracketed paste: deliver a paste as one Event::Paste(text) instead of
+        // a stream of keystrokes, so multi-line paste fills the input rather than
+        // submitting line by line. Harmless where unsupported.
+        let _ = execute!(self.stdout, crossterm::event::EnableBracketedPaste);
+        // Kitty keyboard protocol where supported → modified keys like
+        // Shift+Enter are reported distinctly. Terminals without it ignore this.
+        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+            let _ = execute!(
+                self.stdout,
+                crossterm::event::PushKeyboardEnhancementFlags(
+                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
+        }
         execute!(self.stdout, cursor::Hide)?;
         Ok(())
     }
 
     pub fn exit(&mut self) -> io::Result<()> {
         execute!(self.stdout, cursor::Show)?;
-        if self.mouse_support {
-            execute!(self.stdout, crossterm::event::DisableMouseCapture)?;
-        }
+        // Harmless if nothing was pushed (empty stack / unsupported terminal).
+        let _ = execute!(self.stdout, crossterm::event::PopKeyboardEnhancementFlags);
+        // Always disable — harmless if never enabled, and the app may have
+        // toggled capture on at runtime via `set_mouse_capture`.
+        let _ = execute!(self.stdout, crossterm::event::DisableMouseCapture);
+        let _ = execute!(self.stdout, crossterm::event::DisableBracketedPaste);
         if self.alt_screen {
             execute!(self.stdout, terminal::LeaveAlternateScreen)?;
         }
