@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{pad_visible, truncate_visible, Color, Style};
 
 /// A tree node for hierarchical display.
 pub struct TreeNode {
@@ -170,19 +170,10 @@ impl Tree {
     }
 }
 
-fn pad_visible(s: &str, width: usize) -> String {
-    let len = visible_len(s);
-    if len >= width {
-        s.to_string()
-    } else {
-        format!("{s}{}", " ".repeat(width - len))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::strip_ansi;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn single_leaf() {

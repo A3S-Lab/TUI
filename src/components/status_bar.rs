@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{visible_len, Color, Style};
+use crate::style::{truncate_visible, visible_len, Color, Style};
 
 pub struct StatusBar {
     left: String,
@@ -7,6 +7,7 @@ pub struct StatusBar {
     right: String,
     fg: Color,
     bg: Color,
+    bold: bool,
 }
 
 impl StatusBar {
@@ -17,6 +18,7 @@ impl StatusBar {
             right: String::new(),
             fg: Color::White,
             bg: Color::BrightBlack,
+            bold: false,
         }
     }
 
@@ -45,22 +47,27 @@ impl StatusBar {
         self
     }
 
+    pub fn bold(mut self, enabled: bool) -> Self {
+        self.bold = enabled;
+        self
+    }
+
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut children: Vec<Element<Msg>> = Vec::new();
 
         if !self.left.is_empty() {
-            children.push(Element::Text(TextElement::new(&self.left).fg(self.fg)));
+            children.push(Element::Text(self.text_element(&self.left)));
         }
 
         children.push(Element::Spacer);
 
         if !self.center.is_empty() {
-            children.push(Element::Text(TextElement::new(&self.center).fg(self.fg)));
+            children.push(Element::Text(self.text_element(&self.center)));
             children.push(Element::Spacer);
         }
 
         if !self.right.is_empty() {
-            children.push(Element::Text(TextElement::new(&self.right).fg(self.fg)));
+            children.push(Element::Text(self.text_element(&self.right)));
         }
 
         Element::Box(
@@ -73,38 +80,58 @@ impl StatusBar {
 
     pub fn view(&self, width: u16) -> String {
         let w = width as usize;
-        let left_width = visible_len(&self.left);
-        let center_width = visible_len(&self.center);
-        let right_width = visible_len(&self.right);
+        if w == 0 {
+            return String::new();
+        }
 
-        let mut line = String::new();
-        line.push_str(&self.left);
-
+        let right = truncate_visible(&self.right, w);
+        let right_width = visible_len(&right);
         let right_start = w.saturating_sub(right_width);
+        let center = truncate_visible(&self.center, w);
+        let center_width = visible_len(&center);
         let center_start = (w.saturating_sub(center_width)) / 2;
+        let left_full_width = visible_len(&self.left);
         let center_fits = center_width > 0
-            && center_start > left_width
+            && center_start > left_full_width
             && center_start + center_width < right_start;
-        if center_fits {
-            let pad_before = center_start.saturating_sub(left_width);
-            line.push_str(&" ".repeat(pad_before));
-            line.push_str(&self.center);
-            let used = left_width + pad_before + center_width;
-            let pad_after = w.saturating_sub(used + right_width);
-            line.push_str(&" ".repeat(pad_after));
+
+        let line = if center_fits {
+            let left_budget = center_start.saturating_sub(1);
+            let left = truncate_visible(&self.left, left_budget);
+            let left_width = visible_len(&left);
+            let mut line = left;
+            line.push_str(&" ".repeat(center_start.saturating_sub(left_width)));
+            line.push_str(&center);
+            line.push_str(&" ".repeat(right_start.saturating_sub(center_start + center_width)));
+            line.push_str(&right);
+            line
         } else {
-            let middle_space = w.saturating_sub(left_width + right_width);
-            line.push_str(&" ".repeat(middle_space));
+            let left_budget = w.saturating_sub(right_width);
+            let left = truncate_visible(&self.left, left_budget);
+            let left_width = visible_len(&left);
+            let mut line = left;
+            line.push_str(&" ".repeat(w.saturating_sub(left_width + right_width)));
+            line.push_str(&right);
+            line
+        };
+
+        self.style().render(&line)
+    }
+
+    fn text_element(&self, text: &str) -> TextElement {
+        let mut element = TextElement::new(text).fg(self.fg);
+        if self.bold {
+            element = element.bold();
         }
+        element
+    }
 
-        line.push_str(&self.right);
-
-        let total_vis = visible_len(&line);
-        if total_vis < w {
-            line.push_str(&" ".repeat(w - total_vis));
+    fn style(&self) -> Style {
+        let mut style = Style::new().fg(self.fg).bg(self.bg);
+        if self.bold {
+            style = style.bold();
         }
-
-        Style::new().fg(self.fg).bg(self.bg).render(&line)
+        style
     }
 }
 
@@ -117,14 +144,14 @@ impl Default for StatusBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::strip_ansi;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn empty_status_bar() {
         let sb = StatusBar::new();
         let view = sb.view(40);
         let plain = strip_ansi(&view);
-        assert_eq!(plain.len(), 40);
+        assert_eq!(visible_len(&plain), 40);
     }
 
     #[test]
@@ -150,7 +177,7 @@ mod tests {
         let plain = strip_ansi(&view);
         assert!(plain.starts_with('L'));
         assert!(plain.ends_with('R'));
-        assert_eq!(plain.len(), 20);
+        assert_eq!(visible_len(&plain), 20);
     }
 
     #[test]
@@ -165,7 +192,36 @@ mod tests {
         assert!(!plain.contains("longcenter"));
         assert!(!plain.contains("centerright"));
         assert!(!plain.contains("center"));
-        assert_eq!(plain.len(), 32);
+        assert_eq!(visible_len(&plain), 32);
+    }
+
+    #[test]
+    fn truncates_left_to_preserve_right_status() {
+        let sb = StatusBar::new()
+            .left(" a3s top boxes:10 agents:20 processes:300 events:400 ")
+            .right("live")
+            .bold(true);
+        let view = sb.view(32);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(visible_len(&view), 32);
+        assert!(plain.ends_with("live"));
+        assert!(plain.contains('…'));
+        assert!(view.contains("\x1b[1;"));
+    }
+
+    #[test]
+    fn handles_cjk_width_when_truncating() {
+        let sb = StatusBar::new()
+            .left(" 状态 中文测试内容")
+            .right("运行中")
+            .fg(Color::BrightWhite)
+            .bg(Color::Blue);
+        let view = sb.view(18);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(visible_len(&view), 18);
+        assert!(plain.ends_with("运行中"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{visible_len, wrap_words, Color};
 
 /// Text alignment for paragraphs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,60 +81,32 @@ impl Paragraph {
         }
 
         let indent_str = " ".repeat(self.indent);
-        let mut lines = Vec::new();
-
-        for paragraph in self.text.split('\n') {
-            if paragraph.is_empty() {
-                lines.push(String::new());
-                continue;
-            }
-
-            let mut current_line = indent_str.clone();
-            let mut current_width = 0;
-
-            for word in paragraph.split_whitespace() {
-                let word_len = word.len();
-                let sep_len = if current_width == 0 { 0 } else { 1 };
-
-                if current_width + word_len + sep_len > effective_width && current_width > 0 {
-                    lines.push(current_line);
-                    current_line = indent_str.clone();
-                    current_width = 0;
+        wrap_words(&self.text, effective_width)
+            .into_iter()
+            .map(|line| {
+                if line.is_empty() {
+                    line
+                } else {
+                    format!("{indent_str}{line}")
                 }
-
-                if current_width > 0 {
-                    current_line.push(' ');
-                    current_width += 1;
-                }
-                current_line.push_str(word);
-                current_width += word_len;
-            }
-
-            if !current_line.trim().is_empty() || current_width == 0 {
-                lines.push(current_line);
-            }
-        }
-
-        if lines.is_empty() {
-            lines.push(String::new());
-        }
-
-        lines
+            })
+            .collect()
     }
 
     fn apply_align(&self, line: &str) -> String {
-        let content_len = line.trim_start().len();
+        let content = line.trim_start().trim_end();
+        let content_len = visible_len(content);
         let available = self.width;
 
         match self.align {
             TextAlign::Left => line.to_string(),
             TextAlign::Center => {
                 let pad = available.saturating_sub(content_len) / 2;
-                format!("{}{}", " ".repeat(pad), line.trim())
+                format!("{}{}", " ".repeat(pad), content)
             }
             TextAlign::Right => {
                 let pad = available.saturating_sub(content_len);
-                format!("{}{}", " ".repeat(pad), line.trim())
+                format!("{}{}", " ".repeat(pad), content)
             }
         }
     }
@@ -158,7 +130,7 @@ mod tests {
         let lines = p.wrap();
         assert!(lines.len() >= 2);
         for line in &lines {
-            assert!(line.len() <= 10);
+            assert!(visible_len(line) <= 10);
         }
     }
 
@@ -189,6 +161,15 @@ mod tests {
         let p = Paragraph::new("hi").width(10).align(TextAlign::Right);
         let aligned = p.apply_align("hi");
         assert!(aligned.starts_with("        "));
+    }
+
+    #[test]
+    fn wraps_cjk_by_display_width() {
+        let p = Paragraph::new("中文测试内容").width(8);
+        let lines = p.wrap();
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 8));
+        assert_eq!(lines.concat(), "中文测试内容");
     }
 
     #[test]

@@ -283,6 +283,38 @@ impl Style {
         self
     }
 
+    pub fn foreground(&self) -> Option<Color> {
+        self.fg
+    }
+
+    pub fn background(&self) -> Option<Color> {
+        self.bg
+    }
+
+    pub fn is_bold(&self) -> bool {
+        self.bold
+    }
+
+    pub fn is_italic(&self) -> bool {
+        self.italic
+    }
+
+    pub fn is_underline(&self) -> bool {
+        self.underline
+    }
+
+    pub fn is_strikethrough(&self) -> bool {
+        self.strikethrough
+    }
+
+    pub fn is_dim(&self) -> bool {
+        self.dim
+    }
+
+    pub fn is_reverse(&self) -> bool {
+        self.reverse
+    }
+
     pub fn padding_top(mut self, n: u16) -> Self {
         self.padding[0] = n;
         self
@@ -579,6 +611,135 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
     out
 }
 
+/// Pad a string with spaces to `width` display columns, preserving ANSI codes.
+///
+/// If `s` is already at least `width` columns wide, it is returned unchanged.
+pub fn pad_visible(s: &str, width: usize) -> String {
+    let len = visible_len(s);
+    if len >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - len))
+    }
+}
+
+/// Truncate a string to `width` display columns, then pad it to exactly `width`.
+pub fn fit_visible(s: &str, width: usize) -> String {
+    pad_visible(&truncate_visible(s, width), width)
+}
+
+/// Center a string in `width` display columns, truncating first if needed.
+pub fn center_visible(s: &str, width: usize) -> String {
+    let truncated = truncate_visible(s, width);
+    let len = visible_len(&truncated);
+    if len >= width {
+        return truncated;
+    }
+    let left = (width - len) / 2;
+    let right = width - len - left;
+    format!("{}{}{}", " ".repeat(left), truncated, " ".repeat(right))
+}
+
+/// Return the substring spanning display columns `[from, to)`.
+///
+/// ANSI escape sequences are stripped before slicing. Wide glyphs count by
+/// terminal display columns: a glyph that starts before `from` is dropped, while
+/// one that starts before `to` is kept even if it extends past `to`.
+pub fn slice_visible_cols(s: &str, from: usize, to: usize) -> String {
+    if from >= to {
+        return String::new();
+    }
+
+    let plain = strip_ansi(s);
+    let mut col = 0usize;
+    let mut out = String::new();
+
+    for ch in plain.chars() {
+        if col >= to {
+            break;
+        }
+        if col >= from {
+            out.push(ch);
+        }
+        col += UnicodeWidthChar::width(ch).unwrap_or(0);
+    }
+
+    out
+}
+
+/// Wrap plain text on whitespace using display-column width.
+///
+/// This helper is intended for unstyled text. It preserves blank input lines;
+/// use [`wrap_words_compact`] when transient panels should collapse empty rows.
+pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    wrap_words_inner(text, width, false)
+}
+
+/// Wrap plain text on whitespace and drop blank input lines.
+pub fn wrap_words_compact(text: &str, width: usize) -> Vec<String> {
+    wrap_words_inner(text, width, true)
+}
+
+fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+
+    let mut out = Vec::new();
+    for para in text.lines() {
+        if para.trim().is_empty() {
+            if !compact {
+                out.push(String::new());
+            }
+            continue;
+        }
+
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            if line.is_empty() {
+                line.push_str(word);
+            } else if visible_len(&line) + 1 + visible_len(word) <= width {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut line));
+                line.push_str(word);
+            }
+
+            while visible_len(&line) > width {
+                let mut head = String::new();
+                let mut used = 0usize;
+                for ch in line.chars() {
+                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
+                    if used > 0 && used + cw > width {
+                        break;
+                    }
+                    used += cw;
+                    head.push(ch);
+                    if used >= width {
+                        break;
+                    }
+                }
+                if head.is_empty() {
+                    break;
+                }
+                let rest: String = line.chars().skip(head.chars().count()).collect();
+                out.push(head);
+                line = rest;
+            }
+        }
+
+        if !line.is_empty() {
+            out.push(line);
+        }
+    }
+
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
 /// Strip ANSI escape sequences from a string.
 pub fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -688,5 +849,82 @@ mod tests {
     #[test]
     fn color_ansi_constructor() {
         assert_eq!(Color::ansi(196), Color::Ansi256(196));
+    }
+
+    #[test]
+    fn pads_visible_width_with_ansi() {
+        let styled = Style::new().fg(Color::Cyan).render("ok");
+        let padded = pad_visible(&styled, 6);
+
+        assert_eq!(visible_len(&padded), 6);
+        assert!(padded.starts_with("\x1b[36m"));
+    }
+
+    #[test]
+    fn fits_visible_width_by_truncating_then_padding() {
+        let out = fit_visible("一二三四五", 6);
+
+        assert!(visible_len(&out) <= 6, "{out:?}");
+        assert!(out.ends_with('…') || out.ends_with(' '));
+    }
+
+    #[test]
+    fn centers_visible_width_with_ansi_and_cjk() {
+        let styled = Style::new().fg(Color::Green).render("中");
+        let centered = center_visible(&styled, 6);
+
+        assert_eq!(visible_len(&centered), 6);
+        assert!(strip_ansi(&centered).starts_with("  中"));
+    }
+
+    #[test]
+    fn slices_visible_columns_for_ascii_cjk_and_ansi() {
+        assert_eq!(slice_visible_cols("hello", 1, 4), "ell");
+        assert_eq!(slice_visible_cols("hello", 0, 100), "hello");
+        assert_eq!(slice_visible_cols("你好", 0, 2), "你");
+        assert_eq!(slice_visible_cols("你好", 2, 4), "好");
+
+        let styled = Style::new().fg(Color::Red).render("hello");
+        assert_eq!(slice_visible_cols(&styled, 1, 4), "ell");
+    }
+
+    #[test]
+    fn slices_visible_columns_drop_glyph_straddling_start() {
+        assert_eq!(slice_visible_cols("你好", 1, 4), "好");
+        assert_eq!(slice_visible_cols("你好", 0, 3), "你好");
+        assert_eq!(slice_visible_cols("hello", 3, 3), "");
+    }
+
+    #[test]
+    fn wraps_words_on_display_columns() {
+        let lines = wrap_words("the quick brown fox jumps", 9);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 9));
+        assert_eq!(
+            lines.join(" ").split_whitespace().collect::<Vec<_>>(),
+            vec!["the", "quick", "brown", "fox", "jumps"]
+        );
+    }
+
+    #[test]
+    fn wrap_words_preserves_blank_lines() {
+        let lines = wrap_words("alpha\n\nbeta", 40);
+
+        assert_eq!(lines, vec!["alpha", "", "beta"]);
+    }
+
+    #[test]
+    fn compact_wrap_words_drops_blank_lines() {
+        let lines = wrap_words_compact("alpha\n\nbeta", 40);
+
+        assert_eq!(lines, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn wrap_words_hard_breaks_wide_tokens_by_columns() {
+        let lines = wrap_words_compact("中文测试内容", 8);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 8));
+        assert_eq!(lines.concat(), "中文测试内容");
     }
 }

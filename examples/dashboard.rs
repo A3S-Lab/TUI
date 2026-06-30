@@ -130,7 +130,7 @@ impl ElementModel for Dashboard {
 
         // Status bar
         let status_bar = StatusBar::new()
-            .left(&format!("Uptime: {}s", self.uptime_seconds))
+            .left(format!("Uptime: {}s", self.uptime_seconds))
             .right("Press 'q' to quit")
             .fg(Color::BrightBlack)
             .bg(Color::gray(20))

@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{pad_visible, Color, Style};
 
 /// A vertical scrollbar indicator.
 ///
@@ -13,6 +13,7 @@ pub struct Scrollbar {
     thumb_char: char,
     track_color: Color,
     thumb_color: Color,
+    hide_when_not_overflowing: bool,
 }
 
 impl Scrollbar {
@@ -25,6 +26,7 @@ impl Scrollbar {
             thumb_char: '█',
             track_color: Color::BrightBlack,
             thumb_color: Color::White,
+            hide_when_not_overflowing: false,
         }
     }
 
@@ -46,6 +48,16 @@ impl Scrollbar {
     pub fn thumb_color(mut self, color: Color) -> Self {
         self.thumb_color = color;
         self
+    }
+
+    /// Render a blank gutter when the content fits in the viewport.
+    pub fn hide_when_not_overflowing(mut self, enabled: bool) -> Self {
+        self.hide_when_not_overflowing = enabled;
+        self
+    }
+
+    pub fn has_overflow(&self) -> bool {
+        self.total > self.visible && self.visible > 0
     }
 
     /// Compute thumb position and size for the given track height.
@@ -96,6 +108,10 @@ impl Scrollbar {
 
     /// Render as a single-line string (for string-based rendering).
     pub fn view(&self, height: usize) -> String {
+        if self.hide_when_not_overflowing && !self.has_overflow() {
+            return " ".repeat(height);
+        }
+
         let (thumb_pos, thumb_size) = self.thumb_range(height);
 
         (0..height)
@@ -107,6 +123,43 @@ impl Scrollbar {
                 }
             })
             .collect()
+    }
+
+    /// Render the vertical scrollbar as newline-separated styled cells.
+    pub fn styled_view(&self, height: usize) -> String {
+        if self.hide_when_not_overflowing && !self.has_overflow() {
+            return (0..height)
+                .map(|_| " ".to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+
+        let (thumb_pos, thumb_size) = self.thumb_range(height);
+        (0..height)
+            .map(|i| {
+                if i >= thumb_pos && i < thumb_pos + thumb_size {
+                    Style::new()
+                        .fg(self.thumb_color)
+                        .render(&self.thumb_char.to_string())
+                } else {
+                    Style::new()
+                        .fg(self.track_color)
+                        .render(&self.track_char.to_string())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Append this scrollbar as a one-column gutter to a rendered text view.
+    pub fn append_to_view(&self, view: &str, inner_width: usize) -> String {
+        let rows = view.split('\n').collect::<Vec<_>>();
+        let bar = self.styled_view(rows.len());
+        rows.into_iter()
+            .zip(bar.lines())
+            .map(|(row, bar)| format!("{}{}", pad_visible(row, inner_width), bar))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -158,5 +211,39 @@ mod tests {
         let sb = Scrollbar::new(20, 10, 0);
         let view = sb.view(10);
         assert_eq!(view.chars().count(), 10);
+    }
+
+    #[test]
+    fn hide_when_not_overflowing_renders_blank_gutter() {
+        let sb = Scrollbar::new(3, 5, 0).hide_when_not_overflowing(true);
+
+        assert_eq!(sb.view(5), "     ");
+        assert_eq!(sb.styled_view(3), " \n \n ");
+    }
+
+    #[test]
+    fn styled_view_contains_ansi_for_track_and_thumb() {
+        let sb = Scrollbar::new(20, 5, 10)
+            .track_color(Color::BrightBlack)
+            .thumb_color(Color::Cyan);
+        let rendered = sb.styled_view(5);
+
+        assert!(rendered.contains("\x1b["));
+        assert_eq!(rendered.lines().count(), 5);
+    }
+
+    #[test]
+    fn append_to_view_pads_rows_and_adds_gutter() {
+        let view = "short\n中文";
+        let rendered = Scrollbar::new(20, 2, 3)
+            .thumb_color(Color::Cyan)
+            .append_to_view(view, 8);
+        let plain = crate::style::strip_ansi(&rendered);
+        let rows = plain.lines().collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].starts_with("short   "));
+        assert!(rows[1].starts_with("中文    "));
+        assert!(rendered.contains("\x1b["));
     }
 }

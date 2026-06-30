@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
-use crate::style::visible_len;
+use crate::style::{slice_visible_cols, strip_ansi, visible_len, Style};
 
 pub struct Viewport {
     lines: Vec<String>,
@@ -18,6 +18,87 @@ pub enum ViewportMsg {
     PageDown,
     Top,
     Bottom,
+}
+
+/// In-progress text selection in screen cells.
+///
+/// Coordinates are `(row, column)` within the rendered viewport. `anchor` is the
+/// drag start and `head` is the current cursor position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextSelection {
+    anchor: (u16, u16),
+    head: (u16, u16),
+}
+
+impl TextSelection {
+    pub fn new(anchor: (u16, u16), head: (u16, u16)) -> Self {
+        Self { anchor, head }
+    }
+
+    pub fn from_cells(anchor_row: u16, anchor_col: u16, head_row: u16, head_col: u16) -> Self {
+        Self::new((anchor_row, anchor_col), (head_row, head_col))
+    }
+
+    pub fn anchor(&self) -> (u16, u16) {
+        self.anchor
+    }
+
+    pub fn head(&self) -> (u16, u16) {
+        self.head
+    }
+
+    pub fn set_head(&mut self, row: u16, col: u16) {
+        self.head = (row, col);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.head
+    }
+
+    pub fn ordered(&self) -> SelectionRange {
+        SelectionRange::from_cells(
+            self.anchor.0 as usize,
+            self.anchor.1 as usize,
+            self.head.0 as usize,
+            self.head.1 as usize,
+        )
+    }
+}
+
+/// Ordered selection range over rendered viewport rows.
+///
+/// Rows are inclusive. Columns use the half-open range `[start_col, end_col)` on
+/// the first/last selected rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionRange {
+    pub start_row: usize,
+    pub start_col: usize,
+    pub end_row: usize,
+    pub end_col: usize,
+}
+
+impl SelectionRange {
+    pub fn from_cells(row_a: usize, col_a: usize, row_b: usize, col_b: usize) -> Self {
+        if (row_a, col_a) <= (row_b, col_b) {
+            Self {
+                start_row: row_a,
+                start_col: col_a,
+                end_row: row_b,
+                end_col: col_b,
+            }
+        } else {
+            Self {
+                start_row: row_b,
+                start_col: col_b,
+                end_row: row_a,
+                end_col: col_a,
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start_row == self.end_row && self.start_col == self.end_col
+    }
 }
 
 impl Viewport {
@@ -151,6 +232,16 @@ impl Viewport {
         result
     }
 
+    /// Return plain text selected from the currently visible rows.
+    pub fn selected_text(&self, selection: TextSelection) -> String {
+        selected_text(&self.view(), selection)
+    }
+
+    /// Return the currently visible rows with a text selection highlighted.
+    pub fn highlighted_view(&self, selection: TextSelection, style: &Style) -> String {
+        highlight_selection(&self.view(), selection, style)
+    }
+
     /// Render visible lines as an Element tree.
     pub fn element<Msg>(&self) -> Element<Msg> {
         let h = self.height as usize;
@@ -201,6 +292,90 @@ impl Viewport {
 
         result
     }
+}
+
+/// Return plain text selected from a rendered viewport view.
+///
+/// Selected rows are ANSI-stripped and trailing padding is trimmed, making the
+/// result suitable for clipboard copy.
+pub fn selected_text(view: &str, selection: TextSelection) -> String {
+    selected_text_range(view, selection.ordered())
+}
+
+pub fn selected_text_range(view: &str, range: SelectionRange) -> String {
+    if range.is_empty() {
+        return String::new();
+    }
+
+    let rows: Vec<&str> = view.split('\n').collect();
+    let mut out = Vec::new();
+
+    for row_idx in range.start_row..=range.end_row {
+        let Some(row) = rows.get(row_idx) else {
+            break;
+        };
+        let plain = strip_ansi(row);
+        let from = if row_idx == range.start_row {
+            range.start_col
+        } else {
+            0
+        };
+        let to = if row_idx == range.end_row {
+            range.end_col
+        } else {
+            usize::MAX
+        };
+        out.push(slice_visible_cols(&plain, from, to).trim_end().to_string());
+    }
+
+    out.join("\n")
+}
+
+/// Highlight a selection in a rendered viewport view.
+///
+/// Unselected rows are left unchanged. Selected rows are ANSI-stripped before
+/// highlighting so applications can transiently overlay selection color without
+/// leaking syntax or log styling through the selected span.
+pub fn highlight_selection(view: &str, selection: TextSelection, style: &Style) -> String {
+    highlight_selection_range(view, selection.ordered(), style)
+}
+
+pub fn highlight_selection_range(view: &str, range: SelectionRange, style: &Style) -> String {
+    if range.is_empty() {
+        return view.to_string();
+    }
+
+    view.split('\n')
+        .enumerate()
+        .map(|(row_idx, row)| {
+            if row_idx < range.start_row || row_idx > range.end_row {
+                return row.to_string();
+            }
+
+            let plain = strip_ansi(row);
+            let from = if row_idx == range.start_row {
+                range.start_col
+            } else {
+                0
+            };
+            let to = if row_idx == range.end_row {
+                range.end_col
+            } else {
+                usize::MAX
+            };
+
+            let before = slice_visible_cols(&plain, 0, from);
+            let selected = slice_visible_cols(&plain, from, to);
+            let after = slice_visible_cols(&plain, to, usize::MAX);
+
+            if selected.is_empty() {
+                plain
+            } else {
+                format!("{before}{}{after}", style.render(&selected))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn wrap_line(s: &str, width: usize) -> Vec<String> {
@@ -360,5 +535,104 @@ mod tests {
         vp.set_content("hello\nworld");
         vp.clear();
         assert_eq!(vp.total_lines(), 0);
+    }
+
+    #[test]
+    fn text_selection_orders_anchor_and_head() {
+        let selection = TextSelection::from_cells(3, 8, 1, 2);
+        assert_eq!(
+            selection.ordered(),
+            SelectionRange {
+                start_row: 1,
+                start_col: 2,
+                end_row: 3,
+                end_col: 8,
+            }
+        );
+        assert!(!selection.is_empty());
+    }
+
+    #[test]
+    fn selected_text_extracts_span_across_rows() {
+        let view = "  hello world\n  second line\n  third";
+        let selection = TextSelection::from_cells(0, 2, 1, 8);
+
+        assert_eq!(selected_text(view, selection), "hello world\n  second");
+    }
+
+    #[test]
+    fn selected_text_accepts_reversed_selection() {
+        let view = "alpha beta\nsecond row\nthird row";
+        let selection = TextSelection::from_cells(1, 6, 0, 6);
+
+        assert_eq!(selected_text(view, selection), "beta\nsecond");
+    }
+
+    #[test]
+    fn selected_text_strips_ansi_and_uses_display_columns() {
+        let styled = Style::new().fg(crate::style::Color::Red).render("ab你好cd");
+        let view = format!("{styled}\nplain");
+        let selection = TextSelection::from_cells(0, 2, 0, 6);
+
+        assert_eq!(selected_text(&view, selection), "你好");
+    }
+
+    #[test]
+    fn empty_selection_copies_nothing_and_keeps_view_unchanged() {
+        let view = "alpha\nbeta";
+        let selection = TextSelection::from_cells(0, 2, 0, 2);
+        let style = Style::new().bg(crate::style::Color::Blue);
+
+        assert_eq!(selected_text(view, selection), "");
+        assert_eq!(highlight_selection(view, selection, &style), view);
+    }
+
+    #[test]
+    fn highlight_selection_touches_only_selected_rows() {
+        let view = "row zero\nrow one\nrow two";
+        let selection = TextSelection::from_cells(1, 0, 1, 7);
+        let style = Style::new()
+            .bg(crate::style::Color::Rgb(58, 64, 88))
+            .fg(crate::style::Color::White);
+
+        let out = highlight_selection(view, selection, &style);
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines[0], "row zero");
+        assert_eq!(lines[2], "row two");
+        assert!(lines[1].contains("row one"));
+        assert!(lines[1].contains('\u{1b}'));
+    }
+
+    #[test]
+    fn highlight_selection_strips_ansi_on_selected_rows_only() {
+        let selected = Style::new()
+            .fg(crate::style::Color::Red)
+            .render("selected row");
+        let unselected = Style::new()
+            .fg(crate::style::Color::Green)
+            .render("unselected row");
+        let view = format!("{selected}\n{unselected}");
+        let selection = TextSelection::from_cells(0, 0, 0, 8);
+        let style = Style::new().bg(crate::style::Color::Blue);
+
+        let out = highlight_selection(&view, selection, &style);
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert!(lines[0].contains("selected"));
+        assert!(!lines[0].contains("\x1b[31m"));
+        assert!(lines[0].contains("\x1b[44m"));
+        assert!(lines[1].contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn viewport_selection_helpers_use_current_view() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("first\nsecond row\nthird");
+        vp.update(ViewportMsg::ScrollDown(1));
+        let selection = TextSelection::from_cells(0, 0, 0, 6);
+
+        assert_eq!(vp.selected_text(selection), "second");
+        assert!(vp
+            .highlighted_view(selection, &Style::new().bg(crate::style::Color::Blue))
+            .contains("\x1b[44msecond\x1b[0m"));
     }
 }
