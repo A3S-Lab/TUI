@@ -162,12 +162,13 @@ impl ElementProgram {
                             if let Some(size) = resize_dimensions(&ct_event) {
                                 viewport_size = size;
                             }
-                            let ev: Event = ct_event.into();
-                            let msg: M::Msg = ev.into();
-                            if let Some(cmd) = model.update(msg) {
-                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                            if let Some(ev) = Event::from_crossterm(ct_event) {
+                                let msg: M::Msg = ev.into();
+                                if let Some(cmd) = model.update(msg) {
+                                    Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                                }
+                                dirty = true;
                             }
-                            dirty = true;
                         }
                         Some(Err(_)) => break,
                         None => break,
