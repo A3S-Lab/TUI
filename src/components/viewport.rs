@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
-use crate::style::{slice_visible_cols, strip_ansi, visible_len, Style};
+use crate::style::{slice_visible_cols, strip_ansi, truncate_visible, visible_len, Style};
 
 pub struct Viewport {
     lines: Vec<String>,
@@ -419,6 +419,19 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
         }
 
         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if cw > width {
+            if current_width > 0 {
+                lines.push(current);
+                current = pad.clone();
+                current_width = indent;
+            }
+            let clipped = truncate_visible(&c.to_string(), width.saturating_sub(current_width));
+            if !clipped.is_empty() {
+                current.push_str(&clipped);
+                current_width += visible_len(&clipped);
+            }
+            continue;
+        }
         if current_width + cw > width && current_width > 0 {
             lines.push(current);
             current = pad.clone();
@@ -503,6 +516,19 @@ mod tests {
         let wrapped: Vec<&str> = view.lines().filter(|l| !l.trim().is_empty()).collect();
         assert!(wrapped.len() >= 2, "long line wrapped");
         assert!(wrapped[1].starts_with("    "), "continuation keeps indent");
+    }
+
+    #[test]
+    fn wraps_wide_glyphs_to_one_column_width() {
+        let mut vp = Viewport::new(1, 3);
+        vp.set_content("中文");
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+
+        assert!(rows.iter().all(|row| visible_len(row) <= 1));
+        assert_eq!(rows[0], "…");
+        assert_eq!(rows[1], "…");
     }
 
     #[test]
