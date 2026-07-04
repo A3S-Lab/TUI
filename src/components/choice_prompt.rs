@@ -1,7 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{fit_visible, truncate_visible, Color, Style};
+use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
+
+const MAX_CHOICE_PROMPT_INDENT: usize = u16::MAX as usize;
 
 /// One selectable action in a [`ChoicePrompt`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +144,7 @@ impl ChoicePrompt {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_CHOICE_PROMPT_INDENT);
         self
     }
 
@@ -308,7 +310,7 @@ impl ChoicePrompt {
     fn render_lines(&self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if !self.title.is_empty() {
-            let raw = format!("{}{}", " ".repeat(self.indent), self.title);
+            let raw = format!("{}{}", " ".repeat(self.indent_for_width(width)), self.title);
             lines.push(Style::new().fg(self.title_color).bold().render(&raw));
         }
 
@@ -332,7 +334,7 @@ impl ChoicePrompt {
         }
 
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
-            let raw = format!("{}{}", " ".repeat(self.indent), hint);
+            let raw = format!("{}{}", " ".repeat(self.indent_for_width(width)), hint);
             lines.push(Style::new().fg(self.muted_color).render(&raw));
         }
 
@@ -349,11 +351,11 @@ impl ChoicePrompt {
             " "
         };
         let shortcut = self.choice_label(index, choice);
-        let prefix = if shortcut.is_empty() {
-            format!("{}{} ", " ".repeat(self.indent), marker)
-        } else {
-            format!("{}{} {shortcut} ", " ".repeat(self.indent), marker)
-        };
+        let indent = width.map_or_else(
+            || self.indent_for_element(),
+            |width| self.choice_indent_for_width(marker, &shortcut, width),
+        );
+        let prefix = self.choice_prefix(marker, &shortcut, indent);
         let suffix = choice
             .description
             .as_deref()
@@ -361,7 +363,7 @@ impl ChoicePrompt {
             .map(|description| format!("  {description}"))
             .unwrap_or_default();
         let available = width
-            .map(|width| width.saturating_sub(crate::style::visible_len(&prefix)))
+            .map(|width| width.saturating_sub(visible_len(&prefix)))
             .unwrap_or(usize::MAX);
 
         format!(
@@ -416,6 +418,39 @@ impl ChoicePrompt {
 
     fn clamp_selected(&mut self) {
         self.selected = self.selected.min(self.choices.len().saturating_sub(1));
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_CHOICE_PROMPT_INDENT)
+    }
+
+    fn choice_indent_for_width(&self, marker: &str, shortcut: &str, width: usize) -> usize {
+        self.indent
+            .min(width.saturating_sub(self.choice_prefix_width(marker, shortcut)))
+            .min(MAX_CHOICE_PROMPT_INDENT)
+    }
+
+    fn choice_prefix(&self, marker: &str, shortcut: &str, indent: usize) -> String {
+        if shortcut.is_empty() {
+            format!("{}{} ", " ".repeat(indent), marker)
+        } else {
+            format!("{}{} {shortcut} ", " ".repeat(indent), marker)
+        }
+    }
+
+    fn choice_prefix_width(&self, marker: &str, shortcut: &str) -> usize {
+        if shortcut.is_empty() {
+            visible_len(marker).saturating_add(1)
+        } else {
+            visible_len(marker)
+                .saturating_add(1)
+                .saturating_add(visible_len(shortcut))
+                .saturating_add(1)
+        }
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_CHOICE_PROMPT_INDENT)
     }
 }
 
@@ -551,6 +586,35 @@ mod tests {
             assert_eq!(visible_len(line), 18, "{line:?}");
         }
         assert!(strip_ansi(&rendered).contains("允许执行命"));
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let prompt = ChoicePrompt::new(
+            "Allow?",
+            vec![ChoicePromptItem::new("Run command").shortcut('r')],
+        )
+        .hint("Enter")
+        .indent(usize::MAX);
+        let rendered = prompt.view(8, 4);
+        let choice = prompt.plain_choice_line(0, Some(8));
+
+        assert_eq!(prompt.indent, MAX_CHOICE_PROMPT_INDENT);
+        assert_eq!(prompt.indent_for_width(8), 8);
+        assert_eq!(prompt.choice_indent_for_width("❯", "1.", 8), 3);
+        assert_eq!(visible_len(&choice), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = prompt.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(choice) = &column.children[1] else {
+            panic!("expected choice text");
+        };
+        assert_eq!(
+            visible_len(&choice.content),
+            MAX_CHOICE_PROMPT_INDENT + visible_len("❯ 1. Run command")
+        );
     }
 
     #[test]
