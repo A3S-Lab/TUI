@@ -335,7 +335,7 @@ impl PreviewPanel {
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<PreviewPanelMsg> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let item_row = local_row.checked_sub(self.item_start_row())?;
                 let item_count = self.visible_item_count_for_height(usize::MAX);
                 if item_row >= item_count {
@@ -738,6 +738,22 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         };
         assert_eq!(panel.handle_key(&esc), Some(PreviewPanelMsg::Cancelled));
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut panel = sample();
+        panel.set_y_offset(4);
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 1);
     }
 
     #[test]

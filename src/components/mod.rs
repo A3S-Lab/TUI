@@ -56,6 +56,14 @@ pub mod viewport;
 pub mod welcome_banner;
 pub mod wrapped_prefix_block;
 
+fn relative_mouse_row(row: u16, y_offset: u16) -> Option<usize> {
+    row.checked_sub(y_offset).map(usize::from)
+}
+
+fn relative_mouse_column(column: u16, x_offset: u16) -> Option<usize> {
+    column.checked_sub(x_offset).map(usize::from)
+}
+
 pub use activity_block::ActivityBlock;
 pub use alert::{Alert, AlertKind};
 pub use badge::Badge;

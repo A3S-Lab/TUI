@@ -239,7 +239,7 @@ impl ChoicePrompt {
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<ChoicePromptMsg> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let choice_row = local_row.checked_sub(self.choice_start_row())?;
                 if choice_row < self.choices.len() {
                     self.selected = choice_row;
@@ -566,6 +566,22 @@ mod tests {
 
         assert_eq!(msg, Some(ChoicePromptMsg::Selected(1)));
         assert_eq!(prompt.selected_index(), 1);
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let msg = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(prompt.selected_index(), 0);
     }
 
     #[test]

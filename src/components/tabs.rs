@@ -185,7 +185,7 @@ impl Tabs {
         }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let click_x = mouse.column.saturating_sub(self.x_offset) as usize;
+                let click_x = super::relative_mouse_column(mouse.column, self.x_offset)?;
                 let mut x = 0usize;
                 let gap = self.normalized_gap();
                 for (i, label) in self.labels.iter().enumerate() {
@@ -432,6 +432,23 @@ mod tests {
         });
 
         assert!(matches!(msg, Some(TabsMsg::Changed(1))));
+        assert_eq!(tabs.active(), 1);
+    }
+
+    #[test]
+    fn mouse_click_left_of_offset_is_ignored() {
+        let mut tabs = Tabs::new(vec!["A", "B"]);
+        tabs.set_active(1);
+        tabs.set_x_offset(4);
+
+        let msg = tabs.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(msg.is_none());
         assert_eq!(tabs.active(), 1);
     }
 

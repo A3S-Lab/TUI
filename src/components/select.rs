@@ -95,7 +95,7 @@ impl Select {
         }
         match mouse.kind {
             MouseEventKind::Down(crate::event::MouseButton::Left) => {
-                let row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 if row < self.items.len() {
                     self.cursor = row;
                     Some(SelectMsg::Selected(
@@ -315,6 +315,22 @@ mod tests {
         select.handle_key(&key(KeyCode::Down));
         let msg = select.handle_key(&key(KeyCode::Enter));
         assert!(matches!(msg, Some(SelectMsg::Selected(1, _))));
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut select = Select::new(vec!["x", "y"]).with_selected(1);
+        select.set_y_offset(4);
+
+        let msg = select.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(crate::event::MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(msg.is_none());
+        assert_eq!(select.selected_index(), 1);
     }
 
     #[test]
