@@ -17,7 +17,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Declarative UI** — describe what you want, not how to draw it
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
-- **Rich Components** — 58 ready-to-use components (tables, modals, help panels, text editors, etc.)
+- **Rich Components** — 57 ready-to-use components (tables, modals, help panels, text editors, etc.)
 
 ---
 
