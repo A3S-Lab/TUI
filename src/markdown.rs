@@ -66,10 +66,16 @@ impl Markdown {
                 // left bar marks h1/h2 for a little hierarchy.
                 let text = self.collect_inline(node);
                 let lead = if heading.level <= 2 { "▌ " } else { "" };
+                let label = format!("{lead}{text}");
+                let label = if self.width == 0 {
+                    label
+                } else {
+                    truncate_visible(&label, self.width)
+                };
                 let styled = Style::new()
                     .bold()
                     .fg(heading_color(heading.level))
-                    .render(&format!("{lead}{text}"));
+                    .render(&label);
                 output.push(styled);
                 output.push(String::new());
             }
@@ -565,6 +571,15 @@ mod tests {
         let output = md.render("# Title");
         let plain = strip_ansi(&output);
         assert!(plain.contains("Title"));
+    }
+
+    #[test]
+    fn heading_respects_configured_width() {
+        let md = Markdown::new().with_width(8);
+        let output = md.render("# abcdefghijklmnopqrstuvwxyz");
+        let heading = output.lines().next().unwrap();
+
+        assert!(visible_len(heading) <= 8, "{heading:?}");
     }
 
     #[test]
