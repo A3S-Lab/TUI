@@ -226,7 +226,10 @@ impl Grid {
 
     pub fn set(&mut self, x: u16, y: u16, cell: Cell) {
         if x < self.width && y < self.height {
-            self.cells[y as usize][x as usize] = cell;
+            let row = y as usize;
+            let col = x as usize;
+            self.clear_wide_span_at(row, col);
+            self.cells[row][col] = cell;
         }
     }
 
@@ -444,6 +447,28 @@ mod tests {
 
         grid.write_str(0, 0, "界", &style);
         grid.write_str(1, 0, "B", &style);
+
+        assert_eq!(grid.render_to_string(), " B");
+    }
+
+    #[test]
+    fn grid_set_clears_stale_wide_continuation_after_narrow_overwrite() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.set(0, 0, Cell::with_char('A'));
+
+        assert_eq!(grid.render_to_string(), "A ");
+    }
+
+    #[test]
+    fn grid_set_clears_wide_char_when_overwriting_its_continuation() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.set(1, 0, Cell::with_char('B'));
 
         assert_eq!(grid.render_to_string(), " B");
     }
