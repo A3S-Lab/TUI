@@ -9,6 +9,7 @@ use crate::style::Color;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Cell {
     pub ch: char,
+    pub combining: String,
     pub fg: Option<Color>,
     pub bg: Option<Color>,
     pub bold: bool,
@@ -21,6 +22,7 @@ pub struct Cell {
 
 static EMPTY_CELL: Cell = Cell {
     ch: ' ',
+    combining: String::new(),
     fg: None,
     bg: None,
     bold: false,
@@ -50,6 +52,7 @@ impl Cell {
     pub fn styled(ch: char, style: &CellStyle) -> Self {
         Self {
             ch,
+            combining: String::new(),
             fg: style.fg,
             bg: style.bg,
             bold: style.bold,
@@ -78,7 +81,9 @@ impl Cell {
             || self.bg.is_some();
 
         if !has_style {
-            return self.ch.to_string();
+            let mut out = self.ch.to_string();
+            out.push_str(&self.combining);
+            return out;
         }
 
         let mut out = String::with_capacity(24);
@@ -125,6 +130,7 @@ impl Cell {
 
         out.push('m');
         out.push(self.ch);
+        out.push_str(&self.combining);
         out.push_str("\x1b[0m");
         out
     }
@@ -148,6 +154,7 @@ impl Cell {
 
         if !has_style {
             buf.push(self.ch);
+            buf.push_str(&self.combining);
             return;
         }
 
@@ -194,6 +201,7 @@ impl Cell {
 
         buf.push('m');
         buf.push(self.ch);
+        buf.push_str(&self.combining);
         buf.push_str("\x1b[0m");
     }
 }
@@ -251,6 +259,7 @@ impl Grid {
             for offset in 1..width {
                 let mut continuation = cell.clone();
                 continuation.ch = WIDE_CONTINUATION;
+                continuation.combining.clear();
                 self.cells[row][col + offset] = continuation;
             }
         }
@@ -262,9 +271,13 @@ impl Grid {
         if row >= self.height as usize {
             return;
         }
+        let mut last_base_col: Option<usize> = None;
         for ch in text.chars() {
             let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
             if width == 0 {
+                if let Some(base_col) = last_base_col {
+                    self.cells[row][base_col].combining.push(ch);
+                }
                 continue;
             }
             if col.saturating_add(width) > self.width as usize {
@@ -277,6 +290,7 @@ impl Grid {
             for offset in 1..width {
                 self.cells[row][col + offset] = Cell::styled(WIDE_CONTINUATION, style);
             }
+            last_base_col = Some(col);
             col += width;
         }
     }
@@ -487,14 +501,17 @@ mod tests {
     }
 
     #[test]
-    fn grid_write_str_ignores_zero_width_char_at_boundary() {
+    fn grid_write_str_keeps_zero_width_marks_with_base_glyph() {
         let mut grid = Grid::new(2, 1);
         let style = CellStyle::default();
 
         grid.write_str(0, 0, "ab\u{0301}", &style);
         grid.write_str(2, 0, "\u{0301}", &style);
 
-        assert_eq!(grid.render_to_string(), "ab");
+        assert_eq!(grid.get(1, 0).ch, 'b');
+        assert_eq!(grid.get(1, 0).combining, "\u{0301}");
+        assert_eq!(grid.render_to_string(), "ab\u{0301}");
+        assert_eq!(crate::style::visible_len(&grid.render_to_string()), 2);
     }
 
     #[test]

@@ -4,7 +4,8 @@ use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::{LayoutNode, LayoutResult};
 use crate::style::{
-    split_lines_preserving_trailing_blank, strip_ansi, truncate_visible, visible_len, wrap_words,
+    next_display_cell_boundary, split_lines_preserving_trailing_blank, strip_ansi,
+    truncate_visible, visible_len, wrap_words,
 };
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
@@ -277,8 +278,10 @@ fn clip_visible_cols(text: &str, from: usize, width: usize) -> Option<(usize, St
     let mut start_col = None;
     let mut out = String::new();
 
-    for ch in text.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+    let mut index = 0usize;
+    while let Some((cell_end, cw)) = next_display_cell_boundary(text, index) {
+        let cell = &text[index..cell_end];
+        index = cell_end;
         if cw == 0 {
             continue;
         }
@@ -296,7 +299,7 @@ fn clip_visible_cols(text: &str, from: usize, width: usize) -> Option<(usize, St
         }
 
         start_col.get_or_insert(col);
-        out.push(ch);
+        out.push_str(cell);
         col = next_col;
     }
 
@@ -566,6 +569,23 @@ mod tests {
     }
 
     #[test]
+    fn paint_hidden_overflow_keeps_zero_width_marks_with_base_glyph() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .width(Dimension::Points(1.0))
+                .height(Dimension::Points(1.0))
+                .overflow(Overflow::Hidden)
+                .child(Element::Text(
+                    TextElement::new("e\u{0301}x").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 2, 1);
+
+        assert_eq!(grid.render_to_string(), "e\u{0301} ");
+    }
+
+    #[test]
     fn paint_hidden_overflow_preserves_columns_after_left_split_wide_glyph() {
         let el: Element<()> = Element::Box(BoxElement::new().overflow(Overflow::Hidden).child(
             Element::Text(TextElement::new("界a").wrap(TextWrap::NoWrap)),
@@ -597,6 +617,19 @@ mod tests {
         assert_eq!(clip_visible_cols("ab界cd", 0, 4), Some((0, "ab界".into())));
         assert_eq!(clip_visible_cols("ab界cd", 0, 3), Some((0, "ab".into())));
         assert_eq!(clip_visible_cols("ab界cd", 3, 3), Some((4, "cd".into())));
+    }
+
+    #[test]
+    fn clip_visible_cols_keeps_zero_width_marks_with_base_glyph() {
+        assert_eq!(
+            clip_visible_cols("e\u{0301}x", 0, 1),
+            Some((0, "e\u{0301}".into()))
+        );
+        assert_eq!(
+            clip_visible_cols("xe\u{0301}", 1, 1),
+            Some((1, "e\u{0301}".into()))
+        );
+        assert_eq!(clip_visible_cols("e\u{0301}x", 1, 1), Some((1, "x".into())));
     }
 
     #[test]
