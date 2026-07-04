@@ -2,14 +2,86 @@
 
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
-use crate::layout_engine::LayoutResult;
+use crate::layout_engine::{LayoutNode, LayoutResult};
 use crate::style::{strip_ansi, truncate_visible, visible_len, wrap_words};
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
     let mut idx = 0;
-    paint_element(&mut grid, root, layout, &mut idx, width, height);
+    paint_element(
+        &mut grid,
+        root,
+        layout,
+        &mut idx,
+        width,
+        ClipRect::from_grid(width, height),
+    );
     grid
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClipRect {
+    left: usize,
+    top: usize,
+    right: usize,
+    bottom: usize,
+}
+
+impl ClipRect {
+    fn from_grid(width: u16, height: u16) -> Self {
+        Self {
+            left: 0,
+            top: 0,
+            right: width as usize,
+            bottom: height as usize,
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        self.left >= self.right || self.top >= self.bottom
+    }
+
+    fn intersect_node(self, node: &LayoutNode) -> Self {
+        let node_left = node.x as usize;
+        let node_top = node.y as usize;
+        let node_right = node_left.saturating_add(node.width as usize);
+        let node_bottom = node_top.saturating_add(node.height as usize);
+
+        Self {
+            left: self.left.max(node_left),
+            top: self.top.max(node_top),
+            right: self.right.min(node_right),
+            bottom: self.bottom.min(node_bottom),
+        }
+    }
+
+    fn intersects_node(self, node: &LayoutNode) -> bool {
+        !self.intersect_node(node).is_empty()
+    }
+
+    fn clipped_rect(self, x: u16, y: u16, w: u16, h: u16) -> Option<(u16, u16, u16, u16)> {
+        let left = self.left.max(x as usize);
+        let top = self.top.max(y as usize);
+        let right = self.right.min((x as usize).saturating_add(w as usize));
+        let bottom = self.bottom.min((y as usize).saturating_add(h as usize));
+
+        if left >= right || top >= bottom {
+            return None;
+        }
+
+        Some((
+            left as u16,
+            top as u16,
+            (right - left) as u16,
+            (bottom - top) as u16,
+        ))
+    }
+
+    fn contains(self, x: u16, y: u16) -> bool {
+        let x = x as usize;
+        let y = y as usize;
+        x >= self.left && x < self.right && y >= self.top && y < self.bottom
+    }
 }
 
 fn paint_element<Msg>(
@@ -17,16 +89,15 @@ fn paint_element<Msg>(
     element: &Element<Msg>,
     layout: &LayoutResult,
     idx: &mut usize,
-    grid_w: u16,
     grid_h: u16,
+    clip: ClipRect,
 ) {
     let Some(node) = layout.nodes.get(*idx) else {
         return;
     };
     *idx += 1;
 
-    // Early culling: skip elements entirely outside the visible area
-    if node.x >= grid_w || node.y >= grid_h {
+    if !clip.intersects_node(node) {
         skip_children(element, layout, idx);
         return;
     }
@@ -34,23 +105,28 @@ fn paint_element<Msg>(
     match element {
         Element::Box(box_el) => {
             if let Some(bg) = box_el.style.bg {
-                grid.fill_bg(node.x, node.y, node.width, node.height, bg);
+                if let Some((x, y, w, h)) =
+                    clip.clipped_rect(node.x, node.y, node.width, node.height)
+                {
+                    grid.fill_bg(x, y, w, h, bg);
+                }
             }
 
             if let Some(border) = &box_el.style.border {
-                draw_border(
-                    grid,
-                    node.x,
-                    node.y,
-                    node.width,
-                    node.height,
-                    *border,
-                    box_el.style.border_color,
-                );
+                draw_border(grid, node, *border, box_el.style.border_color, clip);
+            }
+
+            let child_clip = match box_el.style.overflow {
+                Overflow::Visible => clip,
+                Overflow::Hidden => clip.intersect_node(node),
+            };
+            if child_clip.is_empty() {
+                skip_children(element, layout, idx);
+                return;
             }
 
             for child in &box_el.children {
-                paint_element(grid, child, layout, idx, grid_w, grid_h);
+                paint_element(grid, child, layout, idx, grid_h, child_clip);
             }
         }
         Element::Text(text_el) => {
@@ -88,10 +164,10 @@ fn paint_element<Msg>(
                         if visible_len(paint_line) <= max_w {
                             if !paint_text_row(
                                 grid,
-                                node.x,
-                                node.y,
+                                node,
                                 painted_rows,
                                 grid_h,
+                                clip,
                                 paint_line,
                                 &style,
                             ) {
@@ -107,10 +183,10 @@ fn paint_element<Msg>(
                             }
                             if !paint_text_row(
                                 grid,
-                                node.x,
-                                node.y,
+                                node,
                                 painted_rows,
                                 grid_h,
+                                clip,
                                 &display_line,
                                 &style,
                             ) {
@@ -124,10 +200,10 @@ fn paint_element<Msg>(
                         let display_line = truncate_visible(paint_line, max_w);
                         if !paint_text_row(
                             grid,
-                            node.x,
-                            node.y,
+                            node,
                             painted_rows,
                             grid_h,
+                            clip,
                             &display_line,
                             &style,
                         ) {
@@ -138,10 +214,10 @@ fn paint_element<Msg>(
                     TextWrap::NoWrap => {
                         if !paint_text_row(
                             grid,
-                            node.x,
-                            node.y,
+                            node,
                             painted_rows,
                             grid_h,
+                            clip,
                             paint_line,
                             &style,
                         ) {
@@ -159,25 +235,71 @@ fn paint_element<Msg>(
 
 fn paint_text_row(
     grid: &mut Grid,
-    x: u16,
-    y: u16,
+    node: &LayoutNode,
     row_offset: usize,
     grid_h: u16,
+    clip: ClipRect,
     text: &str,
     style: &CellStyle,
 ) -> bool {
     let Some(row_offset) = u16::try_from(row_offset).ok() else {
         return false;
     };
-    let Some(row_y) = y.checked_add(row_offset) else {
+    let Some(row_y) = node.y.checked_add(row_offset) else {
         return false;
     };
-    if row_y >= grid_h {
+    if row_y >= grid_h || row_y as usize >= clip.bottom {
         return false;
     }
+    if (row_y as usize) < clip.top {
+        return true;
+    }
 
-    grid.write_str(x, row_y, text, style);
+    let write_x = (node.x as usize).max(clip.left);
+    if write_x >= clip.right {
+        return true;
+    }
+
+    let local_from = clip.left.saturating_sub(node.x as usize);
+    let clipped = clip_visible_cols(text, local_from, clip.right - write_x);
+    if !clipped.is_empty() {
+        grid.write_str(write_x as u16, row_y, &clipped, style);
+    }
     true
+}
+
+fn clip_visible_cols(text: &str, from: usize, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let end = from.saturating_add(width);
+    let mut col = 0usize;
+    let mut out = String::new();
+
+    for ch in text.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if cw == 0 {
+            continue;
+        }
+        let next_col = col.saturating_add(cw);
+        if next_col <= from {
+            col = next_col;
+            continue;
+        }
+        if col < from {
+            col = next_col;
+            continue;
+        }
+        if next_col > end {
+            break;
+        }
+
+        out.push(ch);
+        col = next_col;
+    }
+
+    out
 }
 
 /// Skip over child nodes in the layout index without rendering.
@@ -195,13 +317,16 @@ fn skip_children<Msg>(element: &Element<Msg>, layout: &LayoutResult, idx: &mut u
 
 fn draw_border(
     grid: &mut Grid,
-    x: u16,
-    y: u16,
-    w: u16,
-    h: u16,
+    node: &LayoutNode,
     border: BorderStyle,
     color: Option<crate::style::Color>,
+    clip: ClipRect,
 ) {
+    let x = node.x;
+    let y = node.y;
+    let w = node.width;
+    let h = node.height;
+
     if w < 2 || h < 2 {
         return;
     }
@@ -224,19 +349,25 @@ fn draw_border(
         ..Default::default()
     };
 
-    grid.set(x, y, Cell::styled(tl, &style));
-    grid.set(right, y, Cell::styled(tr, &style));
-    grid.set(x, bottom, Cell::styled(bl, &style));
-    grid.set(right, bottom, Cell::styled(br, &style));
+    set_clipped(grid, x, y, Cell::styled(tl, &style), clip);
+    set_clipped(grid, right, y, Cell::styled(tr, &style), clip);
+    set_clipped(grid, x, bottom, Cell::styled(bl, &style), clip);
+    set_clipped(grid, right, bottom, Cell::styled(br, &style), clip);
 
     for col in (x + 1)..right {
-        grid.set(col, y, Cell::styled(hz, &style));
-        grid.set(col, bottom, Cell::styled(hz, &style));
+        set_clipped(grid, col, y, Cell::styled(hz, &style), clip);
+        set_clipped(grid, col, bottom, Cell::styled(hz, &style), clip);
     }
 
     for row in (y + 1)..bottom {
-        grid.set(x, row, Cell::styled(vt, &style));
-        grid.set(right, row, Cell::styled(vt, &style));
+        set_clipped(grid, x, row, Cell::styled(vt, &style), clip);
+        set_clipped(grid, right, row, Cell::styled(vt, &style), clip);
+    }
+}
+
+fn set_clipped(grid: &mut Grid, x: u16, y: u16, cell: Cell, clip: ClipRect) {
+    if clip.contains(x, y) {
+        grid.set(x, y, cell);
     }
 }
 
@@ -344,6 +475,84 @@ mod tests {
         let grid = render(&el, 10, 5);
         assert_eq!(grid.get(0, 0).ch, 'X');
         assert_eq!(grid.get(1, 0).ch, 'Y');
+    }
+
+    #[test]
+    fn paint_visible_overflow_allows_child_text_past_box() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(4.0))
+                .height(Dimension::Points(1.0))
+                .child(Element::Text(
+                    TextElement::new("abcdef").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 8, 1);
+
+        assert_eq!(grid.render_to_string(), "abcdef  ");
+    }
+
+    #[test]
+    fn paint_hidden_overflow_clips_child_text_width() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(4.0))
+                .height(Dimension::Points(1.0))
+                .overflow(Overflow::Hidden)
+                .child(Element::Text(
+                    TextElement::new("abcdef").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 8, 1);
+
+        assert_eq!(grid.render_to_string(), "abcd    ");
+    }
+
+    #[test]
+    fn paint_hidden_overflow_clips_child_rows() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(4.0))
+                .height(Dimension::Points(1.0))
+                .overflow(Overflow::Hidden)
+                .child(Element::Text(TextElement::new("top")))
+                .child(Element::Text(TextElement::new("bottom"))),
+        );
+
+        let grid = render(&el, 8, 3);
+
+        assert_eq!(grid.render_to_string(), "top     \n        \n        ");
+    }
+
+    #[test]
+    fn paint_hidden_overflow_clips_child_background() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(4.0))
+                .height(Dimension::Points(1.0))
+                .overflow(Overflow::Hidden)
+                .child(Element::Box(
+                    BoxElement::new()
+                        .width(Dimension::Points(6.0))
+                        .height(Dimension::Points(1.0))
+                        .bg(Color::Blue),
+                )),
+        );
+
+        let grid = render(&el, 8, 1);
+
+        for x in 0..4 {
+            assert_eq!(grid.get(x, 0).bg, Some(Color::Blue));
+        }
+        for x in 4..8 {
+            assert_eq!(grid.get(x, 0).bg, None);
+        }
     }
 
     #[test]
