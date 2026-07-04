@@ -4,6 +4,9 @@ use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
+const MAX_TABBED_MENU_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_TABBED_MENU_PANEL_TAB_GAP: usize = u16::MAX as usize;
+
 /// One selectable row in a [`TabbedMenuPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabbedMenuItem {
@@ -244,12 +247,12 @@ impl TabbedMenuPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_TABBED_MENU_PANEL_INDENT);
         self
     }
 
     pub fn tab_gap(mut self, gap: usize) -> Self {
-        self.tab_gap = gap;
+        self.tab_gap = gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP);
         self
     }
 
@@ -469,7 +472,7 @@ impl TabbedMenuPanel {
                     .fg(self.title_color.unwrap_or(active_tab.color))
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -481,7 +484,7 @@ impl TabbedMenuPanel {
 
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
             lines.push(Style::new().fg(self.hint_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), hint),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), hint),
                 width,
             )));
         }
@@ -491,7 +494,7 @@ impl TabbedMenuPanel {
             if lines.len() < height {
                 let text = active_tab.empty_text.as_deref().unwrap_or("no items");
                 lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                    &format!("{}{}", " ".repeat(self.indent), text),
+                    &format!("{}{}", " ".repeat(self.indent_for_width(width)), text),
                     width,
                 )));
             }
@@ -510,7 +513,7 @@ impl TabbedMenuPanel {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -526,8 +529,8 @@ impl TabbedMenuPanel {
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
             .active(self.active_tab)
-            .margin(self.indent)
-            .gap(self.tab_gap)
+            .margin(self.indent_for_width(width))
+            .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .view(width as u16)
     }
 
@@ -539,8 +542,8 @@ impl TabbedMenuPanel {
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
             .active(self.active_tab)
-            .margin(self.indent)
-            .gap(self.tab_gap)
+            .margin(self.indent_for_element())
+            .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .element()
     }
 
@@ -565,11 +568,10 @@ impl TabbedMenuPanel {
         let Some(item) = self.active_items().get(index) else {
             return String::new();
         };
-        let mut prefix = " ".repeat(self.indent);
-        if let Some(marker) = item.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
-            prefix.push_str(marker);
-            prefix.push(' ');
-        }
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(item, width),
+            None => self.item_prefix_for_element(item),
+        };
         let mut label = item.label.clone();
         if let Some(description) = item
             .description
@@ -591,7 +593,7 @@ impl TabbedMenuPanel {
         Style::new().fg(self.muted_color).render(&fit_visible(
             &format!(
                 "{}{up}{down} {}/{}",
-                " ".repeat(self.indent),
+                " ".repeat(self.indent_for_width(width)),
                 self.selected.saturating_add(1).min(total),
                 total
             ),
@@ -699,6 +701,37 @@ impl TabbedMenuPanel {
             .selected
             .min(self.active_items().len().saturating_sub(1));
     }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_TABBED_MENU_PANEL_INDENT)
+    }
+
+    fn item_prefix_for_width(&self, item: &TabbedMenuItem, width: usize) -> String {
+        let tail = truncate_visible(&self.item_prefix_tail(item), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        format!("{}{}", " ".repeat(indent), tail)
+    }
+
+    fn item_prefix_for_element(&self, item: &TabbedMenuItem) -> String {
+        format!(
+            "{}{}",
+            " ".repeat(self.indent_for_element()),
+            self.item_prefix_tail(item)
+        )
+    }
+
+    fn item_prefix_tail(&self, item: &TabbedMenuItem) -> String {
+        item.prefix
+            .as_deref()
+            .filter(|prefix| !prefix.is_empty())
+            .map(|prefix| format!("{prefix} "))
+            .unwrap_or_default()
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_TABBED_MENU_PANEL_INDENT)
+    }
 }
 
 #[cfg(test)]
@@ -790,6 +823,42 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 24, "{line:?}");
         }
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel =
+            TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+                .item(TabbedMenuItem::new("gpt-5").prefix("●"))])
+            .title("Models")
+            .hint("hint")
+            .indent(usize::MAX)
+            .tab_gap(usize::MAX)
+            .show_tabs_when_single(true)
+            .footer("footer")
+            .fill_height(true);
+        let rendered = panel.view(8, 5);
+        let item = panel.active_items().first().unwrap();
+        let prefix = panel.item_prefix_for_width(item, 8);
+        let line = panel.plain_item_line(0, Some(8));
+
+        assert_eq!(panel.indent, MAX_TABBED_MENU_PANEL_INDENT);
+        assert_eq!(panel.tab_gap, MAX_TABBED_MENU_PANEL_TAB_GAP);
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(visible_len(&prefix), 8);
+        assert_eq!(visible_len(&line), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(item) = &column.children[3] else {
+            panic!("expected item text");
+        };
+        assert_eq!(
+            visible_len(&item.content),
+            MAX_TABBED_MENU_PANEL_INDENT + visible_len("● gpt-5")
+        );
     }
 
     #[test]
