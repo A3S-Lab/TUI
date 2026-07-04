@@ -1,5 +1,6 @@
 use crate::style::{truncate_visible, visible_len, Color, Style};
 
+const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
 const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
 const MAX_DATA_TABLE_GAP: usize = u16::MAX as usize;
 
@@ -35,12 +36,12 @@ impl DataColumn {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width.max(1));
+        self.width = Some(width.max(1).min(MAX_DATA_COLUMN_WIDTH));
         self
     }
 
     pub fn min_width(mut self, width: usize) -> Self {
-        self.min_width = width.max(1);
+        self.min_width = width.max(1).min(MAX_DATA_COLUMN_WIDTH);
         self
     }
 
@@ -611,6 +612,21 @@ mod tests {
 
         assert!(plain.contains("LEFT"));
         assert!(plain.contains("RIG"));
+    }
+
+    #[test]
+    fn oversized_column_widths_are_clamped() {
+        let column = DataColumn::new("Huge")
+            .width(usize::MAX)
+            .min_width(usize::MAX);
+
+        assert_eq!(column.width, Some(MAX_DATA_COLUMN_WIDTH));
+        assert_eq!(column.min_width, MAX_DATA_COLUMN_WIDTH);
+
+        let table = DataTable::new(vec![column]).row(DataRow::new(vec!["value"]));
+        let plain = strip_ansi(&table.view(12, 4));
+
+        assert!(plain.lines().all(|line| visible_len(line) == 12));
     }
 
     #[test]
