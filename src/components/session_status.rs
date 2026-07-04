@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
 
+const MAX_SESSION_STATUS_MARGIN: usize = u16::MAX as usize;
+
 /// Agent/session status row with workspace, model, context, and live chips.
 ///
 /// This extracts the common CLI footer pattern: current workspace, git branch,
@@ -80,7 +82,7 @@ impl SessionStatus {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_SESSION_STATUS_MARGIN);
         self
     }
 
@@ -131,12 +133,14 @@ impl SessionStatus {
         if width == 0 {
             return String::new();
         }
-        fit_visible(&self.render_raw(), width)
+        fit_visible(&self.render_raw(self.margin_for_width(width)), width)
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut row = BoxElement::new().direction(FlexDirection::Row);
-        row = row.child(Element::Text(TextElement::new(" ".repeat(self.margin))));
+        row = row.child(Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        )));
         row = row.child(Element::Text(
             TextElement::new(self.workspace_name())
                 .fg(self.accent_color)
@@ -196,10 +200,10 @@ impl SessionStatus {
         Element::Box(row)
     }
 
-    fn render_raw(&self) -> String {
+    fn render_raw(&self, margin: usize) -> String {
         let mut raw = format!(
             "{}{}",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             Style::new()
                 .fg(self.accent_color)
                 .bold()
@@ -259,6 +263,14 @@ impl SessionStatus {
         }
 
         raw
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_SESSION_STATUS_MARGIN)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_SESSION_STATUS_MARGIN)
     }
 
     fn workspace_name(&self) -> String {
@@ -429,6 +441,23 @@ mod tests {
 
         assert_eq!(visible_len(&rendered), 32);
         assert!(strip_ansi(&rendered).contains('…'));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let status = SessionStatus::new("/tmp/a3s").margin(usize::MAX);
+        let rendered = status.view(8);
+
+        assert_eq!(status.margin, MAX_SESSION_STATUS_MARGIN);
+        assert_eq!(visible_len(&rendered), 8);
+
+        let Element::Box(row) = status.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), MAX_SESSION_STATUS_MARGIN);
     }
 
     #[test]
