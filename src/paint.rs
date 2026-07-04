@@ -3,7 +3,9 @@
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::{LayoutNode, LayoutResult};
-use crate::style::{strip_ansi, truncate_visible, visible_len, wrap_words};
+use crate::style::{
+    split_lines_preserving_trailing_blank, strip_ansi, truncate_visible, visible_len, wrap_words,
+};
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
@@ -141,7 +143,7 @@ fn paint_element<Msg>(
             let max_h = node.height as usize;
             let mut painted_rows = 0usize;
 
-            for line in text_el.content.lines() {
+            for line in split_lines_preserving_trailing_blank(&text_el.content) {
                 if painted_rows >= max_h {
                     break;
                 }
@@ -419,6 +421,22 @@ mod tests {
         let grid = render(&el, 6, 2);
 
         assert_eq!(grid.render_to_string(), "alpha \nbeta  ");
+    }
+
+    #[test]
+    fn paint_text_trailing_blank_line_offsets_following_sibling() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("A\n")))
+                .child(Element::Text(TextElement::new("B"))),
+        );
+
+        let grid = render(&el, 4, 3);
+
+        assert_eq!(grid.get(0, 0).ch, 'A');
+        assert_eq!(grid.get(0, 1).ch, ' ');
+        assert_eq!(grid.get(0, 2).ch, 'B');
     }
 
     #[test]

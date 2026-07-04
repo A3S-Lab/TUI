@@ -6,7 +6,7 @@ use crate::element::{
     AlignItems as ElAlignItems, BoxStyle, Dimension, Element, FlexDirection as ElFlexDir,
     JustifyContent as ElJustify, Overflow as ElOverflow, TextWrap,
 };
-use crate::style::{strip_ansi, visible_len, wrap_words};
+use crate::style::{split_lines_preserving_trailing_blank, strip_ansi, visible_len, wrap_words};
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use taffy::prelude::*;
@@ -356,8 +356,7 @@ fn measure_text_node(
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
 ) -> Size<f32> {
-    let lines: Vec<&str> = content.lines().collect();
-    let lines = if lines.is_empty() { vec![""] } else { lines };
+    let lines = split_lines_preserving_trailing_blank(content);
 
     let max_line_width = lines.iter().map(|l| visible_len(l)).max().unwrap_or(0) as f32;
 
@@ -383,7 +382,7 @@ fn measure_text_node(
 
 fn count_wrapped_lines(text: &str, width: usize) -> usize {
     if width == 0 {
-        return text.lines().count().max(1);
+        return split_lines_preserving_trailing_blank(text).len().max(1);
     }
 
     let stripped_text;
@@ -394,7 +393,11 @@ fn count_wrapped_lines(text: &str, width: usize) -> usize {
         text
     };
 
-    wrap_words(text, width).len().max(1)
+    split_lines_preserving_trailing_blank(text)
+        .into_iter()
+        .map(|line| wrap_words(line, width).len())
+        .sum::<usize>()
+        .max(1)
 }
 
 #[cfg(test)]
@@ -432,6 +435,16 @@ mod tests {
 
         assert_eq!(result.nodes[0].width, 3);
         assert_eq!(result.nodes[0].height, 3);
+    }
+
+    #[test]
+    fn layout_text_preserves_trailing_blank_line_height() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Text(TextElement::new("Line\n"));
+
+        let result = engine.compute(&el, 80, 24);
+
+        assert_eq!(result.nodes[0].height, 2);
     }
 
     #[test]

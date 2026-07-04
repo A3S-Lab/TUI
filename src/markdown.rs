@@ -9,7 +9,9 @@ use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use unicode_width::UnicodeWidthChar;
 
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_lines_preserving_trailing_blank, truncate_visible, visible_len, Color, Style,
+};
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
 
@@ -625,7 +627,7 @@ pub(crate) fn split_rendered_lines(rendered: &str) -> Vec<&str> {
     if rendered.is_empty() {
         Vec::new()
     } else {
-        rendered.split('\n').collect()
+        split_lines_preserving_trailing_blank(rendered)
     }
 }
 

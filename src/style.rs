@@ -672,6 +672,11 @@ pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
     wrap_words_inner(text, width, false)
 }
 
+/// Split text rows while retaining a final empty row from a trailing newline.
+pub(crate) fn split_lines_preserving_trailing_blank(text: &str) -> Vec<&str> {
+    text.split('\n').collect()
+}
+
 /// Wrap plain text on whitespace and drop blank input lines.
 pub fn wrap_words_compact(text: &str, width: usize) -> Vec<String> {
     wrap_words_inner(text, width, true)
@@ -936,6 +941,15 @@ mod tests {
         let lines = wrap_words("alpha\n\nbeta", 40);
 
         assert_eq!(lines, vec!["alpha", "", "beta"]);
+    }
+
+    #[test]
+    fn split_lines_preserves_trailing_blank_line() {
+        assert_eq!(
+            split_lines_preserving_trailing_blank("alpha\n"),
+            vec!["alpha", ""]
+        );
+        assert_eq!(split_lines_preserving_trailing_blank(""), vec![""]);
     }
 
     #[test]
