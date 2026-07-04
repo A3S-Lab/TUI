@@ -304,7 +304,10 @@ impl MenuPanel {
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = (self.selected + step).min(self.items.len().saturating_sub(1));
+                self.selected = self
+                    .selected
+                    .saturating_add(step)
+                    .min(self.items.len().saturating_sub(1));
                 self.keep_selected_visible(step);
                 None
             }
@@ -722,6 +725,15 @@ mod tests {
             panel.handle_key(&key(KeyCode::Esc)),
             Some(MenuPanelMsg::Cancelled)
         );
+    }
+
+    #[test]
+    fn huge_page_down_saturates_selection() {
+        let mut panel = sample_panel().selected(1).max_items(usize::MAX);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::PageDown)), None);
+
+        assert_eq!(panel.selected_index(), panel.items_value().len() - 1);
     }
 
     #[test]

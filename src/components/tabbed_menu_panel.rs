@@ -344,8 +344,10 @@ impl TabbedMenuPanel {
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected =
-                    (self.selected + step).min(self.active_items().len().saturating_sub(1));
+                self.selected = self
+                    .selected
+                    .saturating_add(step)
+                    .min(self.active_items().len().saturating_sub(1));
                 self.keep_selected_visible(step);
                 None
             }
@@ -810,6 +812,15 @@ mod tests {
             panel.handle_key(&key(KeyCode::Esc)),
             Some(TabbedMenuPanelMsg::Cancelled)
         );
+    }
+
+    #[test]
+    fn huge_page_down_saturates_selection() {
+        let mut panel = sample().active_tab(0).selected(1).max_items(usize::MAX);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::PageDown)), None);
+
+        assert_eq!(panel.selected_index(), panel.active_items().len() - 1);
     }
 
     #[test]

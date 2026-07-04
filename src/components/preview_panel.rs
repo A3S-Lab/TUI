@@ -300,7 +300,10 @@ impl PreviewPanel {
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = (self.selected + step).min(self.items.len().saturating_sub(1));
+                self.selected = self
+                    .selected
+                    .saturating_add(step)
+                    .min(self.items.len().saturating_sub(1));
                 self.keep_selected_visible(step);
                 None
             }
@@ -703,6 +706,19 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         };
         assert_eq!(panel.handle_key(&esc), Some(PreviewPanelMsg::Cancelled));
+    }
+
+    #[test]
+    fn huge_page_down_saturates_selection() {
+        let mut panel = sample().selected(1).max_items(usize::MAX);
+        let page_down = KeyEvent {
+            code: KeyCode::PageDown,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        assert_eq!(panel.handle_key(&page_down), None);
+
+        assert_eq!(panel.selected_index(), panel.items_value().len() - 1);
     }
 
     #[test]

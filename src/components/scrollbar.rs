@@ -69,13 +69,15 @@ impl Scrollbar {
         let thumb_size = ((self.visible as f64 / self.total as f64) * height as f64)
             .ceil()
             .max(1.0) as usize;
+        let thumb_size = thumb_size.min(height);
 
         let max_offset = self.total.saturating_sub(self.visible);
         let thumb_pos = if max_offset == 0 {
             0
         } else {
-            ((self.offset as f64 / max_offset as f64) * (height - thumb_size) as f64).round()
-                as usize
+            let offset = self.offset.min(max_offset);
+            (((offset as f64 / max_offset as f64) * (height - thumb_size) as f64).round() as usize)
+                .min(height.saturating_sub(thumb_size))
         };
 
         (thumb_pos, thumb_size)
@@ -87,7 +89,7 @@ impl Scrollbar {
 
         let children: Vec<Element<Msg>> = (0..height)
             .map(|i| {
-                if i >= thumb_pos && i < thumb_pos + thumb_size {
+                if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
                     Element::Text(
                         TextElement::new(self.thumb_char.to_string()).fg(self.thumb_color),
                     )
@@ -116,7 +118,7 @@ impl Scrollbar {
 
         (0..height)
             .map(|i| {
-                if i >= thumb_pos && i < thumb_pos + thumb_size {
+                if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
                     self.thumb_char
                 } else {
                     self.track_char
@@ -137,7 +139,7 @@ impl Scrollbar {
         let (thumb_pos, thumb_size) = self.thumb_range(height);
         (0..height)
             .map(|i| {
-                if i >= thumb_pos && i < thumb_pos + thumb_size {
+                if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
                     Style::new()
                         .fg(self.thumb_color)
                         .render(&self.thumb_char.to_string())
@@ -189,6 +191,16 @@ mod tests {
         let (pos, size) = sb.thumb_range(10);
         assert_eq!(size, 5);
         assert_eq!(pos, 5);
+    }
+
+    #[test]
+    fn oversized_offset_clamps_thumb_to_track() {
+        let sb = Scrollbar::new(20, 10, usize::MAX);
+        let (pos, size) = sb.thumb_range(10);
+
+        assert_eq!(size, 5);
+        assert_eq!(pos, 5);
+        assert_eq!(sb.view(10).chars().last(), Some('█'));
     }
 
     #[test]

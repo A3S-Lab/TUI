@@ -158,13 +158,16 @@ impl Viewport {
                 self.offset = self.offset.saturating_sub(n);
             }
             ViewportMsg::ScrollDown(n) => {
-                self.offset = (self.offset + n).min(self.max_offset());
+                self.offset = self.offset.saturating_add(n).min(self.max_offset());
             }
             ViewportMsg::PageUp => {
                 self.offset = self.offset.saturating_sub(self.height as usize);
             }
             ViewportMsg::PageDown => {
-                self.offset = (self.offset + self.height as usize).min(self.max_offset());
+                self.offset = self
+                    .offset
+                    .saturating_add(self.height as usize)
+                    .min(self.max_offset());
             }
             ViewportMsg::Top => {
                 self.offset = 0;
@@ -494,6 +497,17 @@ mod tests {
         vp.update(ViewportMsg::ScrollDown(2));
         let view = vp.view();
         assert!(view.contains("c"));
+    }
+
+    #[test]
+    fn huge_scroll_down_saturates_at_bottom() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("a\nb\nc\nd\ne");
+
+        vp.update(ViewportMsg::ScrollDown(usize::MAX));
+
+        assert_eq!(vp.offset, vp.max_offset());
+        assert!(vp.at_bottom());
     }
 
     #[test]

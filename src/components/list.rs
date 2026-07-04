@@ -66,7 +66,10 @@ impl<T: std::fmt::Display> List<T> {
                 self.cursor = self.cursor.saturating_sub(self.height);
             }
             ListMsg::PageDown => {
-                self.cursor = (self.cursor + self.height).min(self.items.len().saturating_sub(1));
+                self.cursor = self
+                    .cursor
+                    .saturating_add(self.height)
+                    .min(self.items.len().saturating_sub(1));
             }
             ListMsg::Home => {
                 self.cursor = 0;
@@ -122,8 +125,8 @@ impl<T: std::fmt::Display> List<T> {
 
         if self.cursor < self.offset {
             self.offset = self.cursor;
-        } else if self.cursor >= self.offset + self.height {
-            self.offset = self.cursor - self.height + 1;
+        } else if self.cursor >= self.offset.saturating_add(self.height) {
+            self.offset = self.cursor.saturating_sub(self.height).saturating_add(1);
         }
     }
 
@@ -216,6 +219,17 @@ mod tests {
             panic!("expected box element");
         };
         assert!(box_el.children.is_empty());
+    }
+
+    #[test]
+    fn huge_page_down_saturates_at_last_item() {
+        let mut list = List::new(vec!["a", "b"], usize::MAX);
+        list.update(ListMsg::Down);
+
+        list.update(ListMsg::PageDown);
+
+        assert_eq!(list.selected_index(), 1);
+        assert_eq!(list.selected(), Some(&"b"));
     }
 
     #[test]
