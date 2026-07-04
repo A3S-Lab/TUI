@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_LEVEL_SLIDER_MARGIN: usize = u16::MAX as usize;
+
 /// One selectable level in a [`LevelSlider`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SliderLevel {
@@ -133,14 +135,14 @@ impl LevelSlider {
     }
 
     pub fn separator_after(mut self, index: usize) -> Self {
-        if !self.levels.is_empty() && index + 1 < self.levels.len() {
+        if index < self.levels.len().saturating_sub(1) {
             self.separator_after = Some(index);
         }
         self
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_LEVEL_SLIDER_MARGIN);
         self
     }
 
@@ -192,7 +194,7 @@ impl LevelSlider {
     }
 
     pub fn selected_value(&self) -> usize {
-        self.selected
+        self.selected_index()
     }
 
     pub fn view(&self, width: u16) -> String {
@@ -211,9 +213,10 @@ impl LevelSlider {
         }
 
         let mut children = Vec::new();
+        let margin = self.margin_for_width(width);
         if let Some(title) = self.title.as_deref() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(self.margin), title))
+                TextElement::new(format!("{}{}", " ".repeat(margin), title))
                     .fg(self.title_color)
                     .bold(),
             ));
@@ -222,7 +225,7 @@ impl LevelSlider {
             children.push(Element::Text(
                 TextElement::new(format!(
                     "{}{}",
-                    " ".repeat(self.margin),
+                    " ".repeat(margin),
                     self.range_line(self.track_width(width))
                 ))
                 .fg(self.muted_color),
@@ -231,13 +234,13 @@ impl LevelSlider {
         children.push(self.track_element(width));
         children.push(Element::Text(TextElement::new(format!(
             "{}{}",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             self.labels_plain(self.track_width(width))
         ))));
         children.push(Element::Text(
             TextElement::new(format!(
                 "{}{} {}",
-                " ".repeat(self.margin),
+                " ".repeat(margin),
                 self.pointer,
                 self.selected_label()
             ))
@@ -246,14 +249,13 @@ impl LevelSlider {
         ));
         if let Some(description) = self.selected_description() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(self.margin), description))
+                TextElement::new(format!("{}{}", " ".repeat(margin), description))
                     .fg(self.muted_color),
             ));
         }
         if let Some(hint) = self.hint.as_deref() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(self.margin), hint))
-                    .fg(self.muted_color),
+                TextElement::new(format!("{}{}", " ".repeat(margin), hint)).fg(self.muted_color),
             ));
         }
 
@@ -266,7 +268,7 @@ impl LevelSlider {
 
     fn render_lines(&self, width: usize) -> Vec<String> {
         let track_width = self.track_width(width);
-        let margin = " ".repeat(self.margin);
+        let margin = " ".repeat(self.margin_for_width(width));
         let mut lines = Vec::new();
 
         if let Some(title) = self.title.as_deref() {
@@ -327,9 +329,12 @@ impl LevelSlider {
 
     fn track_element<Msg>(&self, width: usize) -> Element<Msg> {
         let track_width = self.track_width(width);
-        let selected_pos = self.position_for(self.selected, track_width);
+        let selected = self.selected_index();
+        let selected_pos = self.position_for(selected, track_width);
         let separator_pos = self.separator_position(track_width);
-        let mut children = vec![Element::Text(TextElement::new(" ".repeat(self.margin)))];
+        let mut children = vec![Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_width(width)),
+        ))];
 
         for index in 0..track_width {
             let (ch, color, bold) = if index == selected_pos {
@@ -354,7 +359,7 @@ impl LevelSlider {
     }
 
     fn track_line(&self, track_width: usize) -> String {
-        let selected_pos = self.position_for(self.selected, track_width);
+        let selected_pos = self.position_for(self.selected_index(), track_width);
         let separator_pos = self.separator_position(track_width);
         (0..track_width)
             .map(|index| {
@@ -394,7 +399,7 @@ impl LevelSlider {
                 used += 1;
             }
             let mut style = Style::new().fg(self.level_color(index));
-            if index == self.selected {
+            if index == self.selected_index() {
                 style = style.bold();
             }
             out.push_str(&style.render(&label));
@@ -424,26 +429,27 @@ impl LevelSlider {
 
     fn selected_description(&self) -> Option<&str> {
         self.levels
-            .get(self.selected)
+            .get(self.selected_index())
             .and_then(|level| level.description.as_deref())
     }
 
     fn selected_label(&self) -> &str {
         self.levels
-            .get(self.selected)
+            .get(self.selected_index())
             .map(|level| level.label.as_str())
             .unwrap_or("")
     }
 
     fn selected_level_color(&self) -> Color {
-        self.level_color(self.selected)
+        self.level_color(self.selected_index())
     }
 
     fn level_color(&self, index: usize) -> Color {
+        let selected = self.selected_index();
         self.levels
             .get(index)
             .and_then(|level| level.color)
-            .unwrap_or(if index == self.selected {
+            .unwrap_or(if index == selected {
                 self.selected_color
             } else {
                 self.muted_color
@@ -451,24 +457,34 @@ impl LevelSlider {
     }
 
     fn track_width(&self, width: usize) -> usize {
-        width.saturating_sub(self.margin).max(1)
+        width.saturating_sub(self.margin_for_width(width)).max(1)
     }
 
     fn position_for(&self, index: usize, track_width: usize) -> usize {
         if self.levels.len() <= 1 || track_width <= 1 {
             return 0;
         }
-        index.min(self.levels.len() - 1) * (track_width - 1) / (self.levels.len() - 1)
+        index
+            .min(self.levels.len() - 1)
+            .saturating_mul(track_width - 1)
+            / (self.levels.len() - 1)
     }
 
     fn separator_position(&self, track_width: usize) -> Option<usize> {
         let index = self.separator_after?;
-        if index + 1 >= self.levels.len() {
+        let next = index.checked_add(1)?;
+        if next >= self.levels.len() {
             return None;
         }
-        Some(
-            (self.position_for(index, track_width) + self.position_for(index + 1, track_width)) / 2,
-        )
+        Some((self.position_for(index, track_width) + self.position_for(next, track_width)) / 2)
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected.min(self.levels.len().saturating_sub(1))
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_LEVEL_SLIDER_MARGIN)
     }
 }
 
@@ -515,6 +531,44 @@ mod tests {
         let slider = LevelSlider::from_labels(vec!["a", "b"]).selected(99);
 
         assert_eq!(slider.selected_value(), 1);
+    }
+
+    #[test]
+    fn stale_selected_index_is_clamped_during_rendering() {
+        let mut slider = LevelSlider::from_labels(vec!["a", "b"]);
+        slider.selected = usize::MAX;
+
+        let rendered = slider.view(24);
+
+        assert_eq!(slider.selected_value(), 1);
+        assert!(strip_ansi(&rendered).contains("▸ b"));
+    }
+
+    #[test]
+    fn oversized_separator_index_is_ignored() {
+        let mut slider = LevelSlider::from_labels(vec!["a", "b", "c"]).separator_after(usize::MAX);
+        assert_eq!(slider.separator_after, None);
+
+        slider.separator_after = Some(usize::MAX);
+        let rendered = slider.view(16);
+
+        assert!(!strip_ansi(&rendered).contains('┆'));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let slider = LevelSlider::from_labels(vec!["a", "b"]).margin(usize::MAX);
+        let rendered = slider.view(8);
+
+        assert_eq!(slider.margin, MAX_LEVEL_SLIDER_MARGIN);
+        for row in strip_ansi(&rendered).lines() {
+            assert_eq!(visible_len(row), 8, "{row:?}");
+        }
+
+        let Element::Box(column) = slider.element::<()>(8) else {
+            panic!("expected column");
+        };
+        assert!(!column.children.is_empty());
     }
 
     #[test]
