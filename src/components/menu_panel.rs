@@ -3,6 +3,10 @@ use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
+const MAX_MENU_ITEM_DEPTH: usize = u16::MAX as usize / 2;
+const MAX_MENU_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_MENU_PANEL_LABEL_WIDTH: usize = u16::MAX as usize;
+
 /// One row in a [`MenuPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
@@ -51,7 +55,7 @@ impl MenuItem {
     }
 
     pub fn depth(mut self, depth: usize) -> Self {
-        self.depth = depth;
+        self.depth = depth.min(MAX_MENU_ITEM_DEPTH);
         self
     }
 
@@ -196,7 +200,7 @@ impl MenuPanel {
     }
 
     pub fn label_width(mut self, width: usize) -> Self {
-        self.label_width = Some(width);
+        self.label_width = Some(width.min(MAX_MENU_PANEL_LABEL_WIDTH));
         self
     }
 
@@ -221,7 +225,7 @@ impl MenuPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_MENU_PANEL_INDENT);
         self
     }
 
@@ -419,7 +423,7 @@ impl MenuPanel {
                     .fg(self.title_color)
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -430,7 +434,7 @@ impl MenuPanel {
             .filter(|subtitle| !subtitle.is_empty())
         {
             lines.push(Style::new().fg(self.subtitle_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), subtitle),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), subtitle),
                 width,
             )));
         }
@@ -448,7 +452,7 @@ impl MenuPanel {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -480,30 +484,17 @@ impl MenuPanel {
         } else {
             " "
         };
-        let mut prefix = format!(
-            "{}{}{} ",
-            " ".repeat(self.indent),
-            "  ".repeat(item.depth),
-            marker
-        );
-        if self.number_shortcuts {
-            if let Some(shortcut) = number_shortcut_label(index) {
-                prefix.push_str(&format!("{shortcut}. "));
-            } else {
-                prefix.push_str("   ");
-            }
-        }
-        if let Some(checked) = item.checked {
-            prefix.push_str(if checked { "[✓] " } else { "[ ] " });
-        }
-        if let Some(extra) = item.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
-            prefix.push_str(extra);
-            prefix.push(' ');
-        }
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(index, item, marker, width),
+            None => self.item_prefix_for_element(index, item, marker),
+        };
 
         let mut label = item.label.clone();
-        if let Some(width) = self.label_width {
-            label = fit_visible(&label, width);
+        if let Some(label_width) = self.label_width {
+            let label_width = label_width
+                .min(MAX_MENU_PANEL_LABEL_WIDTH)
+                .min(width.unwrap_or(label_width));
+            label = fit_visible(&label, label_width);
         }
         if let Some(suffix) = item.suffix.as_deref().filter(|suffix| !suffix.is_empty()) {
             label.push(' ');
@@ -530,7 +521,7 @@ impl MenuPanel {
         Style::new().fg(self.muted_color).render(&fit_visible(
             &format!(
                 "{}{up}{down} {}/{}",
-                " ".repeat(self.indent),
+                " ".repeat(self.indent_for_width(width)),
                 self.selected.saturating_add(1).min(self.items.len()),
                 self.items.len()
             ),
@@ -625,6 +616,59 @@ impl MenuPanel {
             self.text_color
         })
     }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_MENU_PANEL_INDENT)
+    }
+
+    fn item_prefix_for_width(
+        &self,
+        index: usize,
+        item: &MenuItem,
+        marker: &str,
+        width: usize,
+    ) -> String {
+        let tail = truncate_visible(&self.item_prefix_tail(index, item, marker), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        let depth_width = item
+            .depth
+            .saturating_mul(2)
+            .min(width.saturating_sub(indent).saturating_sub(tail_width));
+        format!("{}{}{}", " ".repeat(indent), " ".repeat(depth_width), tail)
+    }
+
+    fn item_prefix_for_element(&self, index: usize, item: &MenuItem, marker: &str) -> String {
+        format!(
+            "{}{}{}",
+            " ".repeat(self.indent_for_element()),
+            "  ".repeat(item.depth.min(MAX_MENU_ITEM_DEPTH)),
+            self.item_prefix_tail(index, item, marker)
+        )
+    }
+
+    fn item_prefix_tail(&self, index: usize, item: &MenuItem, marker: &str) -> String {
+        let mut prefix = format!("{marker} ");
+        if self.number_shortcuts {
+            if let Some(shortcut) = number_shortcut_label(index) {
+                prefix.push_str(&format!("{shortcut}. "));
+            } else {
+                prefix.push_str("   ");
+            }
+        }
+        if let Some(checked) = item.checked {
+            prefix.push_str(if checked { "[✓] " } else { "[ ] " });
+        }
+        if let Some(extra) = item.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
+            prefix.push_str(extra);
+            prefix.push(' ');
+        }
+        prefix
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_MENU_PANEL_INDENT)
+    }
 }
 
 impl Default for MenuPanel {
@@ -705,6 +749,29 @@ mod tests {
             assert_eq!(visible_len(line), 24, "{line:?}");
         }
         assert!(strip_ansi(&rendered).contains("中文"));
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel = MenuPanel::new("Commands")
+            .subtitle("hint")
+            .indent(usize::MAX)
+            .label_width(usize::MAX)
+            .item(MenuItem::new("run").depth(usize::MAX).description("desc"))
+            .footer("footer")
+            .fill_height(true);
+        let rendered = panel.view(8, 4);
+        let item = panel.items.first().unwrap();
+        let line = panel.plain_item_line(0, Some(8));
+        let prefix = panel.item_prefix_for_width(0, item, "▸", 8);
+
+        assert_eq!(panel.indent, MAX_MENU_PANEL_INDENT);
+        assert_eq!(panel.label_width, Some(MAX_MENU_PANEL_LABEL_WIDTH));
+        assert_eq!(item.depth, MAX_MENU_ITEM_DEPTH);
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(visible_len(&prefix), 8);
+        assert_eq!(visible_len(&line), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
     }
 
     #[test]
