@@ -1,6 +1,9 @@
 use crate::components::Sparkline;
 use crate::style::{truncate_visible, visible_len, Color};
 
+const MAX_METRIC_TREND_WIDTH: usize = u16::MAX as usize;
+const MAX_METRIC_TREND_SPARKLINE_WIDTH: usize = u16::MAX as usize;
+
 #[derive(Debug, Clone)]
 pub struct MetricTrend {
     value: Option<f64>,
@@ -31,12 +34,12 @@ impl MetricTrend {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.max(1).min(MAX_METRIC_TREND_WIDTH);
         self
     }
 
     pub fn trend_width(mut self, width: usize) -> Self {
-        self.trend_width = width.max(1);
+        self.trend_width = width.max(1).min(MAX_METRIC_TREND_SPARKLINE_WIDTH);
         self
     }
 
@@ -134,5 +137,17 @@ mod tests {
         assert_eq!(visible_len(&cell), 15);
         assert!(cell.starts_with(" 50.0% "));
         assert!(cell.ends_with('█'));
+    }
+
+    #[test]
+    fn oversized_widths_are_clamped() {
+        let trend = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .width(usize::MAX)
+            .trend_width(usize::MAX);
+        let cell = trend.plain();
+
+        assert_eq!(trend.width, MAX_METRIC_TREND_WIDTH);
+        assert_eq!(trend.trend_width, MAX_METRIC_TREND_SPARKLINE_WIDTH);
+        assert_eq!(visible_len(&cell), MAX_METRIC_TREND_WIDTH);
     }
 }

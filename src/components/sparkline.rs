@@ -1,6 +1,7 @@
 use crate::style::{visible_len, Color, Style};
 
 const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+const MAX_SPARKLINE_WIDTH: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone)]
 pub struct Sparkline {
@@ -25,7 +26,7 @@ impl Sparkline {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.max(1).min(MAX_SPARKLINE_WIDTH);
         self
     }
 
@@ -144,5 +145,14 @@ mod tests {
 
         assert_eq!(visible_len(&line), 3);
         assert!(line.ends_with('█'));
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let sparkline = Sparkline::new(Vec::<f64>::new()).width(usize::MAX);
+        let line = sparkline.plain();
+
+        assert_eq!(sparkline.width, MAX_SPARKLINE_WIDTH);
+        assert_eq!(visible_len(&line), MAX_SPARKLINE_WIDTH);
     }
 }
