@@ -104,10 +104,7 @@ impl Textarea {
     }
 
     pub fn set_value(&mut self, v: &str) {
-        self.lines = v.lines().map(|l| l.to_string()).collect();
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
+        self.lines = split_value_lines(v);
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
         self.fit_height();
@@ -475,6 +472,22 @@ impl Textarea {
     }
 }
 
+fn split_value_lines(value: &str) -> Vec<String> {
+    let mut parts = value.split('\n').peekable();
+    let mut lines = Vec::new();
+
+    while let Some(line) = parts.next() {
+        let normalized = if parts.peek().is_some() {
+            line.strip_suffix('\r').unwrap_or(line)
+        } else {
+            line
+        };
+        lines.push(normalized.to_string());
+    }
+
+    lines
+}
+
 impl Default for Textarea {
     fn default() -> Self {
         Self::new()
@@ -665,6 +678,27 @@ mod tests {
             panic!("expected first textarea line");
         };
         assert_eq!(first.content, "short");
+    }
+
+    #[test]
+    fn set_value_preserves_trailing_empty_lines() {
+        let mut ta = Textarea::new().with_auto_grow(4);
+
+        ta.set_value("first\n");
+
+        assert_eq!(ta.value(), "first\n");
+        assert_eq!(ta.height(), 2);
+        assert_eq!(ta.cursor_row, 1);
+        assert_eq!(ta.cursor_col, 0);
+    }
+
+    #[test]
+    fn set_value_normalizes_crlf_lines() {
+        let mut ta = Textarea::new();
+
+        ta.set_value("first\r\nsecond");
+
+        assert_eq!(ta.value(), "first\nsecond");
     }
 
     #[test]
