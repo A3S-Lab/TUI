@@ -66,18 +66,21 @@ impl Scrollbar {
             return (0, height);
         }
 
-        let thumb_size = ((self.visible as f64 / self.total as f64) * height as f64)
-            .ceil()
-            .max(1.0) as usize;
+        let thumb_size =
+            ceil_ratio_to_usize(self.visible as u128 * height as u128, self.total as u128).max(1);
         let thumb_size = thumb_size.min(height);
 
         let max_offset = self.total.saturating_sub(self.visible);
+        let scrollable_track = height.saturating_sub(thumb_size);
         let thumb_pos = if max_offset == 0 {
             0
         } else {
             let offset = self.offset.min(max_offset);
-            (((offset as f64 / max_offset as f64) * (height - thumb_size) as f64).round() as usize)
-                .min(height.saturating_sub(thumb_size))
+            rounded_ratio_to_usize(
+                offset as u128 * scrollable_track as u128,
+                max_offset as u128,
+            )
+            .min(scrollable_track)
         };
 
         (thumb_pos, thumb_size)
@@ -165,6 +168,28 @@ impl Scrollbar {
     }
 }
 
+fn ceil_ratio_to_usize(numerator: u128, denominator: u128) -> usize {
+    debug_assert!(denominator > 0);
+
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let value = quotient + u128::from(remainder > 0);
+
+    debug_assert!(value <= usize::MAX as u128);
+    value as usize
+}
+
+fn rounded_ratio_to_usize(numerator: u128, denominator: u128) -> usize {
+    debug_assert!(denominator > 0);
+
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    let value = quotient + u128::from(remainder.saturating_mul(2) >= denominator);
+
+    debug_assert!(value <= usize::MAX as u128);
+    value as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +226,16 @@ mod tests {
         assert_eq!(size, 5);
         assert_eq!(pos, 5);
         assert_eq!(sb.view(10).chars().last(), Some('█'));
+    }
+
+    #[test]
+    fn huge_offsets_do_not_round_past_half_track() {
+        let offset = usize::MAX / 2 - 511;
+        let sb = Scrollbar::new(usize::MAX, 1, offset);
+        let (pos, size) = sb.thumb_range(2);
+
+        assert_eq!(size, 1);
+        assert_eq!(pos, 0);
     }
 
     #[test]
