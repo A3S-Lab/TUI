@@ -1,5 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, strip_ansi, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_lines_preserving_trailing_blank, strip_ansi, visible_len, Color, Style,
+};
 
 const MAX_GUTTER_BLOCK_MARGIN: usize = u16::MAX as usize;
 const MAX_GUTTER_BLOCK_WIDTH: usize = u16::MAX as usize;
@@ -25,9 +27,8 @@ pub struct GutterBlock {
 
 impl GutterBlock {
     pub fn new(content: impl AsRef<str>) -> Self {
-        let mut lines = content
-            .as_ref()
-            .lines()
+        let mut lines = split_lines_preserving_trailing_blank(content.as_ref())
+            .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();
         if lines.is_empty() {
@@ -334,6 +335,21 @@ mod tests {
         let rendered = GutterBlock::lines(Vec::<String>::new()).view();
 
         assert_eq!(strip_ansi(&rendered), "  ● ");
+    }
+
+    #[test]
+    fn new_preserves_trailing_blank_row() {
+        let block = GutterBlock::new("hello\n");
+        let rendered = block.view();
+        let plain = strip_ansi(&rendered);
+        let rows = plain.lines().collect::<Vec<_>>();
+
+        assert_eq!(rows, vec!["  ● hello", "    "]);
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        assert_eq!(column.children.len(), 2);
     }
 
     #[test]
