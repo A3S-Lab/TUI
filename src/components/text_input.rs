@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
 use crate::style::Color;
 use crossterm::event::KeyCode;
+use unicode_width::UnicodeWidthChar;
 
 pub struct TextInput {
     value: String,
@@ -160,15 +161,18 @@ impl TextInput {
         }
 
         let display_chars = self.display_chars();
+        let cursor = self.cursor.min(display_chars.len());
+        let cursor_end = cursor_span_end(&display_chars, cursor);
 
         for (i, &ch) in display_chars.iter().enumerate() {
-            if i == self.cursor && self.focused {
-                out.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
-            } else {
+            if self.focused && i == cursor && cursor < display_chars.len() {
+                let cursor_text = display_chars[cursor..cursor_end].iter().collect::<String>();
+                out.push_str(&format!("\x1b[7m{}\x1b[0m", cursor_text));
+            } else if !(self.focused && i > cursor && i < cursor_end) {
                 out.push(ch);
             }
         }
-        if self.cursor == display_chars.len() && self.focused {
+        if cursor == display_chars.len() && self.focused {
             out.push_str("\x1b[7m \x1b[0m");
         }
         out
@@ -194,12 +198,14 @@ impl TextInput {
         }
 
         if self.focused {
-            let cursor_text = display_chars
-                .get(cursor)
-                .map(char::to_string)
-                .unwrap_or_else(|| " ".to_string());
+            let cursor_end = cursor_span_end(&display_chars, cursor);
+            let cursor_text = if cursor < display_chars.len() {
+                display_chars[cursor..cursor_end].iter().collect::<String>()
+            } else {
+                " ".to_string()
+            };
             children.push(Element::Text(TextElement::new(cursor_text).reverse()));
-            let after = display_chars.iter().skip(cursor + 1).collect::<String>();
+            let after = display_chars.iter().skip(cursor_end).collect::<String>();
             if !after.is_empty() {
                 children.push(Element::Text(TextElement::new(after)));
             }
@@ -216,6 +222,18 @@ impl TextInput {
                 .children(children),
         )
     }
+}
+
+fn cursor_span_end(chars: &[char], cursor: usize) -> usize {
+    if cursor >= chars.len() {
+        return cursor;
+    }
+
+    let mut end = cursor + 1;
+    while end < chars.len() && UnicodeWidthChar::width(chars[end]).unwrap_or(0) == 0 {
+        end += 1;
+    }
+    end
 }
 
 impl Default for TextInput {
@@ -355,6 +373,25 @@ mod tests {
         assert_eq!(cursor.content, "b");
         assert!(cursor.style.reverse);
         assert!(!cursor.content.contains('\x1b'));
+    }
+
+    #[test]
+    fn cursor_styles_following_zero_width_marks_with_base_glyph() {
+        let mut input = TextInput::new();
+        input.set_value("e\u{301}x");
+        input.handle_key(&key(KeyCode::Home));
+
+        assert_eq!(crate::style::strip_ansi(&input.view()), "e\u{301}x");
+        assert!(input.view().contains("\x1b[7me\u{301}\x1b[0mx"));
+
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(cursor) = &row.children[0] else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, "e\u{301}");
+        assert!(cursor.style.reverse);
     }
 
     #[test]
