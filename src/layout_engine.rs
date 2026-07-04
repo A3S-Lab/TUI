@@ -577,6 +577,27 @@ mod tests {
     }
 
     #[test]
+    fn compute_applies_box_min_and_max_height_builders() {
+        let mut engine = LayoutEngine::new();
+        let min_el: Element<()> = Element::Box(
+            BoxElement::new()
+                .height(Dimension::Points(1.0))
+                .min_height(Dimension::Points(3.0)),
+        );
+        let max_el: Element<()> = Element::Box(
+            BoxElement::new()
+                .height(Dimension::Points(5.0))
+                .max_height(Dimension::Points(2.0)),
+        );
+
+        let min_result = engine.compute(&min_el, 80, 24);
+        let max_result = engine.compute(&max_el, 80, 24);
+
+        assert_eq!(min_result.nodes[0].height, 3);
+        assert_eq!(max_result.nodes[0].height, 2);
+    }
+
+    #[test]
     fn fallback_layout_bounds_text_root_to_available_area() {
         let el: Element<()> = Element::Text(TextElement::new("abcdef\nxy"));
         let result = LayoutResult::fallback(&el, 3, 1);
