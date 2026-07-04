@@ -711,6 +711,10 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
                 let mut used = 0usize;
                 for ch in line.chars() {
                     let cw = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
+                    if cw > width {
+                        head = truncate_visible(&ch.to_string(), width);
+                        break;
+                    }
                     if used > 0 && used + cw > width {
                         break;
                     }
@@ -926,5 +930,12 @@ mod tests {
 
         assert!(lines.iter().all(|line| visible_len(line) <= 8));
         assert_eq!(lines.concat(), "中文测试内容");
+    }
+
+    #[test]
+    fn wrap_words_clips_wide_glyphs_at_single_column_width() {
+        let lines = wrap_words_compact("中文", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
     }
 }
