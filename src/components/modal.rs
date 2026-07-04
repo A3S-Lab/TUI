@@ -1,5 +1,7 @@
 use crate::element::{BorderStyle as ElBorder, BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{visible_len, Border, Color, Style};
+use crate::style::{
+    split_nonempty_lines_preserving_trailing_blank, visible_len, Border, Color, Style,
+};
 
 pub struct Modal {
     title: String,
@@ -108,7 +110,7 @@ impl Modal {
         }
 
         if !self.body.is_empty() {
-            for line in self.body.lines() {
+            for line in split_nonempty_lines_preserving_trailing_blank(&self.body) {
                 inner_lines.push(line.to_string());
             }
             inner_lines.push(String::new());
@@ -161,7 +163,7 @@ impl Modal {
 
     fn compute_width(&self) -> usize {
         let mut max_width = visible_len(&self.title);
-        for line in self.body.lines() {
+        for line in split_nonempty_lines_preserving_trailing_blank(&self.body) {
             max_width = max_width.max(visible_len(line));
         }
         for opt in &self.options {
@@ -193,7 +195,7 @@ impl Modal {
         }
 
         if !self.body.is_empty() {
-            for line in self.body.lines() {
+            for line in split_nonempty_lines_preserving_trailing_blank(&self.body) {
                 children.push(Element::Text(TextElement::new(line)));
             }
             children.push(Element::Text(TextElement::new("")));
@@ -312,5 +314,28 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn modal_element_preserves_trailing_blank_body_line() {
+        let modal = Modal::new().body("Line\n").options(vec!["OK"]);
+        let el: Element<()> = modal.element();
+
+        let Element::Box(box_el) = el else {
+            panic!("expected Box");
+        };
+        let Element::Text(body) = &box_el.children[0] else {
+            panic!("expected body text");
+        };
+        let Element::Text(blank_body) = &box_el.children[1] else {
+            panic!("expected trailing blank body row");
+        };
+        let Element::Text(separator) = &box_el.children[2] else {
+            panic!("expected separator row");
+        };
+
+        assert_eq!(body.content, "Line");
+        assert_eq!(blank_body.content, "");
+        assert_eq!(separator.content, "");
     }
 }
