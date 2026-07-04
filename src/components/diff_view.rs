@@ -590,15 +590,28 @@ fn wrap_hard(value: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     let mut used = 0usize;
-    for ch in value.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch)
-            .unwrap_or(0)
-            .max(1);
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if cw == 0 {
+            line.push(ch);
+            continue;
+        }
+
+        let mut cell = ch.to_string();
+        while let Some(next) = chars.peek().copied() {
+            if unicode_width::UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            cell.push(next);
+            chars.next();
+        }
+
         if used > 0 && used + cw > width {
             out.push(std::mem::take(&mut line));
             used = 0;
         }
-        line.push(ch);
+        line.push_str(&cell);
         used += cw;
         if used >= width {
             out.push(std::mem::take(&mut line));
@@ -688,6 +701,22 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 24, "{line:?}");
         }
+    }
+
+    #[test]
+    fn wrap_hard_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_hard("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_hard_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_hard("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
     }
 
     #[test]
