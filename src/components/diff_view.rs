@@ -2,6 +2,9 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, pad_visible, truncate_visible, Color, Style};
 use similar::{ChangeTag, TextDiff};
 
+const MAX_DIFF_VIEW_CONTEXT_LINES: usize = u16::MAX as usize;
+const MAX_DIFF_VIEW_LINES: usize = u16::MAX as usize;
+
 /// Visual kind for one diff row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineKind {
@@ -140,6 +143,7 @@ impl DiffView {
     ) -> Self {
         let before = before.as_ref();
         let after = after.as_ref();
+        let context_lines = context_lines.min(MAX_DIFF_VIEW_CONTEXT_LINES);
         let diff = TextDiff::from_lines(before, after);
         let mut lines = Vec::new();
         let mut added = 0usize;
@@ -261,12 +265,12 @@ impl DiffView {
     }
 
     pub fn max_lines(mut self, max_lines: usize) -> Self {
-        self.max_lines = max_lines.max(1);
+        self.max_lines = max_lines.max(1).min(MAX_DIFF_VIEW_LINES);
         self
     }
 
     pub fn context_lines(mut self, context_lines: usize) -> Self {
-        self.context_lines = context_lines;
+        self.context_lines = context_lines.min(MAX_DIFF_VIEW_CONTEXT_LINES);
         self
     }
 
@@ -692,6 +696,17 @@ mod tests {
         let plain = strip_ansi(&diff.view(40, 6));
 
         assert!(plain.contains("diff truncated"));
+    }
+
+    #[test]
+    fn oversized_limits_are_clamped() {
+        let diff =
+            DiffView::from_texts_with_context("x", "", "a\nb\n", usize::MAX).max_lines(usize::MAX);
+        let rendered = diff.view(24, 4);
+
+        assert_eq!(diff.context_lines, MAX_DIFF_VIEW_CONTEXT_LINES);
+        assert_eq!(diff.max_lines, MAX_DIFF_VIEW_LINES);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
