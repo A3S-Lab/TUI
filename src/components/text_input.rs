@@ -5,6 +5,7 @@ use crossterm::event::KeyCode;
 
 pub struct TextInput {
     value: String,
+    /// Cursor position as a char index. Convert to a byte offset before String edits.
     cursor: usize,
     placeholder: String,
     focused: bool,
@@ -68,7 +69,7 @@ impl TextInput {
 
     pub fn set_value(&mut self, v: impl Into<String>) {
         self.value = v.into();
-        self.cursor = self.value.len();
+        self.cursor = Self::char_len(&self.value);
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TextInputMsg> {
@@ -78,26 +79,29 @@ impl TextInput {
         match key.code {
             KeyCode::Char(c) => {
                 if let Some(limit) = self.char_limit {
-                    if self.value.len() >= limit {
+                    if Self::char_len(&self.value) >= limit {
                         return None;
                     }
                 }
-                self.value.insert(self.cursor, c);
+                let offset = Self::byte_off(&self.value, self.cursor);
+                self.value.insert(offset, c);
                 self.cursor += 1;
                 Some(TextInputMsg::Changed(self.value.clone()))
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
-                    self.value.remove(self.cursor);
+                    let offset = Self::byte_off(&self.value, self.cursor);
+                    self.value.remove(offset);
                     Some(TextInputMsg::Changed(self.value.clone()))
                 } else {
                     None
                 }
             }
             KeyCode::Delete => {
-                if self.cursor < self.value.len() {
-                    self.value.remove(self.cursor);
+                if self.cursor < Self::char_len(&self.value) {
+                    let offset = Self::byte_off(&self.value, self.cursor);
+                    self.value.remove(offset);
                     Some(TextInputMsg::Changed(self.value.clone()))
                 } else {
                     None
@@ -108,7 +112,7 @@ impl TextInput {
                 None
             }
             KeyCode::Right => {
-                self.cursor = (self.cursor + 1).min(self.value.len());
+                self.cursor = (self.cursor + 1).min(Self::char_len(&self.value));
                 None
             }
             KeyCode::Home => {
@@ -116,12 +120,23 @@ impl TextInput {
                 None
             }
             KeyCode::End => {
-                self.cursor = self.value.len();
+                self.cursor = Self::char_len(&self.value);
                 None
             }
             KeyCode::Enter => Some(TextInputMsg::Submit(self.value.clone())),
             _ => None,
         }
+    }
+
+    fn byte_off(value: &str, col: usize) -> usize {
+        value
+            .char_indices()
+            .nth(col)
+            .map_or(value.len(), |(b, _)| b)
+    }
+
+    fn char_len(value: &str) -> usize {
+        value.chars().count()
     }
 
     pub fn view(&self) -> String {
@@ -133,7 +148,7 @@ impl TextInput {
         }
 
         let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
-            vec![mask; self.value.len()]
+            vec![mask; Self::char_len(&self.value)]
         } else {
             self.value.chars().collect()
         };
@@ -158,7 +173,7 @@ impl TextInput {
         }
 
         let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
-            vec![mask; self.value.len()]
+            vec![mask; Self::char_len(&self.value)]
         } else {
             self.value.chars().collect()
         };
@@ -239,6 +254,32 @@ mod tests {
     }
 
     #[test]
+    fn char_limit_counts_multibyte_chars() {
+        let mut input = TextInput::new().with_char_limit(2);
+        input.handle_key(&key(KeyCode::Char('你')));
+        input.handle_key(&key(KeyCode::Char('好')));
+        input.handle_key(&key(KeyCode::Char('a')));
+
+        assert_eq!(input.value(), "你好");
+    }
+
+    #[test]
+    fn multibyte_input_edits_on_char_boundaries() {
+        let mut input = TextInput::new();
+        for ch in "你好abc".chars() {
+            input.handle_key(&key(KeyCode::Char(ch)));
+        }
+
+        for _ in 0..3 {
+            input.handle_key(&key(KeyCode::Left));
+        }
+        input.handle_key(&key(KeyCode::Backspace));
+        input.handle_key(&key(KeyCode::Delete));
+
+        assert_eq!(input.value(), "你bc");
+    }
+
+    #[test]
     fn submit_returns_value() {
         let mut input = TextInput::new();
         input.set_value("test");
@@ -267,6 +308,11 @@ mod tests {
     fn mask_mode() {
         let input = TextInput::new().with_mask('*');
         assert_eq!(input.mask_char, Some('*'));
+
+        let mut masked = TextInput::new().with_mask('*');
+        masked.set_value("你好");
+        masked.blur();
+        assert_eq!(masked.view(), "**");
     }
 
     #[test]
