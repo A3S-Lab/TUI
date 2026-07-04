@@ -3,6 +3,11 @@ use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
+const MAX_TREE_PICKER_DEPTH_INDENT: usize = u16::MAX as usize;
+const MAX_TREE_PICKER_DEPTH_WIDTH: usize = u16::MAX as usize;
+const MAX_TREE_PICKER_INDENT: usize = u16::MAX as usize;
+const MAX_TREE_PICKER_ITEM_DEPTH: usize = u16::MAX as usize;
+
 /// Node kind for a [`TreePickerItem`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreePickerItemKind {
@@ -50,7 +55,7 @@ impl TreePickerItem {
     }
 
     pub fn depth(mut self, depth: usize) -> Self {
-        self.depth = depth;
+        self.depth = depth.min(MAX_TREE_PICKER_ITEM_DEPTH);
         self
     }
 
@@ -232,12 +237,12 @@ impl TreePicker {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_TREE_PICKER_INDENT);
         self
     }
 
     pub fn depth_indent(mut self, indent: usize) -> Self {
-        self.depth_indent = indent.max(1);
+        self.depth_indent = indent.clamp(1, MAX_TREE_PICKER_DEPTH_INDENT);
         self
     }
 
@@ -451,7 +456,7 @@ impl TreePicker {
                     .fg(self.title_color)
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -462,7 +467,7 @@ impl TreePicker {
             .filter(|subtitle| !subtitle.is_empty())
         {
             lines.push(Style::new().fg(self.subtitle_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), subtitle),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), subtitle),
                 width,
             )));
         }
@@ -480,7 +485,7 @@ impl TreePicker {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -509,17 +514,10 @@ impl TreePicker {
         let Some(item) = self.items.get(index) else {
             return String::new();
         };
-        let marker = match item.kind {
-            TreePickerItemKind::Branch { open: true } => self.open_marker.as_str(),
-            TreePickerItemKind::Branch { open: false } => self.closed_marker.as_str(),
-            TreePickerItemKind::Leaf => self.leaf_marker.as_str(),
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(item, width),
+            None => self.item_prefix_for_element(item),
         };
-        let prefix = format!(
-            "{}{}{} ",
-            " ".repeat(self.indent),
-            " ".repeat(item.depth.saturating_mul(self.depth_indent)),
-            marker
-        );
         let mut label = item.label.clone();
         if let Some(description) = item
             .description
@@ -541,7 +539,7 @@ impl TreePicker {
         Style::new().fg(self.muted_color).render(&fit_visible(
             &format!(
                 "{}{up}{down} {}/{}",
-                " ".repeat(self.indent),
+                " ".repeat(self.indent_for_width(width)),
                 self.selected.saturating_add(1).min(self.items.len()),
                 self.items.len()
             ),
@@ -628,6 +626,51 @@ impl TreePicker {
             self.leaf_color
         }
     }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_TREE_PICKER_INDENT)
+    }
+
+    fn item_prefix_for_width(&self, item: &TreePickerItem, width: usize) -> String {
+        let tail = truncate_visible(&self.item_prefix_tail(item), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        let depth_width = self
+            .item_depth_width_for_element(item)
+            .min(width.saturating_sub(indent).saturating_sub(tail_width));
+        format!("{}{}{}", " ".repeat(indent), " ".repeat(depth_width), tail)
+    }
+
+    fn item_prefix_for_element(&self, item: &TreePickerItem) -> String {
+        format!(
+            "{}{}{}",
+            " ".repeat(self.indent_for_element()),
+            " ".repeat(self.item_depth_width_for_element(item)),
+            self.item_prefix_tail(item)
+        )
+    }
+
+    fn item_prefix_tail(&self, item: &TreePickerItem) -> String {
+        format!("{} ", self.item_marker(item))
+    }
+
+    fn item_marker(&self, item: &TreePickerItem) -> &str {
+        match item.kind {
+            TreePickerItemKind::Branch { open: true } => self.open_marker.as_str(),
+            TreePickerItemKind::Branch { open: false } => self.closed_marker.as_str(),
+            TreePickerItemKind::Leaf => self.leaf_marker.as_str(),
+        }
+    }
+
+    fn item_depth_width_for_element(&self, item: &TreePickerItem) -> usize {
+        item.depth
+            .saturating_mul(self.depth_indent)
+            .min(MAX_TREE_PICKER_DEPTH_WIDTH)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_TREE_PICKER_INDENT)
+    }
 }
 
 impl Default for TreePicker {
@@ -711,6 +754,44 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 24, "{line:?}");
         }
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let picker = TreePicker::new("@ file")
+            .subtitle("hint")
+            .indent(usize::MAX)
+            .depth_indent(usize::MAX)
+            .item(
+                TreePickerItem::branch("src")
+                    .depth(usize::MAX)
+                    .description("dir"),
+            )
+            .footer("footer")
+            .fill_height(true);
+        let rendered = picker.view(8, 4);
+        let item = picker.items.first().unwrap();
+        let prefix = picker.item_prefix_for_width(item, 8);
+        let line = picker.plain_item_line(0, Some(8));
+
+        assert_eq!(picker.indent, MAX_TREE_PICKER_INDENT);
+        assert_eq!(picker.depth_indent, MAX_TREE_PICKER_DEPTH_INDENT);
+        assert_eq!(item.depth, MAX_TREE_PICKER_ITEM_DEPTH);
+        assert_eq!(picker.indent_for_width(8), 8);
+        assert_eq!(visible_len(&prefix), 8);
+        assert_eq!(visible_len(&line), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = picker.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(item) = &column.children[2] else {
+            panic!("expected item text");
+        };
+        assert_eq!(
+            visible_len(&item.content),
+            MAX_TREE_PICKER_INDENT + MAX_TREE_PICKER_DEPTH_WIDTH + visible_len("▸ src  dir")
+        );
     }
 
     #[test]
