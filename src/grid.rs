@@ -227,11 +227,12 @@ impl Grid {
             return;
         }
         for ch in text.chars() {
-            if col >= self.width as usize {
+            let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            if col.saturating_add(width) > self.width as usize {
                 break;
             }
             self.cells[row][col] = Cell::styled(ch, style);
-            col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            col += width;
         }
     }
 
@@ -362,6 +363,16 @@ mod tests {
         grid.write_str(3, 0, "hello", &style);
         assert_eq!(grid.get(3, 0).ch, 'h');
         assert_eq!(grid.get(4, 0).ch, 'e');
+    }
+
+    #[test]
+    fn grid_write_str_drops_wide_char_that_would_overflow() {
+        let mut grid = Grid::new(4, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(3, 0, "界", &style);
+
+        assert_eq!(grid.get(3, 0).ch, ' ');
     }
 
     #[test]
