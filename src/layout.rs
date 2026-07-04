@@ -1,4 +1,6 @@
-use crate::style::{split_lines_preserving_trailing_blank, visible_len};
+use crate::style::{
+    next_display_cell_boundary, split_lines_preserving_trailing_blank, visible_len,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Constraint {
@@ -165,31 +167,35 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
 fn truncate_to_width(s: &str, width: usize) -> String {
     let mut out = String::new();
     let mut current_width = 0;
-    let mut in_escape = false;
     let mut saw_escape = false;
     let mut truncated = false;
+    let mut index = 0usize;
 
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
+    while index < s.len() {
+        if s[index..].starts_with("\x1b[") {
             saw_escape = true;
-            out.push(c);
-            continue;
-        }
-        if in_escape {
-            out.push(c);
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
+            let escape_start = index;
+            index += "\x1b[".len();
+            for next in s[index..].chars() {
+                index += next.len_utf8();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
             }
+            out.push_str(&s[escape_start..index]);
             continue;
         }
-        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
         if current_width + cw > width {
             truncated = true;
             break;
         }
         current_width += cw;
-        out.push(c);
+        out.push_str(&s[index..end]);
+        index = end;
     }
 
     if truncated && saw_escape {
@@ -308,10 +314,27 @@ mod tests {
     }
 
     #[test]
+    fn pad_or_truncate_keeps_zero_width_marks_with_base_glyph() {
+        let result = pad_or_truncate("e\u{0301}xyz", 2);
+
+        assert_eq!(result, "e\u{0301}x");
+        assert_eq!(visible_len(&result), 2);
+    }
+
+    #[test]
     fn pad_or_truncate_resets_ansi_after_truncating_styled_text() {
         let result = pad_or_truncate("\x1b[31mhello\x1b[0m", 3);
 
         assert_eq!(visible_len(&result), 3);
         assert!(result.ends_with("\x1b[0m"), "{result:?}");
+    }
+
+    #[test]
+    fn pad_or_truncate_skips_ansi_reset_between_segments() {
+        let result = pad_or_truncate("\x1b[32mok\x1b[0mabcdef", 5);
+
+        assert_eq!(visible_len(&result), 5);
+        assert_eq!(crate::style::strip_ansi(&result), "okabc");
+        assert!(result.contains("\x1b[0mabc"), "{result:?}");
     }
 }
