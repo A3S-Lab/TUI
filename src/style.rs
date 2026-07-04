@@ -390,8 +390,8 @@ impl Style {
         let pad_right = self.padding[1] as usize;
         let inner_width = content_width + pad_left + pad_right;
 
-        let has_border = self.border != Border::None;
         let border_chars = self.border.chars();
+        let has_border = border_chars.is_some();
 
         let mut result = Vec::new();
 
@@ -416,11 +416,9 @@ impl Style {
 
         // Top padding
         for _ in 0..self.padding[0] {
-            let pad_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
-            } else {
-                format!("{}{}", margin_left, " ".repeat(inner_width))
+            let pad_line = match &border_chars {
+                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v),
+                None => format!("{}{}", margin_left, " ".repeat(inner_width)),
             };
             result.push(self.apply_border_style(&pad_line));
         }
@@ -436,11 +434,9 @@ impl Style {
                 " ".repeat(pad_right)
             );
 
-            let full_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, padded, bc.v)
-            } else {
-                format!("{}{}", margin_left, padded)
+            let full_line = match &border_chars {
+                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, padded, bc.v),
+                None => format!("{}{}", margin_left, padded),
             };
 
             result.push(self.apply_line_style(&full_line, has_border));
@@ -448,11 +444,9 @@ impl Style {
 
         // Bottom padding
         for _ in 0..self.padding[2] {
-            let pad_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
-            } else {
-                format!("{}{}", margin_left, " ".repeat(inner_width))
+            let pad_line = match &border_chars {
+                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v),
+                None => format!("{}{}", margin_left, " ".repeat(inner_width)),
             };
             result.push(self.apply_border_style(&pad_line));
         }
@@ -884,6 +878,19 @@ mod tests {
         assert_eq!(strip_ansi(&out), "abc…");
         assert!(out.starts_with("\x1b[31m"));
         assert!(out.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn render_border_with_padding() {
+        let out = Style::new()
+            .border(Border::Rounded)
+            .padding(1, 1)
+            .render("x");
+
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec!["╭───╮", "│   │", "│ x │", "│   │", "╰───╯"]
+        );
     }
 
     #[test]
