@@ -3,7 +3,7 @@
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::LayoutResult;
-use crate::style::strip_ansi;
+use crate::style::{strip_ansi, visible_len, wrap_words};
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
@@ -66,15 +66,10 @@ fn paint_element<Msg>(
 
             let max_w = node.width as usize;
             let max_h = node.height as usize;
+            let mut painted_rows = 0usize;
 
-            for (line_idx, line) in text_el.content.lines().enumerate() {
-                if line_idx >= max_h {
-                    break;
-                }
-                let Some(row_y) = node.y.checked_add(line_idx as u16) else {
-                    break;
-                };
-                if row_y >= grid_h {
+            for line in text_el.content.lines() {
+                if painted_rows >= max_h {
                     break;
                 }
                 let stripped_line;
@@ -84,16 +79,105 @@ fn paint_element<Msg>(
                 } else {
                     line
                 };
-                let display_line = match text_el.wrap {
-                    TextWrap::Truncate => truncate_str(paint_line, max_w),
-                    _ => paint_line.to_string(),
-                };
-                grid.write_str(node.x, row_y, &display_line, &style);
+                match text_el.wrap {
+                    TextWrap::Wrap => {
+                        if max_w == 0 {
+                            continue;
+                        }
+
+                        if visible_len(paint_line) <= max_w {
+                            if !paint_text_row(
+                                grid,
+                                node.x,
+                                node.y,
+                                painted_rows,
+                                grid_h,
+                                paint_line,
+                                &style,
+                            ) {
+                                break;
+                            }
+                            painted_rows += 1;
+                            continue;
+                        }
+
+                        for display_line in wrap_words(paint_line, max_w) {
+                            if painted_rows >= max_h {
+                                break;
+                            }
+                            if !paint_text_row(
+                                grid,
+                                node.x,
+                                node.y,
+                                painted_rows,
+                                grid_h,
+                                &display_line,
+                                &style,
+                            ) {
+                                painted_rows = max_h;
+                                break;
+                            }
+                            painted_rows += 1;
+                        }
+                    }
+                    TextWrap::Truncate => {
+                        let display_line = truncate_str(paint_line, max_w);
+                        if !paint_text_row(
+                            grid,
+                            node.x,
+                            node.y,
+                            painted_rows,
+                            grid_h,
+                            &display_line,
+                            &style,
+                        ) {
+                            break;
+                        }
+                        painted_rows += 1;
+                    }
+                    TextWrap::NoWrap => {
+                        if !paint_text_row(
+                            grid,
+                            node.x,
+                            node.y,
+                            painted_rows,
+                            grid_h,
+                            paint_line,
+                            &style,
+                        ) {
+                            break;
+                        }
+                        painted_rows += 1;
+                    }
+                }
             }
         }
         Element::Spacer => {}
         Element::_Phantom(_) => {}
     }
+}
+
+fn paint_text_row(
+    grid: &mut Grid,
+    x: u16,
+    y: u16,
+    row_offset: usize,
+    grid_h: u16,
+    text: &str,
+    style: &CellStyle,
+) -> bool {
+    let Some(row_offset) = u16::try_from(row_offset).ok() else {
+        return false;
+    };
+    let Some(row_y) = y.checked_add(row_offset) else {
+        return false;
+    };
+    if row_y >= grid_h {
+        return false;
+    }
+
+    grid.write_str(x, row_y, text, style);
+    true
 }
 
 /// Skip over child nodes in the layout index without rendering.
@@ -173,7 +257,7 @@ fn draw_border(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+    use crate::element::{BoxElement, Element, FlexDirection, TextElement, TextWrap};
     use crate::layout_engine::LayoutEngine;
     use crate::style::{Color, Style};
 
@@ -209,6 +293,15 @@ mod tests {
         let grid = render(&el, 4, 1);
 
         assert_eq!(grid.render_to_string(), "Hi  ");
+    }
+
+    #[test]
+    fn paint_text_wraps_lines_to_node_width() {
+        let el: Element<()> = Element::Text(TextElement::new("alpha beta").wrap(TextWrap::Wrap));
+
+        let grid = render(&el, 6, 2);
+
+        assert_eq!(grid.render_to_string(), "alpha \nbeta  ");
     }
 
     #[test]

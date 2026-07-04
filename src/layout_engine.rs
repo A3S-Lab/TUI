@@ -23,6 +23,12 @@ pub struct LayoutResult {
     pub nodes: Vec<LayoutNode>,
 }
 
+#[derive(Debug, Clone)]
+struct TextMeasureContext {
+    content: String,
+    wrap: TextWrap,
+}
+
 impl LayoutResult {
     fn fallback<Msg>(root: &Element<Msg>, available_width: u16, available_height: u16) -> Self {
         let (width, height) = fallback_root_size(root, available_width, available_height);
@@ -61,7 +67,7 @@ impl From<taffy::TaffyError> for LayoutError {
 }
 
 pub struct LayoutEngine {
-    tree: TaffyTree<()>,
+    tree: TaffyTree<TextMeasureContext>,
 }
 
 impl LayoutEngine {
@@ -114,7 +120,21 @@ impl LayoutEngine {
             height: AvailableSpace::Definite(available_height as f32),
         };
 
-        self.tree.compute_layout(root_id, available)?;
+        self.tree.compute_layout_with_measure(
+            root_id,
+            available,
+            |known_dimensions, available_space, _node_id, context, _style| {
+                let Some(context) = context else {
+                    return Size::ZERO;
+                };
+                measure_text_node(
+                    &context.content,
+                    context.wrap,
+                    known_dimensions,
+                    available_space,
+                )
+            },
+        )?;
 
         let mut result_nodes = Vec::with_capacity(nodes.len());
         self.collect_layout(root_id, 0.0, 0.0, &mut result_nodes)?;
@@ -143,21 +163,18 @@ impl LayoutEngine {
                 Ok(node_id)
             }
             Element::Text(text_el) => {
-                let lines: Vec<&str> = text_el.content.lines().collect();
-                let lines = if lines.is_empty() { vec![""] } else { lines };
-                let max_w = lines.iter().map(|l| visible_len(l)).max().unwrap_or(0) as f32;
-                let h = lines.len() as f32;
-
                 let style = Style {
                     flex_shrink: 1.0,
-                    size: Size {
-                        width: taffy::Dimension::Length(max_w),
-                        height: taffy::Dimension::Length(h),
-                    },
                     ..Default::default()
                 };
 
-                let node_id = self.tree.new_leaf(style)?;
+                let node_id = self.tree.new_leaf_with_context(
+                    style,
+                    TextMeasureContext {
+                        content: text_el.content.clone(),
+                        wrap: text_el.wrap,
+                    },
+                )?;
                 node_list.push(node_id);
                 Ok(node_id)
             }
@@ -328,7 +345,6 @@ fn fallback_root_size<Msg>(
     }
 }
 
-#[allow(dead_code)]
 fn measure_text_node(
     content: &str,
     wrap: TextWrap,
@@ -390,6 +406,17 @@ mod tests {
         assert!(!result.nodes.is_empty());
         assert_eq!(result.nodes[0].width, 5);
         assert_eq!(result.nodes[0].height, 1);
+    }
+
+    #[test]
+    fn layout_wrap_text_uses_available_width_for_height() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Text(TextElement::new("alpha beta"));
+
+        let result = engine.compute(&el, 6, 2);
+
+        assert_eq!(result.nodes[0].width, 6);
+        assert_eq!(result.nodes[0].height, 2);
     }
 
     #[test]
