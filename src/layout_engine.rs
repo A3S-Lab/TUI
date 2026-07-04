@@ -7,9 +7,11 @@ use crate::element::{
     JustifyContent as ElJustify, Overflow as ElOverflow, TextWrap,
 };
 use crate::style::visible_len;
+use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use taffy::prelude::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutNode {
     pub x: u16,
     pub y: u16,
@@ -19,6 +21,43 @@ pub struct LayoutNode {
 
 pub struct LayoutResult {
     pub nodes: Vec<LayoutNode>,
+}
+
+impl LayoutResult {
+    fn fallback<Msg>(root: &Element<Msg>, available_width: u16, available_height: u16) -> Self {
+        let (width, height) = fallback_root_size(root, available_width, available_height);
+        Self {
+            nodes: vec![LayoutNode {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            }],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutError {
+    Taffy(taffy::TaffyError),
+    EnginePanic,
+}
+
+impl fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LayoutError::Taffy(err) => write!(f, "taffy layout failed: {err}"),
+            LayoutError::EnginePanic => write!(f, "taffy layout panicked"),
+        }
+    }
+}
+
+impl std::error::Error for LayoutError {}
+
+impl From<taffy::TaffyError> for LayoutError {
+    fn from(value: taffy::TaffyError) -> Self {
+        Self::Taffy(value)
+    }
 }
 
 pub struct LayoutEngine {
@@ -38,39 +77,70 @@ impl LayoutEngine {
         available_width: u16,
         available_height: u16,
     ) -> LayoutResult {
+        self.try_compute(root, available_width, available_height)
+            .unwrap_or_else(|_| LayoutResult::fallback(root, available_width, available_height))
+    }
+
+    pub fn try_compute<Msg>(
+        &mut self,
+        root: &Element<Msg>,
+        available_width: u16,
+        available_height: u16,
+    ) -> Result<LayoutResult, LayoutError> {
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.compute_taffy(root, available_width, available_height)
+        })) {
+            Ok(result) => result,
+            Err(_) => {
+                self.tree.clear();
+                Err(LayoutError::EnginePanic)
+            }
+        }
+    }
+
+    fn compute_taffy<Msg>(
+        &mut self,
+        root: &Element<Msg>,
+        available_width: u16,
+        available_height: u16,
+    ) -> Result<LayoutResult, LayoutError> {
         self.tree.clear();
 
         let mut nodes = Vec::new();
-        let root_id = self.build_node(root, &mut nodes);
+        let root_id = self.build_node(root, &mut nodes)?;
 
         let available = Size {
             width: AvailableSpace::Definite(available_width as f32),
             height: AvailableSpace::Definite(available_height as f32),
         };
 
-        self.tree.compute_layout(root_id, available).ok();
+        self.tree.compute_layout(root_id, available)?;
 
         let mut result_nodes = Vec::with_capacity(nodes.len());
-        self.collect_layout(&nodes, root_id, 0.0, 0.0, &mut result_nodes);
+        self.collect_layout(root_id, 0.0, 0.0, &mut result_nodes)?;
 
-        LayoutResult {
+        Ok(LayoutResult {
             nodes: result_nodes,
-        }
+        })
     }
 
-    fn build_node<Msg>(&mut self, element: &Element<Msg>, node_list: &mut Vec<NodeId>) -> NodeId {
+    fn build_node<Msg>(
+        &mut self,
+        element: &Element<Msg>,
+        node_list: &mut Vec<NodeId>,
+    ) -> Result<NodeId, LayoutError> {
         match element {
             Element::Box(box_el) => {
                 let child_ids: Vec<NodeId> = box_el
                     .children
                     .iter()
                     .map(|child| self.build_node(child, node_list))
-                    .collect();
+                    .collect::<Result<_, _>>()?;
 
                 let style = self.box_style_to_taffy(&box_el.style);
-                let node_id = self.tree.new_with_children(style, &child_ids).unwrap();
+                let node_id = self.tree.new_with_children(style, &child_ids)?;
                 node_list.push(node_id);
-                node_id
+                Ok(node_id)
             }
             Element::Text(text_el) => {
                 let lines: Vec<&str> = text_el.content.lines().collect();
@@ -87,23 +157,23 @@ impl LayoutEngine {
                     ..Default::default()
                 };
 
-                let node_id = self.tree.new_leaf(style).unwrap();
+                let node_id = self.tree.new_leaf(style)?;
                 node_list.push(node_id);
-                node_id
+                Ok(node_id)
             }
             Element::Spacer => {
                 let style = Style {
                     flex_grow: 1.0,
                     ..Default::default()
                 };
-                let node_id = self.tree.new_leaf(style).unwrap();
+                let node_id = self.tree.new_leaf(style)?;
                 node_list.push(node_id);
-                node_id
+                Ok(node_id)
             }
             Element::_Phantom(_) => {
-                let node_id = self.tree.new_leaf(Style::default()).unwrap();
+                let node_id = self.tree.new_leaf(Style::default())?;
                 node_list.push(node_id);
-                node_id
+                Ok(node_id)
             }
         }
     }
@@ -157,8 +227,8 @@ impl LayoutEngine {
                 width: dim_to_taffy(bs.max_width),
                 height: dim_to_taffy(bs.max_height),
             },
-            flex_grow: bs.flex_grow,
-            flex_shrink: bs.flex_shrink,
+            flex_grow: non_negative_finite(bs.flex_grow),
+            flex_shrink: non_negative_finite(bs.flex_shrink),
             flex_basis: dim_to_taffy(bs.flex_basis),
             overflow: taffy::Point {
                 x: match bs.overflow {
@@ -176,27 +246,27 @@ impl LayoutEngine {
 
     fn collect_layout(
         &self,
-        _node_list: &[NodeId],
         node_id: NodeId,
         parent_x: f32,
         parent_y: f32,
         result: &mut Vec<LayoutNode>,
-    ) {
-        let layout = self.tree.layout(node_id).unwrap();
+    ) -> Result<(), LayoutError> {
+        let layout = self.tree.layout(node_id)?;
         let x = parent_x + layout.location.x;
         let y = parent_y + layout.location.y;
 
         result.push(LayoutNode {
-            x: x as u16,
-            y: y as u16,
-            width: layout.size.width as u16,
-            height: layout.size.height as u16,
+            x: layout_value_to_u16(x),
+            y: layout_value_to_u16(y),
+            width: layout_value_to_u16(layout.size.width),
+            height: layout_value_to_u16(layout.size.height),
         });
 
-        let children = self.tree.children(node_id).unwrap_or_default();
+        let children = self.tree.children(node_id)?;
         for child_id in children {
-            self.collect_layout(_node_list, child_id, x, y, result);
+            self.collect_layout(child_id, x, y, result)?;
         }
+        Ok(())
     }
 }
 
@@ -209,8 +279,50 @@ impl Default for LayoutEngine {
 fn dim_to_taffy(d: Dimension) -> taffy::Dimension {
     match d {
         Dimension::Auto => taffy::Dimension::Auto,
-        Dimension::Points(p) => taffy::Dimension::Length(p),
-        Dimension::Percent(p) => taffy::Dimension::Percent(p / 100.0),
+        Dimension::Points(p) => taffy::Dimension::Length(non_negative_finite(p)),
+        Dimension::Percent(p) => taffy::Dimension::Percent(non_negative_finite(p) / 100.0),
+    }
+}
+
+fn non_negative_finite(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        0.0
+    }
+}
+
+fn layout_value_to_u16(value: f32) -> u16 {
+    if !value.is_finite() || value <= 0.0 {
+        0
+    } else if value >= u16::MAX as f32 {
+        u16::MAX
+    } else {
+        value as u16
+    }
+}
+
+fn fallback_root_size<Msg>(
+    root: &Element<Msg>,
+    available_width: u16,
+    available_height: u16,
+) -> (u16, u16) {
+    match root {
+        Element::Text(text_el) => {
+            let lines: Vec<&str> = text_el.content.lines().collect();
+            let lines = if lines.is_empty() { vec![""] } else { lines };
+            let max_width = lines
+                .iter()
+                .map(|line| visible_len(line))
+                .max()
+                .unwrap_or(0);
+            let width = (max_width.min(available_width as usize)) as u16;
+            let height = (lines.len().min(available_height as usize)) as u16;
+            (width, height)
+        }
+        Element::Box(_) | Element::Spacer | Element::_Phantom(_) => {
+            (available_width, available_height)
+        }
     }
 }
 
@@ -359,5 +471,67 @@ mod tests {
         let child1 = &result.nodes[1];
         let child2 = &result.nodes[2];
         assert_eq!(child2.y - child1.y, 2);
+    }
+
+    #[test]
+    fn try_compute_returns_layout_for_valid_tree() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Text(TextElement::new("Left")))
+                .child(Element::Text(TextElement::new("Right"))),
+        );
+
+        let result = engine
+            .try_compute(&el, 80, 24)
+            .expect("valid layout should compute");
+
+        assert_eq!(result.nodes.len(), 3);
+        assert_eq!(result.nodes[0].x, 0);
+        assert_eq!(result.nodes[0].y, 0);
+    }
+
+    #[test]
+    fn compute_sanitizes_non_finite_style_values() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .width(Dimension::Points(f32::NAN))
+                .height(Dimension::Points(f32::INFINITY))
+                .flex_grow(f32::NAN)
+                .flex_shrink(f32::NEG_INFINITY)
+                .child(Element::Text(TextElement::new("content"))),
+        );
+
+        let result = engine.compute(&el, 80, 24);
+
+        assert_eq!(result.nodes[0].width, 0);
+        assert_eq!(result.nodes[0].height, 0);
+    }
+
+    #[test]
+    fn fallback_layout_bounds_text_root_to_available_area() {
+        let el: Element<()> = Element::Text(TextElement::new("abcdef\nxy"));
+        let result = LayoutResult::fallback(&el, 3, 1);
+
+        assert_eq!(
+            result.nodes,
+            vec![LayoutNode {
+                x: 0,
+                y: 0,
+                width: 3,
+                height: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn layout_value_to_u16_clamps_non_finite_and_large_values() {
+        assert_eq!(layout_value_to_u16(f32::NAN), 0);
+        assert_eq!(layout_value_to_u16(f32::INFINITY), 0);
+        assert_eq!(layout_value_to_u16(-1.0), 0);
+        assert_eq!(layout_value_to_u16(8.9), 8);
+        assert_eq!(layout_value_to_u16(100_000.0), u16::MAX);
     }
 }
