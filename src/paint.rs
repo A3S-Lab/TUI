@@ -3,6 +3,7 @@
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::LayoutResult;
+use crate::style::strip_ansi;
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
@@ -76,9 +77,16 @@ fn paint_element<Msg>(
                 if row_y >= grid_h {
                     break;
                 }
+                let stripped_line;
+                let paint_line = if line.contains('\x1b') {
+                    stripped_line = strip_ansi(line);
+                    stripped_line.as_str()
+                } else {
+                    line
+                };
                 let display_line = match text_el.wrap {
-                    TextWrap::Truncate => truncate_str(line, max_w),
-                    _ => line.to_string(),
+                    TextWrap::Truncate => truncate_str(paint_line, max_w),
+                    _ => paint_line.to_string(),
                 };
                 grid.write_str(node.x, row_y, &display_line, &style);
             }
@@ -167,7 +175,7 @@ mod tests {
     use super::*;
     use crate::element::{BoxElement, Element, FlexDirection, TextElement};
     use crate::layout_engine::LayoutEngine;
-    use crate::style::Color;
+    use crate::style::{Color, Style};
 
     fn render(el: &Element<()>, w: u16, h: u16) -> Grid {
         let mut engine = LayoutEngine::new();
@@ -191,6 +199,16 @@ mod tests {
         assert_eq!(grid.get(0, 0).ch, 'X');
         assert!(grid.get(0, 0).bold);
         assert_eq!(grid.get(0, 0).fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn paint_text_strips_ansi_content_before_writing_cells() {
+        let styled = Style::new().fg(Color::Red).render("Hi");
+        let el: Element<()> = Element::Text(TextElement::new(styled));
+
+        let grid = render(&el, 4, 1);
+
+        assert_eq!(grid.render_to_string(), "Hi  ");
     }
 
     #[test]
