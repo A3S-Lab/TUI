@@ -1,6 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_WELCOME_ART_OFFSET: usize = u16::MAX as usize;
+const MAX_WELCOME_GAP: usize = u16::MAX as usize;
+const MAX_WELCOME_MARGIN: usize = u16::MAX as usize;
+
 /// First-run welcome surface with paired mascot/art rows and startup metadata.
 ///
 /// This extracts the CLI welcome-banner pattern without hard-coding a brand:
@@ -76,17 +80,17 @@ impl WelcomeBanner {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_WELCOME_MARGIN);
         self
     }
 
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_WELCOME_GAP);
         self
     }
 
     pub fn art_offset(mut self, offset: usize) -> Self {
-        self.art_offset = offset;
+        self.art_offset = offset.min(MAX_WELCOME_ART_OFFSET);
         self
     }
 
@@ -169,12 +173,12 @@ impl WelcomeBanner {
 
         for line in &self.metadata {
             children.push(Element::Text(
-                TextElement::new(self.indented(line)).fg(self.metadata_color),
+                TextElement::new(self.indented_for_element(line)).fg(self.metadata_color),
             ));
         }
         for line in &self.tips {
             children.push(Element::Text(
-                TextElement::new(self.indented(line))
+                TextElement::new(self.indented_for_element(line))
                     .fg(self.tip_color)
                     .italic(),
             ));
@@ -184,7 +188,7 @@ impl WelcomeBanner {
                 children.push(Element::Text(TextElement::new("")));
             }
             children.push(Element::Text(
-                TextElement::new(self.indented(notice))
+                TextElement::new(self.indented_for_element(notice))
                     .fg(self.notice_color)
                     .bold(),
             ));
@@ -200,7 +204,7 @@ impl WelcomeBanner {
     fn render_lines(&self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         for row in self.logo_rows() {
-            lines.push(self.render_logo_row(row));
+            lines.push(self.render_logo_row(row, width));
         }
 
         if !lines.is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
@@ -211,7 +215,7 @@ impl WelcomeBanner {
             lines.push(
                 Style::new()
                     .fg(self.metadata_color)
-                    .render(&fit_visible(&self.indented(line), width)),
+                    .render(&fit_visible(&self.indented_for_width(line, width), width)),
             );
         }
         for line in &self.tips {
@@ -219,7 +223,7 @@ impl WelcomeBanner {
                 Style::new()
                     .fg(self.tip_color)
                     .italic()
-                    .render(&fit_visible(&self.indented(line), width)),
+                    .render(&fit_visible(&self.indented_for_width(line, width), width)),
             );
         }
         if let Some(notice) = self.notice.as_deref().filter(|notice| !notice.is_empty()) {
@@ -230,15 +234,15 @@ impl WelcomeBanner {
                 Style::new()
                     .fg(self.notice_color)
                     .bold()
-                    .render(&fit_visible(&self.indented(notice), width)),
+                    .render(&fit_visible(&self.indented_for_width(notice, width), width)),
             );
         }
 
         lines
     }
 
-    fn render_logo_row(&self, row: LogoRow) -> String {
-        let mut line = " ".repeat(self.margin);
+    fn render_logo_row(&self, row: LogoRow, width: usize) -> String {
+        let mut line = " ".repeat(self.margin_for_width(width));
         if !row.mascot.is_empty() {
             line.push_str(
                 &Style::new()
@@ -248,21 +252,25 @@ impl WelcomeBanner {
             );
         }
         if !row.art.is_empty() {
-            line.push_str(&" ".repeat(self.gap));
+            line.push_str(&" ".repeat(self.gap_for_width(width)));
             line.push_str(&Style::new().fg(self.art_color).bold().render(&row.art));
         }
         line
     }
 
     fn logo_row_element<Msg>(&self, row: LogoRow) -> Element<Msg> {
-        let mut children = vec![Element::Text(TextElement::new(" ".repeat(self.margin)))];
+        let mut children = vec![Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        ))];
         if !row.mascot.is_empty() {
             children.push(Element::Text(
                 TextElement::new(row.mascot).fg(self.mascot_color).bold(),
             ));
         }
         if !row.art.is_empty() {
-            children.push(Element::Text(TextElement::new(" ".repeat(self.gap))));
+            children.push(Element::Text(TextElement::new(
+                " ".repeat(self.gap_for_element()),
+            )));
             children.push(Element::Text(
                 TextElement::new(row.art).fg(self.art_color).bold(),
             ));
@@ -281,10 +289,12 @@ impl WelcomeBanner {
             .map(|line| visible_len(line))
             .max()
             .unwrap_or(0);
-        let row_count = self
-            .mascot_lines
-            .len()
-            .max(self.art_offset.saturating_add(self.art_lines.len()));
+        let art_row_count = if self.art_lines.is_empty() {
+            0
+        } else {
+            self.art_offset.saturating_add(self.art_lines.len())
+        };
+        let row_count = self.mascot_lines.len().max(art_row_count);
         let mut rows = Vec::with_capacity(row_count);
         for index in 0..row_count {
             let mascot = self
@@ -302,8 +312,28 @@ impl WelcomeBanner {
         rows
     }
 
-    fn indented(&self, value: &str) -> String {
-        format!("{}{}", " ".repeat(self.margin), value)
+    fn indented_for_width(&self, value: &str, width: usize) -> String {
+        format!("{}{}", " ".repeat(self.margin_for_width(width)), value)
+    }
+
+    fn indented_for_element(&self, value: &str) -> String {
+        format!("{}{}", " ".repeat(self.margin_for_element()), value)
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_WELCOME_MARGIN)
+    }
+
+    fn gap_for_width(&self, width: usize) -> usize {
+        self.gap.min(width).min(MAX_WELCOME_GAP)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_WELCOME_MARGIN)
+    }
+
+    fn gap_for_element(&self) -> usize {
+        self.gap.min(MAX_WELCOME_GAP)
     }
 }
 
@@ -395,6 +425,48 @@ mod tests {
     fn zero_size_renders_empty_string() {
         assert_eq!(sample().view(0, 4), "");
         assert_eq!(sample().view(40, 0), "");
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let banner = WelcomeBanner::new()
+            .margin(usize::MAX)
+            .gap(usize::MAX)
+            .mascot_lines(vec!["M"])
+            .art_lines(vec!["A"])
+            .metadata("meta");
+        let rendered = banner.view(8, 3);
+
+        assert_eq!(banner.margin, MAX_WELCOME_MARGIN);
+        assert_eq!(banner.gap, MAX_WELCOME_GAP);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = banner.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(logo) = &column.children[0] else {
+            panic!("expected logo row");
+        };
+        let Element::Text(margin) = &logo.children[0] else {
+            panic!("expected margin text");
+        };
+        let Element::Text(gap) = &logo.children[2] else {
+            panic!("expected gap text");
+        };
+        assert_eq!(margin.content.len(), MAX_WELCOME_MARGIN);
+        assert_eq!(gap.content.len(), MAX_WELCOME_GAP);
+    }
+
+    #[test]
+    fn oversized_art_offset_is_clamped_without_empty_art_rows() {
+        let banner = WelcomeBanner::new()
+            .art_offset(usize::MAX)
+            .mascot_lines(vec!["M"]);
+        let rendered = banner.view(8, 4);
+
+        assert_eq!(banner.art_offset, MAX_WELCOME_ART_OFFSET);
+        assert_eq!(rendered.lines().count(), 1);
+        assert_eq!(visible_len(&rendered), 8);
     }
 
     #[test]
