@@ -93,16 +93,12 @@ impl MultiSelect {
                 }
                 None
             }
-            KeyCode::Char(' ') => {
-                self.checked[self.cursor] = !self.checked[self.cursor];
-                Some(MultiSelectMsg::Toggle(self.cursor))
-            }
+            KeyCode::Char(' ') => self.toggle_index(self.cursor),
             KeyCode::Char(c) if self.number_shortcuts => {
                 let idx = number_shortcut_index(c)?;
-                if idx < self.items.len() {
+                if idx < self.items.len() && idx < self.checked.len() {
                     self.cursor = idx;
-                    self.checked[idx] = !self.checked[idx];
-                    Some(MultiSelectMsg::Toggle(idx))
+                    self.toggle_index(idx)
                 } else {
                     None
                 }
@@ -110,6 +106,12 @@ impl MultiSelect {
             KeyCode::Enter => Some(MultiSelectMsg::Submit(self.selected_indices())),
             _ => None,
         }
+    }
+
+    fn toggle_index(&mut self, index: usize) -> Option<MultiSelectMsg> {
+        let checked = self.checked.get_mut(index)?;
+        *checked = !*checked;
+        Some(MultiSelectMsg::Toggle(index))
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -361,6 +363,26 @@ mod tests {
         ms.handle_key(&key(KeyCode::Down));
         ms.handle_key(&key(KeyCode::Down));
         assert_eq!(ms.cursor, 1);
+    }
+
+    #[test]
+    fn empty_multi_select_ignores_toggle_input() {
+        let mut ms = MultiSelect::new(Vec::<&str>::new()).with_number_shortcuts();
+
+        assert_eq!(ms.cursor(), 0);
+        assert!(ms.selected_indices().is_empty());
+        assert!(ms.handle_key(&key(KeyCode::Char(' '))).is_none());
+        assert!(ms.handle_key(&key(KeyCode::Char('1'))).is_none());
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Enter)),
+            Some(MultiSelectMsg::Submit(selected)) if selected.is_empty()
+        ));
+        assert_eq!(ms.view(10, 3), "");
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert!(box_el.children.is_empty());
     }
 
     #[test]
