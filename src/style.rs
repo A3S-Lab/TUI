@@ -571,20 +571,24 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
 
     let target = width - 1;
     let mut out = String::new();
-    let mut chars = s.chars().peekable();
     let mut used = 0;
     let mut saw_ansi = false;
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
+    while index < s.len() {
+        let ch = s[index..].chars().next().unwrap_or_default();
+        if starts_ansi_csi_at(s, index) {
             saw_ansi = true;
             out.push(ch);
-            let Some(introducer) = chars.next() else {
+            index += ch.len_utf8();
+            let Some(introducer) = s[index..].chars().next() else {
                 break;
             };
             out.push(introducer);
-            for next in chars.by_ref() {
+            index += introducer.len_utf8();
+            for next in s[index..].chars() {
                 out.push(next);
+                index += next.len_utf8();
                 if next.is_ascii_alphabetic() {
                     break;
                 }
@@ -592,12 +596,15 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
             continue;
         }
 
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
         if used + cw > target {
             break;
         }
-        out.push(ch);
+        out.push_str(&s[index..end]);
         used += cw;
+        index = end;
     }
 
     out.push('…');
@@ -648,6 +655,9 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
 
     if width != 0 {
         for (offset, next) in chars {
+            if starts_ansi_csi_at(value, start + offset) {
+                break;
+            }
             if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
                 break;
             }
@@ -656,6 +666,12 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
     }
 
     Some((end, width))
+}
+
+fn starts_ansi_csi_at(value: &str, index: usize) -> bool {
+    value
+        .get(index..)
+        .is_some_and(|tail| tail.starts_with("\x1b["))
 }
 
 /// Return the substring spanning display columns `[from, to)`.
@@ -948,6 +964,24 @@ mod tests {
         assert_eq!(strip_ansi(&out), "abc…");
         assert!(out.starts_with("\x1b[31m"));
         assert!(out.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn truncate_visible_skips_ansi_reset_between_segments() {
+        let styled_prefix = Style::new().fg(Color::Green).render("ok");
+        let out = truncate_visible(&format!("{styled_prefix}abcdef"), 5);
+
+        assert_eq!(visible_len(&out), 5);
+        assert_eq!(strip_ansi(&out), "okab…");
+        assert!(out.contains("\x1b[0mab"));
+    }
+
+    #[test]
+    fn truncate_visible_keeps_zero_width_marks_with_base_glyph() {
+        let out = truncate_visible("e\u{301}xyz", 2);
+
+        assert_eq!(out, "e\u{301}…");
+        assert_eq!(visible_len(&out), 2);
     }
 
     #[test]
