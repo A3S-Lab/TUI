@@ -97,7 +97,7 @@ impl Markdown {
 
                 output.push(top);
                 for line in highlighted.lines() {
-                    output.push(format!("│ {}", line));
+                    output.push(code_block_body_line(line, self.width));
                 }
                 output.push(bottom);
                 output.push(String::new());
@@ -414,6 +414,14 @@ fn code_block_footer(width: usize) -> String {
     }
 }
 
+fn code_block_body_line(line: &str, width: usize) -> String {
+    match width {
+        0 => String::new(),
+        1 => "│".to_string(),
+        _ => format!("│ {}", truncate_visible(line, width - 2)),
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -523,6 +531,16 @@ mod tests {
         let footer = output.lines().last().unwrap();
 
         assert_eq!(visible_len(footer), 0);
+    }
+
+    #[test]
+    fn code_block_body_lines_respect_width() {
+        let md = Markdown::new().with_width(8);
+        let output = md.render("```\nabcdefghijklmnopqrstuvwxyz\n```");
+
+        for line in output.lines() {
+            assert!(visible_len(line) <= 8, "{line:?}");
+        }
     }
 
     #[test]
