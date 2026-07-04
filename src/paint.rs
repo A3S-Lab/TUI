@@ -251,26 +251,27 @@ fn paint_text_row(
         return true;
     }
 
-    let write_x = (node.x as usize).max(clip.left);
-    if write_x >= clip.right {
+    if node.x as usize >= clip.right {
         return true;
     }
 
     let local_from = clip.left.saturating_sub(node.x as usize);
-    let clipped = clip_visible_cols(text, local_from, clip.right - write_x);
-    if !clipped.is_empty() {
+    let clip_width = clip.right.saturating_sub((node.x as usize).max(clip.left));
+    if let Some((start_col, clipped)) = clip_visible_cols(text, local_from, clip_width) {
+        let write_x = (node.x as usize).saturating_add(start_col);
         grid.write_str(write_x as u16, row_y, &clipped, style);
     }
     true
 }
 
-fn clip_visible_cols(text: &str, from: usize, width: usize) -> String {
+fn clip_visible_cols(text: &str, from: usize, width: usize) -> Option<(usize, String)> {
     if width == 0 {
-        return String::new();
+        return None;
     }
 
     let end = from.saturating_add(width);
     let mut col = 0usize;
+    let mut start_col = None;
     let mut out = String::new();
 
     for ch in text.chars() {
@@ -291,11 +292,12 @@ fn clip_visible_cols(text: &str, from: usize, width: usize) -> String {
             break;
         }
 
+        start_col.get_or_insert(col);
         out.push(ch);
         col = next_col;
     }
 
-    out
+    start_col.map(|start| (start, out))
 }
 
 /// Skip over child nodes in the layout index without rendering.
@@ -544,10 +546,37 @@ mod tests {
     }
 
     #[test]
+    fn paint_hidden_overflow_preserves_columns_after_left_split_wide_glyph() {
+        let el: Element<()> = Element::Box(BoxElement::new().overflow(Overflow::Hidden).child(
+            Element::Text(TextElement::new("界a").wrap(TextWrap::NoWrap)),
+        ));
+        let layout = LayoutResult {
+            nodes: vec![
+                crate::layout_engine::LayoutNode {
+                    x: 1,
+                    y: 0,
+                    width: 3,
+                    height: 1,
+                },
+                crate::layout_engine::LayoutNode {
+                    x: 0,
+                    y: 0,
+                    width: 3,
+                    height: 1,
+                },
+            ],
+        };
+
+        let grid = paint(&el, &layout, 4, 1);
+
+        assert_eq!(grid.render_to_string(), "  a ");
+    }
+
+    #[test]
     fn clip_visible_cols_drops_wide_glyphs_split_by_clip_edges() {
-        assert_eq!(clip_visible_cols("ab界cd", 0, 4), "ab界");
-        assert_eq!(clip_visible_cols("ab界cd", 0, 3), "ab");
-        assert_eq!(clip_visible_cols("ab界cd", 3, 3), "cd");
+        assert_eq!(clip_visible_cols("ab界cd", 0, 4), Some((0, "ab界".into())));
+        assert_eq!(clip_visible_cols("ab界cd", 0, 3), Some((0, "ab".into())));
+        assert_eq!(clip_visible_cols("ab界cd", 3, 3), Some((4, "cd".into())));
     }
 
     #[test]
