@@ -5,8 +5,8 @@ use a3s_tui::components::{
     OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar, SessionStatus,
     SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow,
     SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue,
-    TextOverlay, TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView, TreePicker,
-    TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
+    TextInput, TextOverlay, TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView,
+    TreePicker, TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
 };
 use a3s_tui::element::{
     BorderStyle, BoxElement, Dimension, Element, FlexDirection, TextElement, TextWrap,
@@ -246,6 +246,26 @@ fn cursor_line_renders_block_cursor_through_layout_and_paint() {
     assert_eq!(grid.get(4, 0).ch, 'c');
     assert_eq!(grid.get(5, 0).ch, 'd');
     assert!(ansi.contains("\x1b[30;107m好\x1b[0m"), "{ansi:?}");
+}
+
+#[test]
+fn text_input_renders_cursor_through_layout_and_paint() {
+    let mut input = TextInput::new().with_prefix("> ");
+    input.set_value("abc");
+    input.handle_key(&a3s_tui::event::KeyEvent {
+        code: crossterm::event::KeyCode::Home,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    input.handle_key(&a3s_tui::event::KeyEvent {
+        code: crossterm::event::KeyCode::Right,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+
+    let grid = render(&input.element::<()>(), 8, 1);
+
+    assert_eq!(grid.get(0, 0).ch, '>');
+    assert_eq!(grid.get(3, 0).ch, 'b');
+    assert!(grid.get(3, 0).reverse);
 }
 
 #[test]

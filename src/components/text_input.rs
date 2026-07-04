@@ -1,4 +1,4 @@
-use crate::element::{Element, TextElement};
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
 use crate::style::Color;
 use crossterm::event::KeyCode;
@@ -139,6 +139,14 @@ impl TextInput {
         value.chars().count()
     }
 
+    fn display_chars(&self) -> Vec<char> {
+        if let Some(mask) = self.mask_char {
+            vec![mask; Self::char_len(&self.value)]
+        } else {
+            self.value.chars().collect()
+        }
+    }
+
     pub fn view(&self) -> String {
         let mut out = self.prefix.clone();
 
@@ -147,11 +155,7 @@ impl TextInput {
             return out;
         }
 
-        let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
-            vec![mask; Self::char_len(&self.value)]
-        } else {
-            self.value.chars().collect()
-        };
+        let display_chars = self.display_chars();
 
         for (i, &ch) in display_chars.iter().enumerate() {
             if i == self.cursor && self.focused {
@@ -172,25 +176,41 @@ impl TextInput {
             return Element::Text(TextElement::new(text).dim().fg(Color::BrightBlack));
         }
 
-        let display_chars: Vec<char> = if let Some(mask) = self.mask_char {
-            vec![mask; Self::char_len(&self.value)]
-        } else {
-            self.value.chars().collect()
-        };
+        let display_chars = self.display_chars();
+        let cursor = self.cursor.min(display_chars.len());
 
-        let mut display = self.prefix.clone();
-        for (i, &ch) in display_chars.iter().enumerate() {
-            if i == self.cursor && self.focused {
-                display.push_str(&format!("\x1b[7m{}\x1b[0m", ch));
-            } else {
-                display.push(ch);
+        let mut children = Vec::new();
+        if !self.prefix.is_empty() {
+            children.push(Element::Text(TextElement::new(self.prefix.clone())));
+        }
+
+        let before = display_chars.iter().take(cursor).collect::<String>();
+        if !before.is_empty() {
+            children.push(Element::Text(TextElement::new(before)));
+        }
+
+        if self.focused {
+            let cursor_text = display_chars
+                .get(cursor)
+                .map(char::to_string)
+                .unwrap_or_else(|| " ".to_string());
+            children.push(Element::Text(TextElement::new(cursor_text).reverse()));
+            let after = display_chars.iter().skip(cursor + 1).collect::<String>();
+            if !after.is_empty() {
+                children.push(Element::Text(TextElement::new(after)));
+            }
+        } else {
+            let value = display_chars.iter().skip(cursor).collect::<String>();
+            if !value.is_empty() {
+                children.push(Element::Text(TextElement::new(value)));
             }
         }
-        if self.cursor == display_chars.len() && self.focused {
-            display.push_str("\x1b[7m \x1b[0m");
-        }
 
-        Element::Text(TextElement::new(display))
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .children(children),
+        )
     }
 }
 
@@ -286,10 +306,33 @@ mod tests {
 
         assert!(input.view().ends_with("\x1b[7m \x1b[0m"));
 
-        let Element::Text(text) = input.element::<()>() else {
-            panic!("expected text element");
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
         };
-        assert!(text.content.ends_with("\x1b[7m \x1b[0m"));
+        let Element::Text(cursor) = row.children.last().expect("expected cursor child") else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, " ");
+        assert!(cursor.style.reverse);
+    }
+
+    #[test]
+    fn element_uses_structured_cursor_style() {
+        let mut input = TextInput::new();
+        input.set_value("abc");
+        input.handle_key(&key(KeyCode::Home));
+        input.handle_key(&key(KeyCode::Right));
+
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
+        };
+        assert_eq!(row.children.len(), 3);
+        let Element::Text(cursor) = &row.children[1] else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, "b");
+        assert!(cursor.style.reverse);
+        assert!(!cursor.content.contains('\x1b'));
     }
 
     #[test]
