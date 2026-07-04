@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN: usize = u16::MAX as usize;
+
 /// In-flight activity line with an optional live output tail.
 ///
 /// This covers CLI feedback such as a running tool: a margin, an active/inactive
@@ -81,7 +84,7 @@ impl ActivityBlock {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_ACTIVITY_BLOCK_MARGIN);
         self
     }
 
@@ -187,8 +190,10 @@ impl ActivityBlock {
     }
 
     fn render_header(&self) -> String {
-        let mut out = String::with_capacity(self.margin + self.label.len() + 8);
-        out.push_str(&" ".repeat(self.margin));
+        let margin = self.margin_for_render();
+        let mut out =
+            String::with_capacity(margin.saturating_add(self.label.len()).saturating_add(8));
+        out.push_str(&" ".repeat(margin));
         out.push_str(
             &Style::new()
                 .fg(self.marker_color())
@@ -216,7 +221,7 @@ impl ActivityBlock {
     fn render_output(&self, line: String) -> String {
         format!(
             "{}{} {}",
-            " ".repeat(self.output_margin()),
+            " ".repeat(self.output_margin_for_render()),
             Style::new()
                 .fg(self.connector_color)
                 .render(&self.connector),
@@ -226,7 +231,7 @@ impl ActivityBlock {
 
     fn header_element<Msg>(&self) -> Element<Msg> {
         let mut children = vec![
-            Element::Text(TextElement::new(" ".repeat(self.margin))),
+            Element::Text(TextElement::new(" ".repeat(self.margin_for_render()))),
             Element::Text(
                 TextElement::new(self.marker.as_str())
                     .fg(self.marker_color())
@@ -262,7 +267,7 @@ impl ActivityBlock {
             BoxElement::new()
                 .direction(FlexDirection::Row)
                 .child(Element::Text(TextElement::new(
-                    " ".repeat(self.output_margin()),
+                    " ".repeat(self.output_margin_for_render()),
                 )))
                 .child(Element::Text(
                     TextElement::new(self.connector.as_str()).fg(self.connector_color),
@@ -292,8 +297,22 @@ impl ActivityBlock {
             .unwrap_or(usize::MAX / 4)
     }
 
-    fn output_margin(&self) -> usize {
-        self.margin + visible_len(&self.marker) + 1
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_ACTIVITY_BLOCK_MARGIN)
+    }
+
+    fn output_margin_for_render(&self) -> usize {
+        let margin = self.margin_for_render();
+        let output_margin = margin
+            .saturating_add(visible_len(&self.marker))
+            .saturating_add(1)
+            .min(MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN);
+        self.width
+            .map(|width| output_margin.min(width))
+            .unwrap_or(output_margin)
     }
 
     fn marker_color(&self) -> Color {
@@ -370,6 +389,39 @@ mod tests {
 
         assert!(rows[0].starts_with(" >> Sync…"));
         assert_eq!(rows[1], "    | done");
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let block = ActivityBlock::new("Running")
+            .margin(usize::MAX)
+            .width(8)
+            .line("ok");
+        let rendered = block.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(block.margin, MAX_ACTIVITY_BLOCK_MARGIN);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 8));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(header) = &column.children[0] else {
+            panic!("expected header row");
+        };
+        let Element::Text(margin) = &header.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+
+        let Element::Box(output) = &column.children[1] else {
+            panic!("expected output row");
+        };
+        let Element::Text(indent) = &output.children[0] else {
+            panic!("expected output indent text");
+        };
+        assert_eq!(indent.content.len(), 8);
     }
 
     #[test]
