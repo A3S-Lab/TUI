@@ -111,6 +111,7 @@ impl Textarea {
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
         self.fit_height();
+        self.ensure_visible();
     }
 
     pub fn clear(&mut self) {
@@ -217,17 +218,21 @@ impl Textarea {
     }
 
     pub fn view(&self) -> String {
+        let h = self.height as usize;
+        if h == 0 {
+            return String::new();
+        }
+
         if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
             return format!("\x1b[2m{}\x1b[0m", self.placeholder);
         }
 
-        let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
-        let visible = &self.lines[self.offset..end];
+        let (start, end) = self.visible_range();
+        let visible = &self.lines[start..end];
 
         let mut result = Vec::new();
         for (i, line) in visible.iter().enumerate() {
-            let row = self.offset + i;
+            let row = start + i;
             if row == self.cursor_row && self.focused {
                 result.push(self.render_line_with_cursor(line));
             } else {
@@ -418,11 +423,28 @@ impl Textarea {
 
     fn ensure_visible(&mut self) {
         let h = self.height as usize;
+        if h == 0 {
+            self.offset = 0;
+            return;
+        }
+
         if self.cursor_row < self.offset {
             self.offset = self.cursor_row;
         } else if self.cursor_row >= self.offset + h {
             self.offset = self.cursor_row - h + 1;
         }
+    }
+
+    fn visible_range(&self) -> (usize, usize) {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return (0, 0);
+        }
+
+        let max_offset = self.lines.len().saturating_sub(h);
+        let start = self.offset.min(max_offset);
+        let end = start.saturating_add(h).min(self.lines.len());
+        (start, end)
     }
 }
 
@@ -434,6 +456,10 @@ impl Default for Textarea {
 
 impl Textarea {
     pub fn element<Msg>(&self) -> Element<Msg> {
+        if self.height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
         if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
             return Element::Text(
                 TextElement::new(&self.placeholder)
@@ -443,12 +469,12 @@ impl Textarea {
         }
 
         let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
-        let visible = &self.lines[self.offset..end];
+        let (start, end) = self.visible_range();
+        let visible = &self.lines[start..end];
 
         let mut children: Vec<Element<Msg>> = Vec::new();
         for (i, line) in visible.iter().enumerate() {
-            let row = self.offset + i;
+            let row = start + i;
             if row == self.cursor_row && self.focused {
                 children.push(Element::Text(TextElement::new(
                     self.render_line_with_cursor(line),
@@ -559,6 +585,59 @@ mod tests {
         let view = ta.view();
         assert!(view.contains('a'), "first line still visible");
         assert!(view.contains('b'), "second line visible");
+    }
+
+    #[test]
+    fn zero_height_keeps_offset_safe_after_content_changes() {
+        let mut ta = Textarea::new().with_height(0);
+        ta.handle_key(&key(KeyCode::Enter));
+        ta.handle_key(&key(KeyCode::Enter));
+        assert_eq!(ta.offset, 0);
+
+        ta.set_value("short");
+
+        assert_eq!(ta.view(), "");
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected empty textarea element box");
+        };
+        assert!(box_el.children.is_empty());
+    }
+
+    #[test]
+    fn zero_height_hides_placeholder() {
+        let mut ta = Textarea::new()
+            .with_height(0)
+            .with_placeholder("compose message");
+        ta.blur();
+
+        assert_eq!(ta.view(), "");
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected empty textarea element box");
+        };
+        assert!(box_el.children.is_empty());
+    }
+
+    #[test]
+    fn set_value_clamps_stale_offset_after_content_shrinks() {
+        let mut ta = Textarea::new().with_height(2);
+        ta.set_value("one\ntwo\nthree\nfour\nfive");
+        assert!(ta.view().contains("five"));
+
+        ta.handle_key(&key(KeyCode::Up));
+        ta.handle_key(&key(KeyCode::Down));
+        assert!(ta.offset > 0);
+
+        ta.set_value("short");
+
+        assert_eq!(ta.offset, 0);
+        assert!(ta.view().contains("short"));
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected textarea element box");
+        };
+        let Element::Text(first) = &box_el.children[0] else {
+            panic!("expected first textarea line");
+        };
+        assert_eq!(first.content, "short");
     }
 
     #[test]
