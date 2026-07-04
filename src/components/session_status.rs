@@ -1,6 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
 
+const MAX_SESSION_STATUS_CHIP_LABEL_WIDTH: usize = u16::MAX as usize;
 const MAX_SESSION_STATUS_MARGIN: usize = u16::MAX as usize;
 
 /// Agent/session status row with workspace, model, context, and live chips.
@@ -329,7 +330,7 @@ impl SessionStatusChip {
     }
 
     pub fn max_label_width(mut self, width: usize) -> Self {
-        self.max_label_width = Some(width.max(1));
+        self.max_label_width = Some(width.max(1).min(MAX_SESSION_STATUS_CHIP_LABEL_WIDTH));
         self
     }
 
@@ -458,6 +459,20 @@ mod tests {
             panic!("expected margin text");
         };
         assert_eq!(margin.content.len(), MAX_SESSION_STATUS_MARGIN);
+    }
+
+    #[test]
+    fn oversized_chip_label_width_is_clamped() {
+        let chip = SessionStatusChip::new("*", "running").max_label_width(usize::MAX);
+        let rendered = SessionStatus::new("/tmp/a3s")
+            .status_chip(chip.clone())
+            .view(24);
+
+        assert_eq!(
+            chip.max_label_width,
+            Some(MAX_SESSION_STATUS_CHIP_LABEL_WIDTH)
+        );
+        assert_eq!(visible_len(&rendered), 24);
     }
 
     #[test]
