@@ -381,7 +381,6 @@ fn measure_text_node(
     }
 }
 
-#[allow(dead_code)]
 fn count_wrapped_lines(text: &str, width: usize) -> usize {
     if width == 0 {
         return text.lines().count().max(1);
@@ -433,6 +432,13 @@ mod tests {
 
         assert_eq!(result.nodes[0].width, 3);
         assert_eq!(result.nodes[0].height, 3);
+    }
+
+    #[test]
+    fn count_wrapped_lines_ignores_ansi_sequences() {
+        let styled = "\x1b[31malpha beta\x1b[0m";
+
+        assert_eq!(count_wrapped_lines(styled, 6), 2);
     }
 
     #[test]
