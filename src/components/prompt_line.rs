@@ -3,6 +3,7 @@ use crate::style::{fit_visible, visible_len, Color, Style};
 
 const MAX_PROMPT_LINE_CONTINUATION_INDENT: usize = u16::MAX as usize;
 const MAX_PROMPT_LINE_MARGIN: usize = u16::MAX as usize;
+const MAX_PROMPT_LINE_WIDTH: usize = u16::MAX as usize;
 
 /// Prompt-prefixed input text with aligned continuation rows.
 ///
@@ -44,7 +45,7 @@ impl PromptLine {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_PROMPT_LINE_WIDTH));
         self
     }
 
@@ -338,6 +339,15 @@ mod tests {
             panic!("expected continuation indent text");
         };
         assert_eq!(indent.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let line = PromptLine::new("> ").text("hello").width(usize::MAX);
+        let rendered = line.view();
+
+        assert_eq!(line.width, Some(MAX_PROMPT_LINE_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_PROMPT_LINE_WIDTH);
     }
 
     #[test]

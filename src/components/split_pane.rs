@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Dimension, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_SPLIT_PANE_LEFT_WIDTH: usize = u16::MAX as usize;
+
 /// A two-column terminal panel for file explorers, diffs, timelines, and details.
 ///
 /// `SplitPane` extracts the common full-screen pattern used by IDE, git, memory,
@@ -85,7 +87,7 @@ impl SplitPane {
     }
 
     pub fn left_width(mut self, width: usize) -> Self {
-        self.left_width = Some(width);
+        self.left_width = Some(width.min(MAX_SPLIT_PANE_LEFT_WIDTH));
         self
     }
 
@@ -406,6 +408,19 @@ mod tests {
         assert!(row.starts_with("left"));
         assert!(row.contains("│"));
         assert_eq!(visible_len(row), 24);
+    }
+
+    #[test]
+    fn oversized_left_width_is_clamped_to_render_width() {
+        let pane = SplitPane::new(vec!["left"], vec!["right"]).left_width(usize::MAX);
+        let rendered = pane.view(24, 1);
+        let (left_width, right_width, separator) = pane.column_widths(24);
+
+        assert_eq!(pane.left_width, Some(MAX_SPLIT_PANE_LEFT_WIDTH));
+        assert_eq!(left_width, 15);
+        assert_eq!(right_width, 6);
+        assert_eq!(visible_len(&separator), 3);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
