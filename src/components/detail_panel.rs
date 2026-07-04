@@ -3,6 +3,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_DETAIL_PANEL_INDENT: usize = u16::MAX as usize;
 const MAX_DETAIL_PANEL_LABEL_WIDTH: usize = u16::MAX as usize;
+const MAX_DETAIL_PANEL_ROWS: usize = u16::MAX as usize;
 
 /// Visual role for a row inside a [`DetailPanel`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -166,7 +167,7 @@ impl DetailPanel {
     }
 
     pub fn max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows.max(1));
+        self.max_rows = Some(max_rows.max(1).min(MAX_DETAIL_PANEL_ROWS));
         self
     }
 
@@ -514,6 +515,18 @@ mod tests {
         assert_eq!(panel.label_width_for_available(8), 8);
         assert_eq!(visible_len(&row), 8);
         assert!(rendered.lines().all(|line| visible_len(line) == 8));
+    }
+
+    #[test]
+    fn oversized_row_limit_is_clamped() {
+        let panel = DetailPanel::new("meta")
+            .max_rows(usize::MAX)
+            .pair("pid", "42")
+            .pair("workspace", "a3s");
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_rows, Some(MAX_DETAIL_PANEL_ROWS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
