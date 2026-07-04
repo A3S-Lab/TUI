@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{visible_len, wrap_words, Color};
 
+const MAX_PARAGRAPH_INDENT: usize = u16::MAX as usize;
+const MAX_PARAGRAPH_WIDTH: usize = u16::MAX as usize;
+
 /// Text alignment for paragraphs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextAlign {
@@ -34,12 +37,12 @@ impl Paragraph {
     }
 
     pub fn width(mut self, w: usize) -> Self {
-        self.width = w;
+        self.width = w.min(MAX_PARAGRAPH_WIDTH);
         self
     }
 
     pub fn indent(mut self, n: usize) -> Self {
-        self.indent = n;
+        self.indent = n.min(MAX_PARAGRAPH_INDENT);
         self
     }
 
@@ -75,12 +78,14 @@ impl Paragraph {
     }
 
     fn wrap(&self) -> Vec<String> {
-        let effective_width = self.width.saturating_sub(self.indent);
+        let width = self.width_for_render();
+        let indent = self.indent_for_width(width);
+        let effective_width = width.saturating_sub(indent);
         if effective_width == 0 {
             return vec![self.text.clone()];
         }
 
-        let indent_str = " ".repeat(self.indent);
+        let indent_str = " ".repeat(indent);
         wrap_words(&self.text, effective_width)
             .into_iter()
             .map(|line| {
@@ -96,7 +101,7 @@ impl Paragraph {
     fn apply_align(&self, line: &str) -> String {
         let content = line.trim_start().trim_end();
         let content_len = visible_len(content);
-        let available = self.width;
+        let available = self.width_for_render();
 
         match self.align {
             TextAlign::Left => line.to_string(),
@@ -109,6 +114,14 @@ impl Paragraph {
                 format!("{}{}", " ".repeat(pad), content)
             }
         }
+    }
+
+    fn width_for_render(&self) -> usize {
+        self.width.min(MAX_PARAGRAPH_WIDTH)
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_PARAGRAPH_INDENT)
     }
 }
 
@@ -147,6 +160,18 @@ mod tests {
         let p = Paragraph::new("hello").width(80).indent(4);
         let lines = p.wrap();
         assert!(lines[0].starts_with("    "));
+    }
+
+    #[test]
+    fn oversized_dimensions_are_clamped() {
+        let p = Paragraph::new("hello").width(usize::MAX).indent(usize::MAX);
+
+        assert_eq!(p.width, MAX_PARAGRAPH_WIDTH);
+        assert_eq!(p.indent, MAX_PARAGRAPH_INDENT);
+        assert_eq!(p.indent_for_width(8), 8);
+
+        let lines = Paragraph::new("hello").width(8).indent(usize::MAX).wrap();
+        assert_eq!(lines, vec!["hello"]);
     }
 
     #[test]

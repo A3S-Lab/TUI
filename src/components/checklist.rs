@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_CHECKLIST_INDENT: usize = u16::MAX as usize;
+
 /// Status for a checklist row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChecklistStatus {
@@ -121,7 +123,7 @@ impl Checklist {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_CHECKLIST_INDENT);
         self
     }
 
@@ -211,9 +213,10 @@ impl Checklist {
     }
 
     fn render_line(&self, item: &ChecklistItem, index: usize, width: usize) -> String {
-        let prefix = self.render_prefix(item, index);
+        let prefix = self.render_prefix(item, index, width);
         let gap = " ";
-        let label_width = width.saturating_sub(visible_len(&prefix) + visible_len(gap));
+        let label_width =
+            width.saturating_sub(visible_len(&prefix).saturating_add(visible_len(gap)));
         let label = truncate_visible(&item.label, label_width);
         let mut style = Style::new().fg(self.item_text_color(item));
         if item.status == ChecklistStatus::Done {
@@ -222,11 +225,12 @@ impl Checklist {
         fit_visible(&format!("{prefix}{gap}{}", style.render(&label)), width)
     }
 
-    fn render_prefix(&self, item: &ChecklistItem, index: usize) -> String {
+    fn render_prefix(&self, item: &ChecklistItem, index: usize, width: usize) -> String {
         let glyph = item.glyph.unwrap_or_else(|| item.status.glyph());
+        let indent = self.indent_for_width(item, index, width);
         format!(
             "{}{}{}",
-            " ".repeat(self.indent),
+            " ".repeat(indent),
             self.connector_prefix(index),
             Style::new()
                 .fg(self.glyph_color(item))
@@ -237,7 +241,7 @@ impl Checklist {
     fn plain_prefix(&self, index: usize) -> String {
         format!(
             "{}{}",
-            " ".repeat(self.indent),
+            " ".repeat(self.indent_for_element()),
             self.connector_prefix(index)
         )
     }
@@ -268,6 +272,25 @@ impl Checklist {
             ChecklistStatus::Done => self.done_color,
             ChecklistStatus::Error => self.error_color,
         })
+    }
+
+    fn indent_for_width(&self, item: &ChecklistItem, index: usize, width: usize) -> usize {
+        let glyph_width = visible_len(
+            &item
+                .glyph
+                .unwrap_or_else(|| item.status.glyph())
+                .to_string(),
+        );
+        let fixed_width = visible_len(self.connector_prefix(index))
+            .saturating_add(glyph_width)
+            .saturating_add(1);
+        self.indent
+            .min(width.saturating_sub(fixed_width))
+            .min(MAX_CHECKLIST_INDENT)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_CHECKLIST_INDENT)
     }
 }
 
@@ -330,6 +353,33 @@ mod tests {
 
         assert!(rows[0].starts_with("  ⎿  ◻ one"));
         assert!(rows[1].starts_with("     ◻ two"));
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("one")])
+            .indent(usize::MAX)
+            .connector(true);
+        let rendered = checklist.view(8, 1);
+        let prefix = checklist.render_prefix(&checklist.items[0], 0, 8);
+
+        assert_eq!(checklist.indent, MAX_CHECKLIST_INDENT);
+        assert!(visible_len(&prefix) <= 7);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = checklist.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row element");
+        };
+        let Element::Text(prefix) = &row.children[0] else {
+            panic!("expected prefix text");
+        };
+        assert_eq!(
+            visible_len(&prefix.content),
+            MAX_CHECKLIST_INDENT + visible_len("⎿  ")
+        );
     }
 
     #[test]
