@@ -29,6 +29,8 @@ static EMPTY_CELL: Cell = Cell {
     strikethrough: false,
 };
 
+const WIDE_CONTINUATION: char = '\0';
+
 impl Default for Cell {
     fn default() -> Self {
         EMPTY_CELL.clone()
@@ -57,6 +59,10 @@ impl Cell {
     }
 
     pub fn to_ansi(&self) -> String {
+        if self.ch == WIDE_CONTINUATION {
+            return String::new();
+        }
+
         use std::fmt::Write;
 
         let has_style = self.bold
@@ -118,6 +124,10 @@ impl Cell {
 
     /// Write ANSI representation into an existing buffer (avoids allocation).
     pub fn write_ansi(&self, buf: &mut String) {
+        if self.ch == WIDE_CONTINUATION {
+            return;
+        }
+
         use std::fmt::Write;
 
         let has_style = self.bold
@@ -232,6 +242,9 @@ impl Grid {
                 break;
             }
             self.cells[row][col] = Cell::styled(ch, style);
+            for offset in 1..width {
+                self.cells[row][col + offset] = Cell::styled(WIDE_CONTINUATION, style);
+            }
             col += width;
         }
     }
@@ -373,6 +386,16 @@ mod tests {
         grid.write_str(3, 0, "界", &style);
 
         assert_eq!(grid.get(3, 0).ch, ' ');
+    }
+
+    #[test]
+    fn grid_render_does_not_add_visible_space_after_wide_char() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+
+        assert_eq!(crate::style::visible_len(&grid.render_to_string()), 2);
     }
 
     #[test]

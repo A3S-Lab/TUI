@@ -647,7 +647,7 @@ fn wrapped_prefix_block_renders_reasoning_rows_through_layout_and_paint() {
     let ansi = grid.render_to_string();
     let rows = plain.lines().collect::<Vec<_>>();
 
-    assert!(rows[0].starts_with("  💭  alpha"), "{plain:?}");
+    assert!(rows[0].starts_with("  💭 alpha"), "{plain:?}");
     assert!(rows[1].starts_with("     beta"), "{plain:?}");
     assert!(rows[2].starts_with("     gamma"), "{plain:?}");
     assert_eq!(grid.get(2, 0).ch, '💭');
