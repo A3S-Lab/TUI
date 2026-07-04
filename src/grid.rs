@@ -18,18 +18,20 @@ pub struct Cell {
     pub strikethrough: bool,
 }
 
+static EMPTY_CELL: Cell = Cell {
+    ch: ' ',
+    fg: None,
+    bg: None,
+    bold: false,
+    italic: false,
+    underline: false,
+    dim: false,
+    strikethrough: false,
+};
+
 impl Default for Cell {
     fn default() -> Self {
-        Self {
-            ch: ' ',
-            fg: None,
-            bg: None,
-            bold: false,
-            italic: false,
-            underline: false,
-            dim: false,
-            strikethrough: false,
-        }
+        EMPTY_CELL.clone()
     }
 }
 
@@ -203,7 +205,13 @@ impl Grid {
     }
 
     pub fn get(&self, x: u16, y: u16) -> &Cell {
-        &self.cells[y as usize][x as usize]
+        self.try_get(x, y).unwrap_or(&EMPTY_CELL)
+    }
+
+    pub fn try_get(&self, x: u16, y: u16) -> Option<&Cell> {
+        self.cells
+            .get(y as usize)
+            .and_then(|row| row.get(x as usize))
     }
 
     pub fn set(&mut self, x: u16, y: u16, cell: Cell) {
@@ -316,6 +324,16 @@ mod tests {
         let cell = Cell::with_char('X');
         grid.set(3, 2, cell.clone());
         assert_eq!(grid.get(3, 2).ch, 'X');
+        assert_eq!(grid.try_get(3, 2), Some(&cell));
+    }
+
+    #[test]
+    fn grid_get_out_of_bounds_returns_empty_cell() {
+        let grid = Grid::new(2, 1);
+        assert!(grid.try_get(2, 0).is_none());
+        assert!(grid.try_get(0, 1).is_none());
+        assert_eq!(grid.get(2, 0), &Cell::default());
+        assert_eq!(grid.get(0, 1), &Cell::default());
     }
 
     #[test]
