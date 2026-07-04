@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_TASK_QUEUE_MARGIN: usize = u16::MAX as usize;
+
 /// Pinned queued-task panel with a running task and ordered queue rows.
 ///
 /// This mirrors the CLI queue strip: a compact completed-count header, an
@@ -83,7 +85,7 @@ impl TaskQueue {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_TASK_QUEUE_MARGIN);
         self
     }
 
@@ -182,9 +184,10 @@ impl TaskQueue {
     }
 
     fn render_header(&self, width: usize) -> String {
+        let margin = self.margin_for_width(width);
         let prefix = format!(
             "{}{} {} · ✓ {} done ",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             self.divider,
             self.title.trim(),
             self.completed
@@ -199,7 +202,12 @@ impl TaskQueue {
     }
 
     fn render_task_row(&self, marker: &str, text: &str, color: Color, width: usize) -> String {
-        let raw = format!("{}{} {}", " ".repeat(self.margin), marker, text.trim());
+        let raw = format!(
+            "{}{} {}",
+            " ".repeat(self.margin_for_width(width)),
+            marker,
+            text.trim()
+        );
         Style::new().fg(color).render(&fit_visible(&raw, width))
     }
 
@@ -227,7 +235,7 @@ impl TaskQueue {
     fn header_text(&self) -> String {
         format!(
             "{}{} {} · ✓ {} done",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_element()),
             self.divider,
             self.title.trim(),
             self.completed
@@ -242,7 +250,9 @@ impl TaskQueue {
         bold: bool,
     ) -> Element<Msg> {
         let mut row = BoxElement::new().direction(FlexDirection::Row);
-        row = row.child(Element::Text(TextElement::new(" ".repeat(self.margin))));
+        row = row.child(Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        )));
 
         let mut marker_text = TextElement::new(marker).fg(color);
         if bold {
@@ -254,6 +264,14 @@ impl TaskQueue {
             .child(Element::Text(TextElement::new(text.trim()).fg(color)));
 
         Element::Box(row)
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_TASK_QUEUE_MARGIN)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_TASK_QUEUE_MARGIN)
     }
 }
 
@@ -361,6 +379,28 @@ mod tests {
         for row in plain.lines() {
             assert_eq!(visible_len(row), 24, "{row:?}");
         }
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let queue = TaskQueue::new()
+            .margin(usize::MAX)
+            .queued(QueuedTask::new("first"));
+        let view = queue.view(8);
+
+        assert_eq!(queue.margin, MAX_TASK_QUEUE_MARGIN);
+        assert!(view.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = queue.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[1] else {
+            panic!("expected queued row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), MAX_TASK_QUEUE_MARGIN);
     }
 
     #[test]
