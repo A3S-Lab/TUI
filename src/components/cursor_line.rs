@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, TextElement};
 use crate::style::{slice_visible_cols, visible_len, Color, Style};
 
+const MAX_CURSOR_LINE_WIDTH: usize = u16::MAX as usize;
+
 /// A horizontally scrollable single text line with a block cursor.
 ///
 /// `cursor_col` and `scroll_col` are terminal display columns, not byte or char
@@ -39,7 +41,7 @@ impl CursorLine {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_CURSOR_LINE_WIDTH));
         self
     }
 
@@ -104,13 +106,13 @@ impl CursorLine {
         let (before, cursor, mut after) = if self.cursor_visible() {
             let rel_col = self.cursor_col.saturating_sub(self.scroll_col);
             let before = slice_visible_cols(&window, 0, rel_col);
-            let cursor = slice_visible_cols(&window, rel_col, rel_col + 1);
+            let cursor = slice_visible_cols(&window, rel_col, rel_col.saturating_add(1));
             let cursor = if cursor.is_empty() {
                 " ".to_string()
             } else {
                 cursor
             };
-            let after = slice_visible_cols(&window, rel_col + 1, usize::MAX);
+            let after = slice_visible_cols(&window, rel_col.saturating_add(1), usize::MAX);
             (before, Some(cursor), after)
         } else {
             (window, None, String::new())
@@ -236,6 +238,25 @@ mod tests {
 
         assert_eq!(visible_len(&line), 4);
         assert_eq!(strip_ansi(&line), "x   ");
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let line = CursorLine::new("x")
+            .cursor_col(1)
+            .width(usize::MAX)
+            .fill_width(true);
+        let rendered = line.view();
+
+        assert_eq!(line.width, Some(MAX_CURSOR_LINE_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_CURSOR_LINE_WIDTH);
+    }
+
+    #[test]
+    fn oversized_cursor_column_does_not_overflow() {
+        let line = CursorLine::new("abc").cursor_col(usize::MAX).view();
+
+        assert_eq!(strip_ansi(&line), "abc ");
     }
 
     #[test]

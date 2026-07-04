@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, strip_ansi, visible_len, Color, Style};
 
 const MAX_GUTTER_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_GUTTER_BLOCK_WIDTH: usize = u16::MAX as usize;
 
 /// Transcript-style block with a marker on the first row and aligned continuation rows.
 ///
@@ -71,7 +72,7 @@ impl GutterBlock {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_GUTTER_BLOCK_WIDTH));
         self
     }
 
@@ -317,6 +318,15 @@ mod tests {
             panic!("expected margin text");
         };
         assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = GutterBlock::new("hello").width(usize::MAX);
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_GUTTER_BLOCK_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_GUTTER_BLOCK_WIDTH);
     }
 
     #[test]
