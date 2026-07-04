@@ -163,7 +163,10 @@ impl FrameAnimation {
 
     /// Get the current frame content.
     pub fn frame(&self) -> &str {
-        &self.frames[self.current]
+        self.frames
+            .get(self.current)
+            .map(String::as_str)
+            .unwrap_or("")
     }
 
     /// Get the current frame index.
@@ -310,6 +313,22 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         anim.tick();
         assert_eq!(anim.frame(), "y");
+    }
+
+    #[test]
+    fn frame_animation_empty_frames_do_not_panic() {
+        let mut anim = FrameAnimation::new(Vec::<&str>::new(), Duration::from_millis(1));
+        assert_eq!(anim.frame(), "");
+        assert_eq!(anim.index(), 0);
+        assert!(anim.is_active());
+
+        anim.tick();
+        anim.stop();
+        anim.start();
+        anim.reset();
+
+        assert_eq!(anim.frame(), "");
+        assert_eq!(anim.index(), 0);
     }
 
     #[test]
