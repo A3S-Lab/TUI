@@ -526,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn paint_hidden_overflow_drops_wide_glyph_crossing_clip_edge() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(3.0))
+                .height(Dimension::Points(1.0))
+                .overflow(Overflow::Hidden)
+                .child(Element::Text(
+                    TextElement::new("ab界").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 5, 1);
+
+        assert_eq!(grid.render_to_string(), "ab   ");
+    }
+
+    #[test]
+    fn clip_visible_cols_drops_wide_glyphs_split_by_clip_edges() {
+        assert_eq!(clip_visible_cols("ab界cd", 0, 4), "ab界");
+        assert_eq!(clip_visible_cols("ab界cd", 0, 3), "ab");
+        assert_eq!(clip_visible_cols("ab界cd", 3, 3), "cd");
+    }
+
+    #[test]
     fn paint_hidden_overflow_clips_child_rows() {
         let el: Element<()> = Element::Box(
             BoxElement::new()
