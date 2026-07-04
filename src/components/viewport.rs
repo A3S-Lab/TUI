@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
-use crate::style::{slice_visible_cols, strip_ansi, truncate_visible, visible_len, Style};
+use crate::style::{
+    next_display_cell_boundary, slice_visible_cols, strip_ansi, truncate_visible, visible_len,
+    Style,
+};
 
 pub struct Viewport {
     content: String,
@@ -410,29 +413,38 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     let mut current_width = 0;
     let mut in_escape = false;
+    let mut index = 0usize;
 
-    for c in s.chars() {
+    while index < s.len() {
+        let c = s[index..].chars().next().unwrap_or_default();
         if c == '\x1b' {
             in_escape = true;
             current.push(c);
+            index += c.len_utf8();
             continue;
         }
         if in_escape {
             current.push(c);
+            index += c.len_utf8();
             if c.is_ascii_alphabetic() {
                 in_escape = false;
             }
             continue;
         }
 
-        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
+        let cell = &s[index..end];
+        index = end;
+
         if cw > width {
             if current_width > 0 {
                 lines.push(current);
                 current = pad.clone();
                 current_width = indent;
             }
-            let clipped = truncate_visible(&c.to_string(), width.saturating_sub(current_width));
+            let clipped = truncate_visible(cell, width.saturating_sub(current_width));
             if !clipped.is_empty() {
                 current.push_str(&clipped);
                 current_width += visible_len(&clipped);
@@ -444,7 +456,7 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
             current = pad.clone();
             current_width = indent;
         }
-        current.push(c);
+        current.push_str(cell);
         current_width += cw;
     }
 
@@ -536,6 +548,22 @@ mod tests {
         assert!(rows.iter().all(|row| visible_len(row) <= 1));
         assert_eq!(rows[0], "…");
         assert_eq!(rows[1], "…");
+    }
+
+    #[test]
+    fn wrap_line_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_line("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_line_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_line("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
     }
 
     #[test]
