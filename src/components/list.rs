@@ -82,9 +82,9 @@ impl<T: std::fmt::Display> List<T> {
     where
         F: Fn(&T, bool) -> String,
     {
-        let end = (self.offset + self.height).min(self.items.len());
+        let (start, end) = self.visible_range();
         let mut lines = Vec::new();
-        for i in self.offset..end {
+        for i in start..end {
             let selected = i == self.cursor;
             lines.push(render_item(&self.items[i], selected));
         }
@@ -93,8 +93,8 @@ impl<T: std::fmt::Display> List<T> {
 
     /// Render as an Element tree. Each item is displayed with a cursor indicator.
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let end = (self.offset + self.height).min(self.items.len());
-        let children: Vec<Element<Msg>> = (self.offset..end)
+        let (start, end) = self.visible_range();
+        let children: Vec<Element<Msg>> = (start..end)
             .map(|i| {
                 let selected = i == self.cursor;
                 let prefix = if selected { "▸ " } else { "  " };
@@ -115,11 +115,26 @@ impl<T: std::fmt::Display> List<T> {
     }
 
     fn adjust_offset(&mut self) {
+        if self.items.is_empty() || self.height == 0 {
+            self.offset = 0;
+            return;
+        }
+
         if self.cursor < self.offset {
             self.offset = self.cursor;
         } else if self.cursor >= self.offset + self.height {
             self.offset = self.cursor - self.height + 1;
         }
+    }
+
+    fn visible_range(&self) -> (usize, usize) {
+        if self.height == 0 || self.items.is_empty() {
+            return (0, 0);
+        }
+
+        let start = self.offset.min(self.items.len());
+        let end = start.saturating_add(self.height).min(self.items.len());
+        (start, end)
     }
 }
 
@@ -183,6 +198,24 @@ mod tests {
         list.update(ListMsg::Down);
         assert_eq!(list.selected_index(), 3);
         assert!(list.offset > 0);
+    }
+
+    #[test]
+    fn zero_height_keeps_offset_at_origin() {
+        let mut list = List::new(vec!["a", "b", "c"], 0);
+
+        list.update(ListMsg::Down);
+        list.update(ListMsg::PageDown);
+        list.update(ListMsg::End);
+
+        assert_eq!(list.selected_index(), 2);
+        assert_eq!(list.offset, 0);
+        assert_eq!(list.view(|item, selected| format!("{selected}:{item}")), "");
+
+        let Element::Box(box_el) = list.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert!(box_el.children.is_empty());
     }
 
     #[test]
