@@ -186,8 +186,16 @@ fn split_window_at_cursor(window: &str, cursor_col: usize) -> (String, String, S
 
         let next_col = col.saturating_add(width);
         if cursor_col < next_col {
-            let after_index = index + ch.len_utf8();
-            return (before, ch.to_string(), window[after_index..].to_string());
+            let mut cursor = ch.to_string();
+            let mut after_index = index + ch.len_utf8();
+            for next in window[after_index..].chars() {
+                if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                    break;
+                }
+                cursor.push(next);
+                after_index += next.len_utf8();
+            }
+            return (before, cursor, window[after_index..].to_string());
         }
 
         before.push(ch);
@@ -241,6 +249,14 @@ mod tests {
 
         assert_eq!(strip_ansi(&line), "你好");
         assert!(line.contains("\x1b[7m你\x1b[0m"));
+    }
+
+    #[test]
+    fn cursor_styles_following_zero_width_marks_with_base_glyph() {
+        let line = CursorLine::new("e\u{301}x").cursor_col(0).view();
+
+        assert_eq!(strip_ansi(&line), "e\u{301}x");
+        assert!(line.contains("\x1b[7me\u{301}\x1b[0mx"));
     }
 
     #[test]
