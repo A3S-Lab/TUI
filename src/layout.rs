@@ -62,8 +62,11 @@ impl Layout {
                     remaining = remaining.saturating_sub(sizes[i]);
                 }
                 Constraint::Percentage(p) => {
-                    let s = (total as u32 * *p as u32 / 100) as u16;
-                    sizes[i] = s.min(remaining);
+                    let s = (total as usize)
+                        .saturating_mul(*p as usize)
+                        .saturating_div(100)
+                        .min(remaining as usize) as u16;
+                    sizes[i] = s;
                     remaining = remaining.saturating_sub(sizes[i]);
                 }
                 Constraint::Min(n) => {
@@ -82,10 +85,12 @@ impl Layout {
         }
 
         if !fill_indices.is_empty() {
-            let share = remaining / fill_indices.len() as u16;
-            let extra = remaining % fill_indices.len() as u16;
+            let fill_count = fill_indices.len();
+            let share = remaining as usize / fill_count;
+            let extra = remaining as usize % fill_count;
             for (j, &idx) in fill_indices.iter().enumerate() {
-                sizes[idx] += share + if j == 0 { extra } else { 0 };
+                let add = share + if j == 0 { extra } else { 0 };
+                sizes[idx] = sizes[idx].saturating_add(add as u16);
             }
         }
 
@@ -212,6 +217,16 @@ mod tests {
     }
 
     #[test]
+    fn oversized_percentage_clamps_to_remaining_space() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Percentage(u16::MAX))
+            .item("B", Constraint::Fill);
+        let sizes = layout.resolve_sizes(u16::MAX);
+
+        assert_eq!(sizes, vec![u16::MAX, 0]);
+    }
+
+    #[test]
     fn fill_distributes_remaining() {
         let layout = Layout::horizontal()
             .item("A", Constraint::Fixed(20))
@@ -231,6 +246,18 @@ mod tests {
         let sizes = layout.resolve_sizes(80);
         assert_eq!(sizes[0], 40);
         assert_eq!(sizes[1], 40);
+    }
+
+    #[test]
+    fn many_fills_do_not_overflow_share_count() {
+        let layout = (0..u16::MAX as usize + 1).fold(Layout::horizontal(), |layout, _| {
+            layout.item("", Constraint::Fill)
+        });
+        let sizes = layout.resolve_sizes(3);
+
+        assert_eq!(sizes.iter().copied().map(u32::from).sum::<u32>(), 3);
+        assert_eq!(sizes[0], 3);
+        assert!(sizes[1..].iter().all(|size| *size == 0));
     }
 
     #[test]
