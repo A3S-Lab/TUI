@@ -84,13 +84,11 @@ impl MultiSelect {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.cursor = self.cursor.saturating_sub(1);
+                self.cursor = self.cursor.saturating_sub(1).min(self.max_cursor());
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < self.items.len() {
-                    self.cursor += 1;
-                }
+                self.cursor = self.cursor.saturating_add(1).min(self.max_cursor());
                 None
             }
             KeyCode::Char(' ') => self.toggle_index(self.cursor),
@@ -112,6 +110,10 @@ impl MultiSelect {
         let checked = self.checked.get_mut(index)?;
         *checked = !*checked;
         Some(MultiSelectMsg::Toggle(index))
+    }
+
+    fn max_cursor(&self) -> usize {
+        self.items.len().saturating_sub(1)
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -363,6 +365,19 @@ mod tests {
         ms.handle_key(&key(KeyCode::Down));
         ms.handle_key(&key(KeyCode::Down));
         assert_eq!(ms.cursor, 1);
+    }
+
+    #[test]
+    fn stale_cursor_navigation_clamps_to_items() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]);
+        ms.cursor = usize::MAX;
+
+        ms.handle_key(&key(KeyCode::Down));
+        assert_eq!(ms.cursor(), 1);
+
+        ms.cursor = usize::MAX;
+        ms.handle_key(&key(KeyCode::Up));
+        assert_eq!(ms.cursor(), 1);
     }
 
     #[test]

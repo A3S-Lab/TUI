@@ -28,7 +28,7 @@ impl Select {
     }
 
     pub fn with_selected(mut self, selected: usize) -> Self {
-        self.cursor = selected.min(self.items.len().saturating_sub(1));
+        self.cursor = selected.min(self.max_cursor());
         self
     }
 
@@ -67,13 +67,11 @@ impl Select {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.cursor = self.cursor.saturating_sub(1);
+                self.cursor = self.cursor.saturating_sub(1).min(self.max_cursor());
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < self.items.len() {
-                    self.cursor += 1;
-                }
+                self.cursor = self.cursor.saturating_add(1).min(self.max_cursor());
                 None
             }
             KeyCode::Enter => self.selected_msg(),
@@ -187,6 +185,10 @@ impl Select {
             .cloned()
             .map(|item| SelectMsg::Selected(self.cursor, item))
     }
+
+    fn max_cursor(&self) -> usize {
+        self.items.len().saturating_sub(1)
+    }
 }
 
 fn number_shortcut_index(c: char) -> Option<usize> {
@@ -267,6 +269,19 @@ mod tests {
         assert_eq!(select.selected_index(), 0);
         select.handle_key(&key(KeyCode::Down));
         select.handle_key(&key(KeyCode::Down));
+        assert_eq!(select.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_cursor_navigation_clamps_to_items() {
+        let mut select = Select::new(vec!["a", "b"]);
+        select.cursor = usize::MAX;
+
+        select.handle_key(&key(KeyCode::Down));
+        assert_eq!(select.selected_index(), 1);
+
+        select.cursor = usize::MAX;
+        select.handle_key(&key(KeyCode::Up));
         assert_eq!(select.selected_index(), 1);
     }
 
