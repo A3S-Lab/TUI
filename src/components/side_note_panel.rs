@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, wrap_words, Color, Style};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, truncate_visible, visible_len,
+    wrap_words, Color, Style,
+};
 
 const MAX_SIDE_NOTE_PANEL_BODY_LINES: usize = u16::MAX as usize;
 const MAX_SIDE_NOTE_PANEL_INDENT: usize = u16::MAX as usize;
@@ -237,7 +240,7 @@ impl SideNotePanel {
             .saturating_sub(visible_len(&continuation_prefix))
             .max(1);
         let mut rows = Vec::new();
-        for line in text.lines() {
+        for line in split_nonempty_lines_preserving_trailing_blank(text) {
             let wrapped = wrap_words(line, first_width);
             if wrapped.is_empty() {
                 rows.push(first_prefix.clone());
@@ -326,6 +329,23 @@ mod tests {
         assert!(plain.contains("one"));
         assert!(plain.contains("two"));
         assert!(!plain.contains("three"));
+    }
+
+    #[test]
+    fn answer_preserves_trailing_blank_row() {
+        let panel = SideNotePanel::new("note").answer("one\n");
+        let Element::Box(column) = panel.element::<()>(24) else {
+            panic!("expected column element");
+        };
+        let Element::Text(answer) = &column.children[1] else {
+            panic!("expected answer row");
+        };
+        let Element::Text(blank) = &column.children[2] else {
+            panic!("expected trailing blank answer row");
+        };
+
+        assert_eq!(answer.content, "  one");
+        assert_eq!(blank.content, "  ");
     }
 
     #[test]
