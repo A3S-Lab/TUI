@@ -105,7 +105,7 @@ impl Markdown {
                 let bottom = border_style.render(&code_block_footer(self.width));
 
                 output.push(top);
-                for line in highlighted.lines() {
+                for line in split_lines_preserving_trailing_blank(&highlighted) {
                     output.push(code_block_body_line(line, self.width));
                 }
                 output.push(bottom);
@@ -379,7 +379,7 @@ impl Markdown {
         let mut h = HighlightLines::new(syntax, theme);
         let mut output = Vec::new();
 
-        for line in code.lines() {
+        for line in split_lines_preserving_trailing_blank(code) {
             let ranges = h.highlight_line(line, &self.syntax_set).unwrap_or_default();
             let mut styled_line = String::new();
             for (style, text) in ranges {
@@ -839,6 +839,19 @@ mod tests {
         let output = md.render("```\nlet x = 1;\n```");
         let plain = strip_ansi(&output);
         assert!(plain.contains("let x = 1"));
+    }
+
+    #[test]
+    fn render_code_block_preserves_trailing_blank_body_line() {
+        let md = Markdown::new();
+        let output = md.render("```rust\nlet x = 1;\n```");
+        let plain = strip_ansi(&output);
+        let rows = plain.lines().collect::<Vec<_>>();
+
+        assert!(rows[0].starts_with("┌─ rust"));
+        assert_eq!(rows[1], "│ let x = 1;");
+        assert_eq!(rows[2], "│ ");
+        assert!(rows[3].starts_with("└"));
     }
 
     #[test]
