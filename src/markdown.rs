@@ -8,7 +8,7 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
-use crate::style::{visible_len, Color, Style};
+use crate::style::{truncate_visible, visible_len, Color, Style};
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
 
@@ -87,11 +87,12 @@ impl Markdown {
                 let highlighted = self.highlight_code(&code, &lang);
 
                 let border_style = Style::new().fg(Color::BrightBlack);
-                let top = border_style.render(&format!(
-                    "┌─ {} {}",
-                    if lang.is_empty() { "code" } else { &lang },
-                    "─".repeat(self.width.saturating_sub(lang.len() + 5))
-                ));
+                let label = if lang.is_empty() {
+                    "code"
+                } else {
+                    lang.as_str()
+                };
+                let top = border_style.render(&code_block_header(label, self.width));
                 let bottom =
                     border_style.render(&format!("└{}", "─".repeat(self.width.saturating_sub(1))));
 
@@ -390,6 +391,23 @@ fn style_to_ansi(style: &SynStyle, text: &str) -> String {
     format!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text)
 }
 
+fn code_block_header(label: &str, width: usize) -> String {
+    match width {
+        0 => String::new(),
+        1 => "┌".to_string(),
+        2 => "┌─".to_string(),
+        3 => "┌─ ".to_string(),
+        _ => {
+            let label = truncate_visible(label, width - 4);
+            let prefix = format!("┌─ {label} ");
+            format!(
+                "{prefix}{}",
+                "─".repeat(width.saturating_sub(visible_len(&prefix)))
+            )
+        }
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -448,7 +466,7 @@ impl Markdown {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::strip_ansi;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn render_plain_text() {
@@ -472,6 +490,24 @@ mod tests {
         let output = md.render("```\nlet x = 1;\n```");
         let plain = strip_ansi(&output);
         assert!(plain.contains("let x = 1"));
+    }
+
+    #[test]
+    fn code_block_header_fits_width_without_language() {
+        let md = Markdown::new().with_width(12);
+        let output = md.render("```\ntext\n```");
+        let top = output.lines().next().unwrap();
+
+        assert_eq!(visible_len(top), 12);
+    }
+
+    #[test]
+    fn code_block_header_uses_language_display_width() {
+        let md = Markdown::new().with_width(12);
+        let output = md.render("```文件\ntext\n```");
+        let top = output.lines().next().unwrap();
+
+        assert_eq!(visible_len(top), 12);
     }
 
     #[test]
