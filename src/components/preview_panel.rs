@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, strip_ansi, truncate_visible,
+    visible_len, Color, Style,
+};
 use crossterm::event::KeyCode;
 
 const MAX_PREVIEW_PANEL_INDENT: usize = u16::MAX as usize;
@@ -184,7 +187,10 @@ impl PreviewPanel {
     }
 
     pub fn preview_text(mut self, text: impl AsRef<str>) -> Self {
-        self.preview_lines = text.as_ref().lines().map(str::to_string).collect();
+        self.preview_lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self
     }
 
@@ -678,6 +684,20 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 48, "{line:?}");
         }
+    }
+
+    #[test]
+    fn preview_text_preserves_trailing_blank_line() {
+        let panel = PreviewPanel::new("Theme").preview_text("sample\n");
+
+        assert_eq!(panel.preview_lines_value(), ["sample", ""]);
+    }
+
+    #[test]
+    fn empty_preview_text_keeps_preview_empty() {
+        let panel = PreviewPanel::new("Theme").preview_text("");
+
+        assert!(panel.preview_lines_value().is_empty());
     }
 
     #[test]

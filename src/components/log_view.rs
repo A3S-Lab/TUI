@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, Color, Style};
+use crate::style::{fit_visible, split_nonempty_lines_preserving_trailing_blank, Color, Style};
 
 /// Current display state for a [`LogView`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,7 +87,10 @@ impl LogView {
     }
 
     pub fn text(mut self, text: impl AsRef<str>) -> Self {
-        self.lines = text.as_ref().lines().map(str::to_string).collect();
+        self.lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self.clamp_scroll();
         self
     }
@@ -397,6 +400,24 @@ mod tests {
         assert!(!plain.contains("one"));
         assert!(plain.contains("two"));
         assert_eq!(rendered.lines().count(), 4);
+    }
+
+    #[test]
+    fn text_preserves_trailing_blank_log_line() {
+        let log = LogView::without_title().text("one\n");
+
+        assert_eq!(log.lines_value(), ["one", ""]);
+
+        let plain = strip_ansi(&log.view(8, 2));
+        let rows = plain.split('\n').collect::<Vec<_>>();
+        assert_eq!(rows, vec!["one     ", "        "]);
+    }
+
+    #[test]
+    fn empty_text_keeps_log_empty() {
+        let log = LogView::without_title().text("");
+
+        assert!(log.lines_value().is_empty());
     }
 
     #[test]

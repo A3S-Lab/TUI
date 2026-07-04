@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, truncate_visible, visible_len,
+    Color, Style,
+};
 
 const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
 const MAX_ACTIVITY_BLOCK_OUTPUT_LINES: usize = u16::MAX as usize;
@@ -67,7 +70,10 @@ impl ActivityBlock {
     }
 
     pub fn text(mut self, text: impl AsRef<str>) -> Self {
-        self.lines = text.as_ref().lines().map(str::to_string).collect();
+        self.lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self
     }
 
@@ -354,6 +360,27 @@ mod tests {
         assert!(rows[2].starts_with("    │ three"));
         assert!(rendered.lines().all(|line| visible_len(line) == 32));
         assert!(rendered.contains("\x1b[1;33m•\x1b[0m"));
+    }
+
+    #[test]
+    fn text_preserves_trailing_blank_output_line() {
+        let block = ActivityBlock::new("Running")
+            .show_ellipsis(false)
+            .text("done\n");
+
+        assert_eq!(block.lines_value(), ["done", ""]);
+
+        let plain = strip_ansi(&block.view());
+        let rows = plain.split('\n').collect::<Vec<_>>();
+        assert_eq!(rows[1], "    │ done");
+        assert_eq!(rows[2], "    │ ");
+    }
+
+    #[test]
+    fn empty_text_keeps_output_empty() {
+        let block = ActivityBlock::new("Running").text("");
+
+        assert!(block.lines_value().is_empty());
     }
 
     #[test]

@@ -676,6 +676,15 @@ pub(crate) fn split_lines_preserving_trailing_blank(text: &str) -> Vec<&str> {
     text.split('\n').collect()
 }
 
+/// Split non-empty text rows while retaining a final empty row from a trailing newline.
+pub(crate) fn split_nonempty_lines_preserving_trailing_blank(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        split_lines_preserving_trailing_blank(text)
+    }
+}
+
 /// Wrap plain text on whitespace and drop blank input lines.
 pub fn wrap_words_compact(text: &str, width: usize) -> Vec<String> {
     wrap_words_inner(text, width, true)
@@ -966,6 +975,18 @@ mod tests {
             vec!["alpha", ""]
         );
         assert_eq!(split_lines_preserving_trailing_blank(""), vec![""]);
+    }
+
+    #[test]
+    fn split_nonempty_lines_preserves_trailing_blank_line() {
+        assert_eq!(
+            split_nonempty_lines_preserving_trailing_blank(""),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            split_nonempty_lines_preserving_trailing_blank("alpha\n"),
+            vec!["alpha", ""]
+        );
     }
 
     #[test]
