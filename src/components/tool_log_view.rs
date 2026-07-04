@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, Color, Style};
 
+const MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD: usize = u16::MAX as usize;
+
 /// One completed command/tool record in a [`ToolLogView`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolLogRecord {
@@ -155,7 +157,8 @@ impl ToolLogView {
     }
 
     pub fn max_output_lines_per_record(mut self, max: usize) -> Self {
-        self.max_output_lines_per_record = Some(max.max(1));
+        self.max_output_lines_per_record =
+            Some(max.max(1).min(MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD));
         self
     }
 
@@ -545,6 +548,21 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 32, "{line:?}");
         }
+    }
+
+    #[test]
+    fn oversized_output_line_limit_is_clamped() {
+        let view = ToolLogView::new()
+            .record(ToolLogRecord::ok("test").output("one\ntwo"))
+            .max_output_lines_per_record(usize::MAX);
+        let rendered = view.view(24, 4);
+
+        assert_eq!(
+            view.max_output_lines_per_record,
+            Some(MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD)
+        );
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+        assert_eq!(view.plain_rows().len(), 4);
     }
 
     #[test]
