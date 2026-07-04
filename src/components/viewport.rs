@@ -213,11 +213,7 @@ impl Viewport {
 
     pub fn view(&self) -> String {
         let h = self.height as usize;
-        // Clamp the offset: after a resize re-wraps to fewer lines, a stale
-        // offset would slice past the end and blank the whole transcript.
-        let max_off = self.lines.len().saturating_sub(h);
-        let offset = self.offset.min(max_off);
-        let end = (offset + h).min(self.lines.len());
+        let (offset, end) = self.visible_range();
         let visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
 
         let mut result = visible.join("\n");
@@ -245,14 +241,14 @@ impl Viewport {
     /// Render visible lines as an Element tree.
     pub fn element<Msg>(&self) -> Element<Msg> {
         let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
+        let (offset, end) = self.visible_range();
 
-        let mut children: Vec<Element<Msg>> = self.lines[self.offset..end]
+        let mut children: Vec<Element<Msg>> = self.lines[offset..end]
             .iter()
             .map(|line| Element::Text(TextElement::new(line.as_str())))
             .collect();
 
-        let visible_count = end - self.offset;
+        let visible_count = end - offset;
         for _ in visible_count..h {
             children.push(Element::Text(TextElement::new("")));
         }
@@ -266,6 +262,17 @@ impl Viewport {
 
     fn max_offset(&self) -> usize {
         self.lines.len().saturating_sub(self.height as usize)
+    }
+
+    fn visible_range(&self) -> (usize, usize) {
+        let h = self.height as usize;
+        // Clamp the offset: after a resize re-wraps to fewer lines, a stale
+        // offset must not slice past the end and blank or panic in either
+        // string or Element rendering.
+        let max_off = self.lines.len().saturating_sub(h);
+        let offset = self.offset.min(max_off);
+        let end = offset.saturating_add(h).min(self.lines.len());
+        (offset, end)
     }
 
     fn wrap_content(&self, content: &str) -> Vec<String> {
@@ -456,6 +463,14 @@ mod tests {
         vp.set_content("only\ntwo"); // now far fewer lines
         let view = vp.view();
         assert!(view.contains("only"), "clamped offset still shows content");
+
+        let Element::Box(box_el) = vp.element::<()>() else {
+            panic!("expected viewport element box");
+        };
+        let Element::Text(first) = &box_el.children[0] else {
+            panic!("expected first rendered line");
+        };
+        assert_eq!(first.content, "only");
     }
 
     #[test]
