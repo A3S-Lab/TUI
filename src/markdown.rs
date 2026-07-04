@@ -341,11 +341,14 @@ impl Markdown {
             .find_syntax_by_token(lang)
             .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
-        let theme = self
+        let Some(theme) = self
             .theme_set
             .themes
             .get(&self.theme_name)
-            .unwrap_or_else(|| self.theme_set.themes.values().next().unwrap());
+            .or_else(|| self.theme_set.themes.values().next())
+        else {
+            return code.to_string();
+        };
 
         let mut h = HighlightLines::new(syntax, theme);
         let mut output = Vec::new();
@@ -466,6 +469,21 @@ mod tests {
         let md = Markdown::new();
         let output = md.render("```\nlet x = 1;\n```");
         let plain = strip_ansi(&output);
+        assert!(plain.contains("let x = 1"));
+    }
+
+    #[test]
+    fn render_code_block_without_themes_falls_back_to_plain_text() {
+        let md = Markdown {
+            width: 80,
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::new(),
+            theme_name: "missing-theme".to_string(),
+        };
+
+        let output = md.render("```rust\nlet x = 1;\n```");
+        let plain = strip_ansi(&output);
+
         assert!(plain.contains("let x = 1"));
     }
 
