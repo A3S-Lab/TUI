@@ -160,7 +160,7 @@ impl TextInput {
                 out.push(ch);
             }
         }
-        if self.cursor == self.value.len() && self.focused {
+        if self.cursor == display_chars.len() && self.focused {
             out.push_str("\x1b[7m \x1b[0m");
         }
         out
@@ -186,7 +186,7 @@ impl TextInput {
                 display.push(ch);
             }
         }
-        if self.cursor == self.value.len() && self.focused {
+        if self.cursor == display_chars.len() && self.focused {
             display.push_str("\x1b[7m \x1b[0m");
         }
 
@@ -277,6 +277,19 @@ mod tests {
         input.handle_key(&key(KeyCode::Delete));
 
         assert_eq!(input.value(), "你bc");
+    }
+
+    #[test]
+    fn multibyte_end_cursor_renders_after_value() {
+        let mut input = TextInput::new();
+        input.set_value("你好");
+
+        assert!(input.view().ends_with("\x1b[7m \x1b[0m"));
+
+        let Element::Text(text) = input.element::<()>() else {
+            panic!("expected text element");
+        };
+        assert!(text.content.ends_with("\x1b[7m \x1b[0m"));
     }
 
     #[test]

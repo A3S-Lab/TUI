@@ -66,7 +66,7 @@ impl Textarea {
 
     fn fit_height(&mut self) {
         if let Some(max) = self.auto_grow_max {
-            let n = self.lines.len() as u16;
+            let n = self.lines.len().min(u16::MAX as usize) as u16;
             self.height = n.clamp(1, max);
             // The box grew to fit every line, so the internal scroll offset (set
             // while the height was smaller, to follow the cursor) must reset —
@@ -123,7 +123,11 @@ impl Textarea {
     }
 
     pub fn total_chars(&self) -> usize {
-        self.lines.iter().map(|l| l.chars().count()).sum::<usize>() + self.lines.len() - 1
+        self.lines
+            .iter()
+            .map(|line| line.chars().count())
+            .fold(0usize, usize::saturating_add)
+            .saturating_add(self.lines.len().saturating_sub(1))
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TextareaMsg> {
@@ -136,6 +140,9 @@ impl Textarea {
                 Some(TextareaMsg::Submit(self.value()))
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
@@ -144,10 +151,16 @@ impl Textarea {
             (KeyCode::Enter, m)
                 if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
             {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
             (KeyCode::Char('j'), m) if m.contains(KeyModifiers::CONTROL) => {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
@@ -165,10 +178,8 @@ impl Textarea {
                 Some(TextareaMsg::Changed(self.value()))
             }
             (KeyCode::Char(c), _) => {
-                if let Some(limit) = self.char_limit {
-                    if self.total_chars() >= limit {
-                        return None;
-                    }
+                if !self.can_insert_more() {
+                    return None;
                 }
                 self.insert_char(c);
                 Some(TextareaMsg::Changed(self.value()))
@@ -275,7 +286,8 @@ impl Textarea {
     /// Display column of the insertion point relative to the visible window —
     /// what a host needs to place the real terminal cursor.
     pub fn cursor_display_col(&self) -> usize {
-        self.cursor_display_col_abs() - self.scroll_start()
+        self.cursor_display_col_abs()
+            .saturating_sub(self.scroll_start())
     }
 
     /// The cursor's row within the visible window (for multi-line input — the
@@ -327,11 +339,26 @@ impl Textarea {
     pub fn insert_str(&mut self, text: &str) {
         for ch in text.chars() {
             match ch {
-                '\n' => self.insert_newline(),
                 '\r' => {} // drop CR so CRLF pastes don't double-break
-                _ => self.insert_char(ch),
+                '\n' => {
+                    if !self.can_insert_more() {
+                        break;
+                    }
+                    self.insert_newline();
+                }
+                _ => {
+                    if !self.can_insert_more() {
+                        break;
+                    }
+                    self.insert_char(ch);
+                }
             }
         }
+    }
+
+    fn can_insert_more(&self) -> bool {
+        self.char_limit
+            .is_none_or(|limit| self.total_chars() < limit)
     }
 
     fn insert_char(&mut self, c: char) {
@@ -430,8 +457,8 @@ impl Textarea {
 
         if self.cursor_row < self.offset {
             self.offset = self.cursor_row;
-        } else if self.cursor_row >= self.offset + h {
-            self.offset = self.cursor_row - h + 1;
+        } else if self.cursor_row >= self.offset.saturating_add(h) {
+            self.offset = self.cursor_row.saturating_sub(h).saturating_add(1);
         }
     }
 
@@ -692,6 +719,40 @@ mod tests {
         ta.handle_key(&key(KeyCode::Char('c')));
         ta.handle_key(&key(KeyCode::Char('d')));
         assert_eq!(ta.value(), "abc");
+    }
+
+    #[test]
+    fn char_limit_counts_newlines() {
+        let mut ta = Textarea::new().with_char_limit(1);
+        ta.handle_key(&key(KeyCode::Char('a')));
+
+        assert!(ta.handle_key(&key(KeyCode::Enter)).is_none());
+
+        assert_eq!(ta.value(), "a");
+        assert_eq!(ta.total_chars(), 1);
+    }
+
+    #[test]
+    fn insert_str_respects_char_limit() {
+        let mut ta = Textarea::new().with_char_limit(5);
+
+        ta.insert_str("ab\ncd\nef");
+
+        assert_eq!(ta.value(), "ab\ncd");
+        assert_eq!(ta.total_chars(), 5);
+    }
+
+    #[test]
+    fn auto_grow_saturates_large_line_counts() {
+        let mut ta = Textarea::new().with_auto_grow(u16::MAX);
+        let text = (0..u16::MAX as usize + 1)
+            .map(|_| "x")
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        ta.set_value(&text);
+
+        assert_eq!(ta.height(), u16::MAX);
     }
 
     #[test]
