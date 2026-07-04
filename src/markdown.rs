@@ -93,8 +93,7 @@ impl Markdown {
                     lang.as_str()
                 };
                 let top = border_style.render(&code_block_header(label, self.width));
-                let bottom =
-                    border_style.render(&format!("└{}", "─".repeat(self.width.saturating_sub(1))));
+                let bottom = border_style.render(&code_block_footer(self.width));
 
                 output.push(top);
                 for line in highlighted.lines() {
@@ -408,6 +407,13 @@ fn code_block_header(label: &str, width: usize) -> String {
     }
 }
 
+fn code_block_footer(width: usize) -> String {
+    match width {
+        0 => String::new(),
+        _ => format!("└{}", "─".repeat(width.saturating_sub(1))),
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -508,6 +514,15 @@ mod tests {
         let top = output.lines().next().unwrap();
 
         assert_eq!(visible_len(top), 12);
+    }
+
+    #[test]
+    fn code_block_footer_respects_zero_width() {
+        let md = Markdown::new().with_width(0);
+        let output = md.render("```\ntext\n```");
+        let footer = output.lines().last().unwrap();
+
+        assert_eq!(visible_len(footer), 0);
     }
 
     #[test]
