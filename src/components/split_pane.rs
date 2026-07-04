@@ -90,7 +90,9 @@ impl SplitPane {
     }
 
     pub fn left_ratio(mut self, ratio: f32) -> Self {
-        self.left_ratio = ratio.clamp(0.1, 0.9);
+        if ratio.is_finite() {
+            self.left_ratio = ratio.clamp(0.1, 0.9);
+        }
         self
     }
 
@@ -385,6 +387,19 @@ mod tests {
     #[test]
     fn ratio_controls_default_left_width() {
         let pane = SplitPane::new(vec!["left"], vec!["right"]).left_ratio(0.5);
+        let rendered = strip_ansi(&pane.view(24, 1));
+        let row = rendered.lines().next().unwrap();
+
+        assert!(row.starts_with("left"));
+        assert!(row.contains("│"));
+        assert_eq!(visible_len(row), 24);
+    }
+
+    #[test]
+    fn ignores_non_finite_left_ratio() {
+        let pane = SplitPane::new(vec!["left"], vec!["right"])
+            .left_ratio(0.5)
+            .left_ratio(f32::NAN);
         let rendered = strip_ansi(&pane.view(24, 1));
         let row = rendered.lines().next().unwrap();
 

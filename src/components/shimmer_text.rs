@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, TextElement};
 use crate::style::{strip_ansi, visible_len, Color, Style};
 
+const MAX_CYCLE_GAP: usize = isize::MAX as usize - 1;
+
 /// Animated text with a soft highlight moving across its glyphs.
 ///
 /// This is useful for activity lines such as "Working..." where a spinner alone
@@ -52,12 +54,14 @@ impl ShimmerText {
     }
 
     pub fn spread(mut self, spread: f32) -> Self {
-        self.spread = spread.max(0.1);
+        if spread.is_finite() {
+            self.spread = spread.max(0.1);
+        }
         self
     }
 
     pub fn cycle_gap(mut self, gap: usize) -> Self {
-        self.cycle_gap = gap;
+        self.cycle_gap = gap.min(MAX_CYCLE_GAP);
         self
     }
 
@@ -67,7 +71,9 @@ impl ShimmerText {
     }
 
     pub fn bold_threshold(mut self, threshold: f32) -> Self {
-        self.bold_threshold = threshold.clamp(0.0, 1.0);
+        if threshold.is_finite() {
+            self.bold_threshold = threshold.clamp(0.0, 1.0);
+        }
         self
     }
 
@@ -120,7 +126,10 @@ impl ShimmerText {
             return Vec::new();
         }
 
-        let span = (chars.len() + self.cycle_gap) as isize;
+        let span = chars
+            .len()
+            .saturating_add(self.cycle_gap)
+            .min(MAX_CYCLE_GAP) as isize;
         let head = (self.phase / self.speed_divisor) as isize % span;
 
         chars
@@ -238,5 +247,24 @@ mod tests {
             }
             _ => panic!("expected row element"),
         }
+    }
+
+    #[test]
+    fn ignores_non_finite_animation_settings() {
+        let shimmer = ShimmerText::new("go")
+            .spread(f32::INFINITY)
+            .bold_threshold(f32::NAN);
+
+        assert_eq!(shimmer.spread, 5.0);
+        assert_eq!(shimmer.bold_threshold, 0.65);
+        assert_eq!(strip_ansi(&shimmer.view()), "go");
+    }
+
+    #[test]
+    fn clamps_oversized_cycle_gap() {
+        let shimmer = ShimmerText::new("go").cycle_gap(usize::MAX);
+
+        assert_eq!(shimmer.cycle_gap, MAX_CYCLE_GAP);
+        assert_eq!(strip_ansi(&shimmer.view()), "go");
     }
 }
