@@ -104,7 +104,11 @@ impl Textarea {
     }
 
     pub fn set_value(&mut self, v: &str) {
-        self.lines = split_value_lines(v);
+        let lines = split_value_lines(v);
+        self.lines = match self.char_limit {
+            Some(limit) => clamp_lines_to_char_limit(lines, limit),
+            None => lines,
+        };
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
         self.fit_height();
@@ -488,6 +492,45 @@ fn split_value_lines(value: &str) -> Vec<String> {
     lines
 }
 
+fn clamp_lines_to_char_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return vec![String::new()];
+    }
+
+    let line_count = lines.len();
+    let mut remaining = limit;
+    let mut out = Vec::new();
+
+    for (index, line) in lines.into_iter().enumerate() {
+        let line_len = line.chars().count();
+        if line_len > remaining {
+            out.push(line.chars().take(remaining).collect());
+            return out;
+        }
+
+        out.push(line);
+        remaining -= line_len;
+
+        let has_next_line = index + 1 < line_count;
+        if has_next_line {
+            if remaining == 0 {
+                return out;
+            }
+            remaining -= 1;
+            if remaining == 0 {
+                out.push(String::new());
+                return out;
+            }
+        }
+    }
+
+    if out.is_empty() {
+        vec![String::new()]
+    } else {
+        out
+    }
+}
+
 impl Default for Textarea {
     fn default() -> Self {
         Self::new()
@@ -774,6 +817,41 @@ mod tests {
 
         assert_eq!(ta.value(), "ab\ncd");
         assert_eq!(ta.total_chars(), 5);
+    }
+
+    #[test]
+    fn set_value_respects_char_limit_with_newlines() {
+        let mut ta = Textarea::new().with_char_limit(5);
+
+        ta.set_value("ab\ncd\nef");
+
+        assert_eq!(ta.value(), "ab\ncd");
+        assert_eq!(ta.total_chars(), 5);
+        assert_eq!(ta.cursor_row, 1);
+        assert_eq!(ta.cursor_col, 2);
+    }
+
+    #[test]
+    fn set_value_respects_char_limit_on_char_boundaries() {
+        let mut ta = Textarea::new().with_char_limit(2);
+
+        ta.set_value("你好abc");
+
+        assert_eq!(ta.value(), "你好");
+        assert_eq!(ta.cursor_row, 0);
+        assert_eq!(ta.cursor_col, 2);
+    }
+
+    #[test]
+    fn set_value_respects_zero_char_limit() {
+        let mut ta = Textarea::new().with_char_limit(0);
+
+        ta.set_value("hello");
+
+        assert_eq!(ta.value(), "");
+        assert_eq!(ta.total_chars(), 0);
+        assert_eq!(ta.cursor_row, 0);
+        assert_eq!(ta.cursor_col, 0);
     }
 
     #[test]
