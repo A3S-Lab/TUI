@@ -3,6 +3,8 @@ use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
+const MAX_PREVIEW_PANEL_INDENT: usize = u16::MAX as usize;
+
 /// One selectable row in a [`PreviewPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewItem {
@@ -205,7 +207,7 @@ impl PreviewPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_PREVIEW_PANEL_INDENT);
         self
     }
 
@@ -438,7 +440,7 @@ impl PreviewPanel {
                     .fg(self.title_color)
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -449,7 +451,7 @@ impl PreviewPanel {
             .filter(|subtitle| !subtitle.is_empty())
         {
             lines.push(Style::new().fg(self.subtitle_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), subtitle),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), subtitle),
                 width,
             )));
         }
@@ -470,7 +472,7 @@ impl PreviewPanel {
             lines.push(self.render_preview_divider(title, width));
         }
 
-        let preview_indent = " ".repeat(self.indent + 2);
+        let preview_indent = " ".repeat(self.preview_indent_for_width(width));
         let preview_width = width.saturating_sub(visible_len(&preview_indent));
         let preview_slots = height.saturating_sub(lines.len() + self.footer_rows());
         for line in self.preview_lines.iter().take(preview_slots) {
@@ -482,7 +484,7 @@ impl PreviewPanel {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -516,7 +518,10 @@ impl PreviewPanel {
         } else {
             " "
         };
-        let prefix = format!("{}{} ", " ".repeat(self.indent), marker);
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(marker, width),
+            None => self.item_prefix_for_element(marker),
+        };
         let mut label = item.label.clone();
         if let Some(description) = item
             .description
@@ -533,7 +538,7 @@ impl PreviewPanel {
     }
 
     fn render_preview_divider(&self, title: &str, width: usize) -> String {
-        let indent = " ".repeat(self.indent);
+        let indent = " ".repeat(self.indent_for_width(width));
         let label = format!("{indent}── {title} ");
         let fill = "─".repeat(width.saturating_sub(visible_len(&label)));
         Style::new()
@@ -599,6 +604,32 @@ impl PreviewPanel {
 
     fn clamp_selection(&mut self) {
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_PREVIEW_PANEL_INDENT)
+    }
+
+    fn preview_indent_for_width(&self, width: usize) -> usize {
+        self.indent
+            .min(MAX_PREVIEW_PANEL_INDENT)
+            .saturating_add(2)
+            .min(width)
+    }
+
+    fn item_prefix_for_width(&self, marker: &str, width: usize) -> String {
+        let tail = truncate_visible(&format!("{marker} "), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        format!("{}{}", " ".repeat(indent), tail)
+    }
+
+    fn item_prefix_for_element(&self, marker: &str) -> String {
+        format!("{}{} ", " ".repeat(self.indent_for_element()), marker)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_PREVIEW_PANEL_INDENT)
     }
 }
 
@@ -725,6 +756,39 @@ mod tests {
     fn zero_size_renders_empty_string() {
         assert_eq!(sample().view(0, 8), "");
         assert_eq!(sample().view(40, 0), "");
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let panel = PreviewPanel::new("Theme")
+            .subtitle("pick")
+            .indent(usize::MAX)
+            .item(PreviewItem::new("Atom").description("default"))
+            .preview_title("preview")
+            .preview_line("let x = 1;")
+            .footer("footer")
+            .fill_height(true);
+        let rendered = panel.view(8, 6);
+        let item = panel.plain_item_line(0, Some(8));
+        let divider = panel.render_preview_divider("preview", 8);
+
+        assert_eq!(panel.indent, MAX_PREVIEW_PANEL_INDENT);
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(panel.preview_indent_for_width(8), 8);
+        assert_eq!(visible_len(&item), 8);
+        assert_eq!(visible_len(&divider), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(item) = &column.children[2] else {
+            panic!("expected item text");
+        };
+        assert_eq!(
+            visible_len(&item.content),
+            MAX_PREVIEW_PANEL_INDENT + visible_len("▸ Atom  default")
+        );
     }
 
     #[test]
