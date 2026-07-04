@@ -68,7 +68,11 @@ impl TextInput {
     }
 
     pub fn set_value(&mut self, v: impl Into<String>) {
-        self.value = v.into();
+        let value = v.into();
+        self.value = match self.char_limit {
+            Some(limit) => value.chars().take(limit).collect(),
+            None => value,
+        };
         self.cursor = Self::char_len(&self.value);
     }
 
@@ -281,6 +285,24 @@ mod tests {
         input.handle_key(&key(KeyCode::Char('a')));
 
         assert_eq!(input.value(), "你好");
+    }
+
+    #[test]
+    fn set_value_honors_char_limit_on_char_boundaries() {
+        let mut input = TextInput::new().with_char_limit(2);
+        input.set_value("你好abc");
+
+        assert_eq!(input.value(), "你好");
+        assert_eq!(input.cursor, 2);
+    }
+
+    #[test]
+    fn set_value_honors_zero_char_limit() {
+        let mut input = TextInput::new().with_char_limit(0);
+        input.set_value("hello");
+
+        assert_eq!(input.value(), "");
+        assert_eq!(input.cursor, 0);
     }
 
     #[test]
