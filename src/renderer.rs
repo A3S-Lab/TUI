@@ -1,3 +1,4 @@
+use crate::style::split_lines_preserving_trailing_blank;
 use crate::terminal::{terminal_row, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
@@ -31,10 +32,10 @@ impl Renderer {
             terminal.draw(view)?;
             self.first_render = false;
         } else {
-            let new_lines: Vec<String> = view.lines().map(|l| l.to_string()).collect();
+            let new_lines: Vec<String> = view_lines(view).into_iter().map(str::to_string).collect();
             self.diff_render(terminal, &new_lines)?;
         }
-        self.last_lines = view.lines().map(|l| l.to_string()).collect();
+        self.last_lines = view_lines(view).into_iter().map(str::to_string).collect();
         self.last_render = Instant::now();
         Ok(())
     }
@@ -50,7 +51,7 @@ impl Renderer {
     }
 
     pub fn is_changed(&self, view: &str) -> bool {
-        let new_lines: Vec<&str> = view.lines().collect();
+        let new_lines = view_lines(view);
         new_lines.len() != self.last_lines.len()
             || new_lines
                 .iter()
@@ -86,6 +87,14 @@ impl Renderer {
     }
 }
 
+fn view_lines(view: &str) -> Vec<&str> {
+    if view.is_empty() {
+        Vec::new()
+    } else {
+        split_lines_preserving_trailing_blank(view)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +107,24 @@ mod tests {
         assert!(!renderer.is_changed("one\ntwo"));
         assert!(renderer.is_changed("one\nthree"));
         assert!(renderer.is_changed("one\ntwo\nthree"));
+    }
+
+    #[test]
+    fn renderer_detects_trailing_blank_view_rows() {
+        let mut renderer = Renderer::new(60);
+        renderer.last_lines = vec!["one".to_string()];
+
+        assert!(renderer.is_changed("one\n"));
+
+        renderer.last_lines = vec!["one".to_string(), String::new()];
+        assert!(!renderer.is_changed("one\n"));
+        assert!(renderer.is_changed("one"));
+    }
+
+    #[test]
+    fn renderer_keeps_empty_view_as_zero_rows() {
+        assert!(view_lines("").is_empty());
+        assert_eq!(view_lines("one\n"), vec!["one", ""]);
     }
 
     #[test]
