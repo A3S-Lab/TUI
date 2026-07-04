@@ -1,5 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, pad_visible, truncate_visible, Color, Style};
+use crate::style::{
+    fit_visible, next_display_cell_boundary, pad_visible, truncate_visible, Color, Style,
+};
 use similar::{ChangeTag, TextDiff};
 
 const MAX_DIFF_VIEW_CONTEXT_LINES: usize = u16::MAX as usize;
@@ -590,28 +592,20 @@ fn wrap_hard(value: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     let mut used = 0usize;
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+    let mut index = 0usize;
+    while let Some((end, cw)) = next_display_cell_boundary(value, index) {
+        let cell = &value[index..end];
+        index = end;
         if cw == 0 {
-            line.push(ch);
+            line.push_str(cell);
             continue;
-        }
-
-        let mut cell = ch.to_string();
-        while let Some(next) = chars.peek().copied() {
-            if unicode_width::UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                break;
-            }
-            cell.push(next);
-            chars.next();
         }
 
         if used > 0 && used + cw > width {
             out.push(std::mem::take(&mut line));
             used = 0;
         }
-        line.push_str(&cell);
+        line.push_str(cell);
         used += cw;
         if used >= width {
             out.push(std::mem::take(&mut line));

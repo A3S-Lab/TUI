@@ -7,10 +7,10 @@ use comrak::{parse_document, Arena, Options};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use unicode_width::UnicodeWidthChar;
 
 use crate::style::{
-    fit_visible, split_lines_preserving_trailing_blank, truncate_visible, visible_len, Color, Style,
+    fit_visible, next_display_cell_boundary, split_lines_preserving_trailing_blank,
+    truncate_visible, visible_len, Color, Style,
 };
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
@@ -554,16 +554,16 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut current_width = 0usize;
-    let mut chars = word.chars().peekable();
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
+    while index < word.len() {
+        let ch = word[index..].chars().next().unwrap_or_default();
+        if ch == '\x1b' && word[index + ch.len_utf8()..].starts_with('[') {
             current.push(ch);
-            if let Some(introducer) = chars.next() {
-                current.push(introducer);
-            }
-            for next in chars.by_ref() {
+            let escape_start = index + ch.len_utf8();
+            for (offset, next) in word[escape_start..].char_indices() {
                 current.push(next);
+                index = escape_start + offset + next.len_utf8();
                 if next.is_ascii_alphabetic() {
                     break;
                 }
@@ -571,19 +571,15 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
             continue;
         }
 
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if ch_width == 0 {
-            current.push(ch);
-            continue;
-        }
+        let Some((end, ch_width)) = next_display_cell_boundary(word, index) else {
+            break;
+        };
+        let cell = &word[index..end];
+        index = end;
 
-        let mut cell = ch.to_string();
-        while let Some(next) = chars.peek().copied() {
-            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                break;
-            }
-            cell.push(next);
-            chars.next();
+        if ch_width == 0 {
+            current.push_str(cell);
+            continue;
         }
 
         if ch_width > width {
@@ -591,14 +587,14 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
                 parts.push(std::mem::take(&mut current));
                 current_width = 0;
             }
-            parts.push(truncate_visible(&cell, width));
+            parts.push(truncate_visible(cell, width));
             continue;
         }
         if current_width > 0 && current_width + ch_width > width {
             parts.push(std::mem::take(&mut current));
             current_width = 0;
         }
-        current.push_str(&cell);
+        current.push_str(cell);
         current_width += ch_width;
         if current_width >= width {
             parts.push(std::mem::take(&mut current));

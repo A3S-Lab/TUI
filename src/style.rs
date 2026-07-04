@@ -636,6 +636,28 @@ pub fn center_visible(s: &str, width: usize) -> String {
     format!("{}{}{}", " ".repeat(left), truncated, " ".repeat(right))
 }
 
+pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(usize, usize)> {
+    if start >= value.len() {
+        return None;
+    }
+
+    let mut chars = value[start..].char_indices();
+    let (_, ch) = chars.next()?;
+    let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let mut end = start + ch.len_utf8();
+
+    if width != 0 {
+        for (offset, next) in chars {
+            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            end = start + offset + next.len_utf8();
+        }
+    }
+
+    Some((end, width))
+}
+
 /// Return the substring spanning display columns `[from, to)`.
 ///
 /// ANSI escape sequences are stripped before slicing. Wide glyphs count by
@@ -649,16 +671,17 @@ pub fn slice_visible_cols(s: &str, from: usize, to: usize) -> String {
     let plain = strip_ansi(s);
     let mut col = 0usize;
     let mut out = String::new();
-    let mut chars = plain.chars().peekable();
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    while let Some((end, width)) = next_display_cell_boundary(&plain, index) {
+        let cell = &plain[index..end];
+        index = end;
         if width == 0 {
             if col >= to {
                 break;
             }
             if col >= from {
-                out.push(ch);
+                out.push_str(cell);
             }
             continue;
         }
@@ -667,17 +690,8 @@ pub fn slice_visible_cols(s: &str, from: usize, to: usize) -> String {
             break;
         }
 
-        let mut cell = ch.to_string();
-        while let Some(next) = chars.peek().copied() {
-            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                break;
-            }
-            cell.push(next);
-            chars.next();
-        }
-
         if col >= from {
-            out.push_str(&cell);
+            out.push_str(cell);
         }
         col = col.saturating_add(width);
     }
@@ -763,34 +777,21 @@ fn split_visible_prefix(value: &str, width: usize) -> (String, String) {
     let mut head = String::new();
     let mut used = 0usize;
     let mut consumed_bytes = 0usize;
-    let mut chars = value.char_indices().peekable();
+    let mut index = 0usize;
 
-    while let Some((idx, ch)) = chars.peek().copied() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    while let Some((end, ch_width)) = next_display_cell_boundary(value, index) {
+        let cell = &value[index..end];
         if ch_width == 0 {
-            chars.next();
-            head.push(ch);
-            consumed_bytes = idx + ch.len_utf8();
+            head.push_str(cell);
+            consumed_bytes = end;
+            index = end;
             continue;
-        }
-
-        let mut preview = chars.clone();
-        preview.next();
-        let mut cell = ch.to_string();
-        let mut cell_end = idx + ch.len_utf8();
-        while let Some((next_idx, next)) = preview.peek().copied() {
-            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                break;
-            }
-            preview.next();
-            cell.push(next);
-            cell_end = next_idx + next.len_utf8();
         }
 
         if ch_width > width {
             if head.is_empty() {
-                head = truncate_visible(&cell, width);
-                consumed_bytes = cell_end;
+                head = truncate_visible(cell, width);
+                consumed_bytes = end;
             }
             break;
         }
@@ -798,9 +799,9 @@ fn split_visible_prefix(value: &str, width: usize) -> (String, String) {
             break;
         }
 
-        chars = preview;
-        head.push_str(&cell);
-        consumed_bytes = cell_end;
+        head.push_str(cell);
+        consumed_bytes = end;
+        index = end;
         used += ch_width;
         if used >= width {
             break;

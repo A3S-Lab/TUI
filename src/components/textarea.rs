@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
-use crate::style::Color;
+use crate::style::{next_display_cell_boundary, Color};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub struct Textarea {
@@ -307,26 +307,18 @@ impl Textarea {
         let mut out = String::new();
         let mut disp = 0usize; // absolute display column scanned
         let mut shown = 0usize; // visible columns emitted
-        let mut chars = line.chars().peekable();
-        while let Some(ch) = chars.next() {
-            let w = Self::char_width(ch);
+        let mut index = 0usize;
+        while let Some((cell_end, w)) = next_display_cell_boundary(line, index) {
+            let cell = &line[index..cell_end];
+            index = cell_end;
             if w == 0 {
                 if disp >= end {
                     break;
                 }
                 if disp >= start {
-                    out.push(ch);
+                    out.push_str(cell);
                 }
                 continue;
-            }
-
-            let mut cell = ch.to_string();
-            while let Some(next) = chars.peek().copied() {
-                if Self::char_width(next) != 0 {
-                    break;
-                }
-                cell.push(next);
-                chars.next();
             }
 
             if disp >= end {
@@ -339,7 +331,7 @@ impl Textarea {
             if shown + w > width {
                 break; // right edge reached
             }
-            out.push_str(&cell);
+            out.push_str(cell);
             disp += w;
             shown += w;
         }
