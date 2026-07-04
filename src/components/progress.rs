@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{Color, Style};
+use crate::style::{fit_visible, Color, Style};
 
 pub struct Progress {
     value: f64,
@@ -25,12 +25,12 @@ impl Progress {
     }
 
     pub fn value(mut self, v: f64) -> Self {
-        self.value = v.clamp(0.0, 1.0);
+        self.value = Self::normalize_value(v);
         self
     }
 
     pub fn set_value(&mut self, v: f64) {
-        self.value = v.clamp(0.0, 1.0);
+        self.value = Self::normalize_value(v);
     }
 
     pub fn width(mut self, w: u16) -> Self {
@@ -54,13 +54,10 @@ impl Progress {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let bar_width = if self.show_percentage {
-            self.width.saturating_sub(5) as usize
-        } else {
-            self.width as usize
-        };
+        let bar_width = self.bar_width();
+        let value = Self::normalize_value(self.value);
 
-        let filled_count = (self.value * bar_width as f64).round() as usize;
+        let filled_count = (value * bar_width as f64).round() as usize;
         let empty_count = bar_width.saturating_sub(filled_count);
 
         let filled_str = self.filled_char.to_string().repeat(filled_count);
@@ -71,8 +68,8 @@ impl Progress {
             Element::Text(TextElement::new(empty_str).fg(self.empty_color)),
         ];
 
-        if self.show_percentage {
-            let pct = format!(" {:3.0}%", self.value * 100.0);
+        if self.show_percentage && self.width > 0 {
+            let pct = fit_visible(&format!(" {:3.0}%", value * 100.0), self.width as usize);
             children.push(Element::Text(TextElement::new(pct)));
         }
 
@@ -84,13 +81,14 @@ impl Progress {
     }
 
     pub fn view(&self) -> String {
-        let bar_width = if self.show_percentage {
-            self.width.saturating_sub(5) as usize
-        } else {
-            self.width as usize
-        };
+        let width = self.width as usize;
+        if width == 0 {
+            return String::new();
+        }
 
-        let filled_count = (self.value * bar_width as f64).round() as usize;
+        let bar_width = self.bar_width();
+        let value = Self::normalize_value(self.value);
+        let filled_count = (value * bar_width as f64).round() as usize;
         let empty_count = bar_width.saturating_sub(filled_count);
 
         let filled = Style::new()
@@ -100,11 +98,28 @@ impl Progress {
             .fg(self.empty_color)
             .render(&self.empty_char.to_string().repeat(empty_count));
 
-        if self.show_percentage {
-            let pct = format!("{:3.0}%", self.value * 100.0);
+        let rendered = if self.show_percentage {
+            let pct = format!("{:3.0}%", value * 100.0);
             format!("{}{} {}", filled, empty, pct)
         } else {
             format!("{}{}", filled, empty)
+        };
+        fit_visible(&rendered, width)
+    }
+
+    fn normalize_value(value: f64) -> f64 {
+        if value.is_finite() {
+            value.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    fn bar_width(&self) -> usize {
+        if self.show_percentage {
+            self.width.saturating_sub(5) as usize
+        } else {
+            self.width as usize
         }
     }
 }
@@ -131,6 +146,8 @@ mod tests {
         assert_eq!(p.value, 1.0);
         let p2 = Progress::new().value(-0.5);
         assert_eq!(p2.value, 0.0);
+        let p3 = Progress::new().value(f64::NAN);
+        assert_eq!(p3.value, 0.0);
     }
 
     #[test]
@@ -138,6 +155,8 @@ mod tests {
         let mut p = Progress::new();
         p.set_value(0.75);
         assert_eq!(p.value, 0.75);
+        p.set_value(f64::INFINITY);
+        assert_eq!(p.value, 0.0);
     }
 
     #[test]
@@ -152,6 +171,24 @@ mod tests {
         let p = Progress::new().value(0.5).show_percentage(false);
         let view = p.view();
         assert!(!view.contains('%'));
+    }
+
+    #[test]
+    fn zero_width_renders_empty() {
+        let p = Progress::new().value(0.5).width(0);
+
+        assert_eq!(p.view(), "");
+        let Element::Box(row) = p.element::<()>() else {
+            panic!("expected progress row");
+        };
+        assert_eq!(row.children.len(), 2);
+    }
+
+    #[test]
+    fn narrow_width_does_not_overflow() {
+        let p = Progress::new().value(0.5).width(3);
+
+        assert_eq!(crate::style::visible_len(&p.view()), 3);
     }
 
     #[test]
