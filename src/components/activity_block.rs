@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_OUTPUT_LINES: usize = u16::MAX as usize;
 const MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN: usize = u16::MAX as usize;
 const MAX_ACTIVITY_BLOCK_WIDTH: usize = u16::MAX as usize;
 
@@ -80,7 +81,7 @@ impl ActivityBlock {
     }
 
     pub fn max_output_lines(mut self, max_output_lines: usize) -> Self {
-        self.max_output_lines = max_output_lines.max(1);
+        self.max_output_lines = max_output_lines.max(1).min(MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
         self
     }
 
@@ -437,6 +438,19 @@ mod tests {
         assert!(rendered
             .lines()
             .all(|line| visible_len(line) == MAX_ACTIVITY_BLOCK_WIDTH));
+    }
+
+    #[test]
+    fn oversized_output_line_limit_is_clamped() {
+        let block = ActivityBlock::new("Running")
+            .max_output_lines(usize::MAX)
+            .width(24)
+            .text("one\ntwo");
+        let rendered = block.view();
+
+        assert_eq!(block.max_output_lines, MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
+        assert_eq!(block.output_tail().len(), 2);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
