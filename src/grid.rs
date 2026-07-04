@@ -294,12 +294,40 @@ impl Grid {
         }
     }
 
+    fn wide_span_bounds_at(&self, row: usize, col: usize) -> (usize, usize) {
+        let Some(row_cells) = self.cells.get(row) else {
+            return (col, col);
+        };
+        if col >= row_cells.len() {
+            return (col, col);
+        }
+
+        let mut start = col;
+        if row_cells[col].ch == WIDE_CONTINUATION {
+            while start > 0 && row_cells[start].ch == WIDE_CONTINUATION {
+                start -= 1;
+            }
+        }
+
+        let width = unicode_width::UnicodeWidthChar::width(row_cells[start].ch).unwrap_or(1);
+        if width <= 1 || start.saturating_add(width) <= col {
+            return (col, col.saturating_add(1).min(row_cells.len()));
+        }
+
+        (start, start.saturating_add(width).min(row_cells.len()))
+    }
+
     pub fn fill_bg(&mut self, x: u16, y: u16, w: u16, h: u16, color: Color) {
         let end_y = y.saturating_add(h).min(self.height);
         let end_x = x.saturating_add(w).min(self.width);
-        for row in y..end_y {
-            for col in x..end_x {
-                self.cells[row as usize][col as usize].bg = Some(color);
+        for row in y as usize..end_y as usize {
+            let mut col = x as usize;
+            while col < end_x as usize {
+                let (span_start, span_end) = self.wide_span_bounds_at(row, col);
+                for target_col in span_start..span_end {
+                    self.cells[row][target_col].bg = Some(color);
+                }
+                col = span_end.max(col.saturating_add(1));
             }
         }
     }
@@ -538,6 +566,19 @@ mod tests {
         assert_eq!(grid.get(1, 1).bg, Some(Color::Red));
         assert_eq!(grid.get(3, 2).bg, Some(Color::Red));
         assert_eq!(grid.get(0, 0).bg, None);
+    }
+
+    #[test]
+    fn grid_fill_bg_styles_wide_span_when_continuation_is_covered() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.fill_bg(1, 0, 1, 1, Color::Blue);
+
+        assert_eq!(grid.get(0, 0).bg, Some(Color::Blue));
+        assert_eq!(grid.get(1, 0).bg, Some(Color::Blue));
+        assert!(grid.render_to_string().contains("\x1b["));
     }
 
     #[test]
