@@ -280,7 +280,9 @@ fn dim_to_taffy(d: Dimension) -> taffy::Dimension {
     match d {
         Dimension::Auto => taffy::Dimension::Auto,
         Dimension::Points(p) => taffy::Dimension::Length(non_negative_finite(p)),
-        Dimension::Percent(p) => taffy::Dimension::Percent(non_negative_finite(p) / 100.0),
+        Dimension::Percent(p) => {
+            taffy::Dimension::Percent(non_negative_finite(p).min(100.0) / 100.0)
+        }
     }
 }
 
@@ -508,6 +510,21 @@ mod tests {
 
         assert_eq!(result.nodes[0].width, 0);
         assert_eq!(result.nodes[0].height, 0);
+    }
+
+    #[test]
+    fn compute_clamps_oversized_percent_dimensions() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .width(Dimension::Percent(250.0))
+                .height(Dimension::Percent(125.0)),
+        );
+
+        let result = engine.compute(&el, 80, 24);
+
+        assert_eq!(result.nodes[0].width, 80);
+        assert_eq!(result.nodes[0].height, 24);
     }
 
     #[test]
