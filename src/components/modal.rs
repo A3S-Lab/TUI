@@ -46,11 +46,15 @@ impl Modal {
 
     pub fn options(mut self, options: Vec<impl Into<String>>) -> Self {
         self.options = options.into_iter().map(|o| o.into()).collect();
+        self.clamp_selected();
         self
     }
 
     pub fn selected(mut self, idx: usize) -> Self {
         self.selected = idx;
+        if !self.options.is_empty() {
+            self.clamp_selected();
+        }
         self
     }
 
@@ -63,26 +67,32 @@ impl Modal {
         match msg {
             ModalMsg::Next => {
                 if !self.options.is_empty() {
-                    self.selected = (self.selected + 1) % self.options.len();
+                    let current = self.selected.min(self.options.len() - 1);
+                    self.selected = (current + 1) % self.options.len();
                 }
                 None
             }
             ModalMsg::Prev => {
                 if !self.options.is_empty() {
-                    self.selected = self
-                        .selected
-                        .checked_sub(1)
-                        .unwrap_or(self.options.len() - 1);
+                    let current = self.selected.min(self.options.len() - 1);
+                    self.selected = current.checked_sub(1).unwrap_or(self.options.len() - 1);
                 }
                 None
             }
-            ModalMsg::Select(idx) => Some(idx),
+            ModalMsg::Select(idx) => {
+                if idx < self.options.len() {
+                    self.selected = idx;
+                    Some(idx)
+                } else {
+                    None
+                }
+            }
             ModalMsg::Cancel => None,
         }
     }
 
     pub fn confirm(&self) -> usize {
-        self.selected
+        self.selected.min(self.options.len().saturating_sub(1))
     }
 
     pub fn view(&self, screen_width: u16, screen_height: u16) -> String {
@@ -158,6 +168,10 @@ impl Modal {
             max_width = max_width.max(visible_len(opt) + 2);
         }
         max_width.max(20)
+    }
+
+    fn clamp_selected(&mut self) {
+        self.selected = self.selected.min(self.options.len().saturating_sub(1));
     }
 }
 
@@ -243,6 +257,7 @@ mod tests {
         let mut modal = Modal::new().options(vec!["X", "Y"]);
         let result = modal.update(ModalMsg::Select(1));
         assert_eq!(result, Some(1));
+        assert_eq!(modal.confirm(), 1);
     }
 
     #[test]
@@ -250,6 +265,37 @@ mod tests {
         let mut modal = Modal::new().options(vec!["X"]);
         let result = modal.update(ModalMsg::Cancel);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn selected_index_is_clamped() {
+        let modal = Modal::new().options(vec!["X", "Y"]).selected(99);
+
+        assert_eq!(modal.confirm(), 1);
+    }
+
+    #[test]
+    fn navigation_normalizes_stale_selection() {
+        let mut modal = Modal::new()
+            .selected(usize::MAX)
+            .options(vec!["A", "B", "C"]);
+        assert_eq!(modal.confirm(), 2);
+
+        modal.update(ModalMsg::Next);
+        assert_eq!(modal.confirm(), 0);
+
+        let mut modal = Modal::new().options(vec!["A", "B", "C"]);
+        modal.selected = usize::MAX;
+        modal.update(ModalMsg::Prev);
+        assert_eq!(modal.confirm(), 1);
+    }
+
+    #[test]
+    fn select_ignores_out_of_bounds_index() {
+        let mut modal = Modal::new().options(vec!["X", "Y"]);
+
+        assert_eq!(modal.update(ModalMsg::Select(99)), None);
+        assert_eq!(modal.confirm(), 0);
     }
 
     #[test]
