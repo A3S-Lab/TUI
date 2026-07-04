@@ -280,6 +280,23 @@ fn markdown_heading_style_paints_through_element_tree() {
 }
 
 #[test]
+fn markdown_trailing_blank_row_offsets_following_sibling() {
+    let element: Element<()> = Element::Box(
+        BoxElement::new()
+            .direction(FlexDirection::Column)
+            .children(vec![
+                Markdown::new().render_element("# Hello"),
+                Element::Text(TextElement::new("Next")),
+            ]),
+    );
+    let grid = render(&element, 20, 3);
+
+    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert_eq!(grid.get(0, 1).ch, ' ');
+    assert_eq!(grid.get(0, 2).ch, 'N');
+}
+
+#[test]
 fn prompt_line_renders_multiline_input_through_layout_and_paint() {
     let element: Element<()> = PromptLine::new("❯ ")
         .text("run tests\nwith details")

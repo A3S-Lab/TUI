@@ -608,13 +608,24 @@ struct StyledSegment {
 impl Markdown {
     pub fn render_element<Msg>(&self, input: &str) -> Element<Msg> {
         let rendered = self.render(input);
-        let children: Vec<Element<Msg>> = rendered.lines().map(ansi_line_element).collect();
+        let children: Vec<Element<Msg>> = split_rendered_lines(&rendered)
+            .into_iter()
+            .map(ansi_line_element)
+            .collect();
 
         Element::Box(
             BoxElement::new()
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+}
+
+pub(crate) fn split_rendered_lines(rendered: &str) -> Vec<&str> {
+    if rendered.is_empty() {
+        Vec::new()
+    } else {
+        rendered.split('\n').collect()
     }
 }
 
@@ -984,6 +995,22 @@ mod tests {
         assert!(text.style.bold);
         assert_eq!(text.style.fg, Some(Color::Rgb(122, 162, 247)));
         assert!(!text.content.contains('\x1b'));
+    }
+
+    #[test]
+    fn render_element_preserves_trailing_blank_rows() {
+        let md = Markdown::new();
+        let el: Element<()> = md.render_element("# Hello");
+
+        let Element::Box(box_el) = el else {
+            panic!("expected Box");
+        };
+
+        assert_eq!(box_el.children.len(), 2);
+        let Element::Text(blank) = &box_el.children[1] else {
+            panic!("expected trailing blank text row");
+        };
+        assert_eq!(blank.content, "");
     }
 
     #[test]
