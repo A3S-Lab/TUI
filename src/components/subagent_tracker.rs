@@ -3,6 +3,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_SUBAGENT_CHILD_INDENT: usize = u16::MAX as usize;
 const MAX_SUBAGENT_MARGIN: usize = u16::MAX as usize;
+const MAX_SUBAGENT_RUNNING_ROWS: usize = u16::MAX as usize;
 
 /// Durable status rows for parallel subagents or background workers.
 ///
@@ -63,7 +64,7 @@ impl SubagentTracker {
     }
 
     pub fn max_running_rows(mut self, max_running_rows: usize) -> Self {
-        self.max_running_rows = max_running_rows;
+        self.max_running_rows = max_running_rows.min(MAX_SUBAGENT_RUNNING_ROWS);
         self
     }
 
@@ -618,6 +619,19 @@ mod tests {
             leading_spaces(&child_left.content),
             MAX_SUBAGENT_CHILD_INDENT
         );
+    }
+
+    #[test]
+    fn oversized_running_row_limit_is_clamped() {
+        let tracker = SubagentTracker::new("many")
+            .max_running_rows(usize::MAX)
+            .row(SubagentRow::new("one", "first"))
+            .row(SubagentRow::new("two", "second"));
+        let view = tracker.view(40);
+
+        assert_eq!(tracker.max_running_rows, MAX_SUBAGENT_RUNNING_ROWS);
+        assert_eq!(tracker.running_rows().len(), 2);
+        assert!(view.lines().all(|line| visible_len(line) == 40));
     }
 
     #[test]
