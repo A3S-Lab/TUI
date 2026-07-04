@@ -240,6 +240,9 @@ fn apply_text_style(mut text: TextElement, style: &Style) -> TextElement {
     if style.is_strikethrough() {
         text = text.strikethrough();
     }
+    if style.is_reverse() {
+        text = text.reverse();
+    }
     text
 }
 
@@ -355,7 +358,7 @@ mod tests {
         let element: Element<()> = PromptLine::new("❯ ")
             .text("alpha\nbeta")
             .margin(2)
-            .prompt_color(Color::Cyan)
+            .prompt_style(Style::new().fg(Color::Cyan).bold().reverse())
             .text_color(Color::BrightWhite)
             .element();
 
@@ -370,6 +373,7 @@ mod tests {
                                 assert_eq!(prompt.content, "❯ ");
                                 assert_eq!(prompt.style.fg, Some(Color::Cyan));
                                 assert!(prompt.style.bold);
+                                assert!(prompt.style.reverse);
                             }
                             _ => panic!("expected prompt text"),
                         }

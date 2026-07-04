@@ -191,6 +191,9 @@ fn apply_text_style(mut text: TextElement, style: &Style) -> TextElement {
     if style.is_strikethrough() {
         text = text.strikethrough();
     }
+    if style.is_reverse() {
+        text = text.reverse();
+    }
     text
 }
 
@@ -308,7 +311,7 @@ mod tests {
         let element: Element<()> = WrappedPrefixBlock::new("alpha beta")
             .prefixes("> ", "  ")
             .width(8)
-            .color(Color::Cyan)
+            .style(Style::new().fg(Color::Cyan).reverse())
             .element();
 
         match element {
@@ -321,6 +324,7 @@ mod tests {
                             Element::Text(text) => {
                                 assert!(text.content.starts_with("> "));
                                 assert_eq!(text.style.fg, Some(Color::Cyan));
+                                assert!(text.style.reverse);
                             }
                             _ => panic!("expected text element"),
                         }

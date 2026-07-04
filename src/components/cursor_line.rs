@@ -161,11 +161,12 @@ impl CursorLine {
         if self.cursor_style.is_strikethrough() {
             text = text.strikethrough();
         }
-        if self.cursor_style.is_reverse()
-            && self.cursor_style.foreground().is_none()
-            && self.cursor_style.background().is_none()
-        {
-            text = text.fg(Color::Black).bg(Color::White);
+        if self.cursor_style.is_reverse() {
+            text = text.reverse();
+            if self.cursor_style.foreground().is_none() && self.cursor_style.background().is_none()
+            {
+                text = text.fg(Color::Black).bg(Color::White);
+            }
         }
 
         text
@@ -271,6 +272,7 @@ mod tests {
                         assert_eq!(text.content, "a");
                         assert_eq!(text.style.fg, Some(Color::Black));
                         assert_eq!(text.style.bg, Some(Color::White));
+                        assert!(text.style.reverse);
                     }
                     _ => panic!("expected cursor text element"),
                 }

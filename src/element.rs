@@ -167,6 +167,7 @@ pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
     pub dim: bool,
     pub strikethrough: bool,
 }
@@ -461,6 +462,11 @@ impl TextElement {
         self
     }
 
+    pub fn reverse(mut self) -> Self {
+        self.style.reverse = true;
+        self
+    }
+
     pub fn dim(mut self) -> Self {
         self.style.dim = true;
         self
@@ -504,11 +510,13 @@ mod tests {
         let t = TextElement::new("hello")
             .bold()
             .italic()
+            .reverse()
             .fg(Color::Red)
             .bg(Color::Blue);
         assert_eq!(t.content, "hello");
         assert!(t.style.bold);
         assert!(t.style.italic);
+        assert!(t.style.reverse);
         assert_eq!(t.style.fg, Some(Color::Red));
         assert_eq!(t.style.bg, Some(Color::Blue));
     }

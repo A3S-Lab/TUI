@@ -14,6 +14,7 @@ pub struct Cell {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
     pub dim: bool,
     pub strikethrough: bool,
 }
@@ -25,6 +26,7 @@ static EMPTY_CELL: Cell = Cell {
     bold: false,
     italic: false,
     underline: false,
+    reverse: false,
     dim: false,
     strikethrough: false,
 };
@@ -53,6 +55,7 @@ impl Cell {
             bold: style.bold,
             italic: style.italic,
             underline: style.underline,
+            reverse: style.reverse,
             dim: style.dim,
             strikethrough: style.strikethrough,
         }
@@ -69,6 +72,7 @@ impl Cell {
             || self.dim
             || self.italic
             || self.underline
+            || self.reverse
             || self.strikethrough
             || self.fg.is_some()
             || self.bg.is_some();
@@ -106,6 +110,9 @@ impl Cell {
         if self.underline {
             push_code!("4");
         }
+        if self.reverse {
+            push_code!("7");
+        }
         if self.strikethrough {
             push_code!("9");
         }
@@ -134,6 +141,7 @@ impl Cell {
             || self.dim
             || self.italic
             || self.underline
+            || self.reverse
             || self.strikethrough
             || self.fg.is_some()
             || self.bg.is_some();
@@ -171,6 +179,9 @@ impl Cell {
         if self.underline {
             push_code!("4");
         }
+        if self.reverse {
+            push_code!("7");
+        }
         if self.strikethrough {
             push_code!("9");
         }
@@ -194,6 +205,7 @@ pub struct CellStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
     pub dim: bool,
     pub strikethrough: bool,
 }
@@ -640,12 +652,14 @@ mod tests {
         let cell = Cell {
             ch: 'B',
             bold: true,
+            reverse: true,
             fg: Some(Color::Red),
             ..Default::default()
         };
         let ansi = cell.to_ansi();
         assert!(ansi.contains("\x1b["));
         assert!(ansi.contains("1"));
+        assert!(ansi.contains("7"));
         assert!(ansi.contains('B'));
     }
 }

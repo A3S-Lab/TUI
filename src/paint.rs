@@ -132,6 +132,7 @@ fn paint_element<Msg>(
                 bold: text_el.style.bold,
                 italic: text_el.style.italic,
                 underline: text_el.style.underline,
+                reverse: text_el.style.reverse,
                 dim: text_el.style.dim,
                 strikethrough: text_el.style.strikethrough,
             };
@@ -393,10 +394,11 @@ mod tests {
 
     #[test]
     fn paint_text_with_style() {
-        let el: Element<()> = Element::Text(TextElement::new("X").bold().fg(Color::Red));
+        let el: Element<()> = Element::Text(TextElement::new("X").bold().reverse().fg(Color::Red));
         let grid = render(&el, 10, 5);
         assert_eq!(grid.get(0, 0).ch, 'X');
         assert!(grid.get(0, 0).bold);
+        assert!(grid.get(0, 0).reverse);
         assert_eq!(grid.get(0, 0).fg, Some(Color::Red));
     }
 
