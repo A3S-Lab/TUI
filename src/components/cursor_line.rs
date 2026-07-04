@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, TextElement};
 use crate::style::{slice_visible_cols, visible_len, Color, Style};
+use unicode_width::UnicodeWidthChar;
 
 const MAX_CURSOR_LINE_WIDTH: usize = u16::MAX as usize;
 
@@ -105,14 +106,7 @@ impl CursorLine {
 
         let (before, cursor, mut after) = if self.cursor_visible() {
             let rel_col = self.cursor_col.saturating_sub(self.scroll_col);
-            let before = slice_visible_cols(&window, 0, rel_col);
-            let cursor = slice_visible_cols(&window, rel_col, rel_col.saturating_add(1));
-            let cursor = if cursor.is_empty() {
-                " ".to_string()
-            } else {
-                cursor
-            };
-            let after = slice_visible_cols(&window, rel_col.saturating_add(1), usize::MAX);
+            let (before, cursor, after) = split_window_at_cursor(&window, rel_col);
             (before, Some(cursor), after)
         } else {
             (window, None, String::new())
@@ -179,6 +173,30 @@ struct CursorLineParts {
     after: String,
 }
 
+fn split_window_at_cursor(window: &str, cursor_col: usize) -> (String, String, String) {
+    let mut before = String::new();
+    let mut col = 0usize;
+
+    for (index, ch) in window.char_indices() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width == 0 {
+            before.push(ch);
+            continue;
+        }
+
+        let next_col = col.saturating_add(width);
+        if cursor_col < next_col {
+            let after_index = index + ch.len_utf8();
+            return (before, ch.to_string(), window[after_index..].to_string());
+        }
+
+        before.push(ch);
+        col = next_col;
+    }
+
+    (window.to_string(), " ".to_string(), String::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +233,14 @@ mod tests {
         assert_eq!(strip_ansi(&line), "你好");
         assert!(line.contains("好"));
         assert!(line.contains("\x1b[43m"));
+    }
+
+    #[test]
+    fn cursor_inside_wide_glyph_styles_whole_glyph() {
+        let line = CursorLine::new("你好").cursor_col(1).view();
+
+        assert_eq!(strip_ansi(&line), "你好");
+        assert!(line.contains("\x1b[7m你\x1b[0m"));
     }
 
     #[test]
