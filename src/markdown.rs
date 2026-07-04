@@ -9,7 +9,7 @@ use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use unicode_width::UnicodeWidthChar;
 
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
 
@@ -182,10 +182,14 @@ impl Markdown {
                         widths[i] = widths[i].max(visible_len(c));
                     }
                 }
+                let widths = constrain_table_widths(&widths, self.width);
                 let border = Style::new().fg(Color::BrightBlack);
                 let rule = |l: &str, m: &str, r: &str| -> String {
                     let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-                    border.render(&format!("{l}{}{r}", segs.join(m)))
+                    fit_table_line(
+                        border.render(&format!("{l}{}{r}", segs.join(m))),
+                        self.width,
+                    )
                 };
                 let bar = border.render("│");
                 output.push(rule("┌", "┬", "┐"));
@@ -193,11 +197,10 @@ impl Markdown {
                     let mut line = bar.clone();
                     for (i, w) in widths.iter().enumerate() {
                         let c = cells.get(i).map(String::as_str).unwrap_or("");
-                        let pad = w.saturating_sub(visible_len(c));
-                        line.push_str(&format!(" {c}{} ", " ".repeat(pad)));
+                        line.push_str(&format!(" {} ", fit_visible(c, *w)));
                         line.push_str(&bar);
                     }
-                    output.push(line);
+                    output.push(fit_table_line(line, self.width));
                     if ri == 0 {
                         output.push(rule("├", "┼", "┤"));
                     }
@@ -438,6 +441,56 @@ fn code_block_body_line(line: &str, width: usize) -> String {
     }
 }
 
+fn constrain_table_widths(widths: &[usize], max_width: usize) -> Vec<usize> {
+    if max_width == 0 || widths.is_empty() {
+        return widths.to_vec();
+    }
+
+    let overhead = widths.len().saturating_mul(3).saturating_add(1);
+    if overhead >= max_width {
+        return vec![0; widths.len()];
+    }
+
+    let mut budget = max_width - overhead;
+    if widths.iter().sum::<usize>() <= budget {
+        return widths.to_vec();
+    }
+
+    let mut constrained = vec![0; widths.len()];
+    for (i, width) in widths.iter().enumerate() {
+        if budget == 0 {
+            break;
+        }
+        if *width > 0 {
+            constrained[i] = 1;
+            budget -= 1;
+        }
+    }
+
+    while budget > 0 {
+        let Some((index, _)) = widths
+            .iter()
+            .enumerate()
+            .filter(|(index, width)| constrained[*index] < **width)
+            .max_by_key(|(index, width)| width.saturating_sub(constrained[*index]))
+        else {
+            break;
+        };
+        constrained[index] += 1;
+        budget -= 1;
+    }
+
+    constrained
+}
+
+fn fit_table_line(line: String, width: usize) -> String {
+    if width == 0 {
+        line
+    } else {
+        truncate_visible(&line, width)
+    }
+}
+
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -656,6 +709,17 @@ mod tests {
         let plain = strip_ansi(&output);
         assert!(plain.contains("item 1"));
         assert!(plain.contains("item 2"));
+    }
+
+    #[test]
+    fn table_respects_configured_width() {
+        let md = Markdown::new().with_width(12);
+        let output =
+            md.render("| Name | Value |\n| --- | --- |\n| alpha | abcdefghijklmnopqrstuvwxyz |");
+
+        for line in output.lines() {
+            assert!(visible_len(line) <= 12, "{line:?}");
+        }
     }
 
     #[test]
