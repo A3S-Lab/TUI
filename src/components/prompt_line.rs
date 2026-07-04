@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_PROMPT_LINE_CONTINUATION_INDENT: usize = u16::MAX as usize;
+const MAX_PROMPT_LINE_MARGIN: usize = u16::MAX as usize;
+
 /// Prompt-prefixed input text with aligned continuation rows.
 ///
 /// This extracts the common CLI input pattern: a left margin, a styled prompt
@@ -36,7 +39,7 @@ impl PromptLine {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_PROMPT_LINE_MARGIN);
         self
     }
 
@@ -47,7 +50,7 @@ impl PromptLine {
 
     /// Set the total display-column indent for continuation rows.
     pub fn continuation_indent(mut self, indent: usize) -> Self {
-        self.continuation_indent = Some(indent);
+        self.continuation_indent = Some(indent.min(MAX_PROMPT_LINE_CONTINUATION_INDENT));
         self
     }
 
@@ -104,6 +107,8 @@ impl PromptLine {
     }
 
     fn render_lines(&self) -> Vec<String> {
+        let margin = self.margin_for_render();
+        let continuation_indent = self.continuation_indent_for_render();
         self.text_lines()
             .into_iter()
             .enumerate()
@@ -114,11 +119,11 @@ impl PromptLine {
                         None => self.prompt.clone(),
                     };
                     let text = self.render_text(&line);
-                    format!("{}{prompt}{text}", " ".repeat(self.margin))
+                    format!("{}{prompt}{text}", " ".repeat(margin))
                 } else {
                     format!(
                         "{}{}",
-                        " ".repeat(self.continuation_indent_width()),
+                        " ".repeat(continuation_indent),
                         self.render_text(&line)
                     )
                 }
@@ -141,7 +146,9 @@ impl PromptLine {
             Element::Box(
                 BoxElement::new()
                     .direction(FlexDirection::Row)
-                    .child(Element::Text(TextElement::new(" ".repeat(self.margin))))
+                    .child(Element::Text(TextElement::new(
+                        " ".repeat(self.margin_for_render()),
+                    )))
                     .child(Element::Text(prompt))
                     .child(Element::Text(text)),
             )
@@ -155,7 +162,7 @@ impl PromptLine {
                 BoxElement::new()
                     .direction(FlexDirection::Row)
                     .child(Element::Text(TextElement::new(
-                        " ".repeat(self.continuation_indent_width()),
+                        " ".repeat(self.continuation_indent_for_render()),
                     )))
                     .child(Element::Text(text)),
             )
@@ -184,7 +191,23 @@ impl PromptLine {
 
     fn continuation_indent_width(&self) -> usize {
         self.continuation_indent
-            .unwrap_or_else(|| self.margin + visible_len(&self.prompt))
+            .unwrap_or_else(|| self.margin.saturating_add(visible_len(&self.prompt)))
+            .min(MAX_PROMPT_LINE_CONTINUATION_INDENT)
+    }
+
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_PROMPT_LINE_MARGIN)
+    }
+
+    fn continuation_indent_for_render(&self) -> usize {
+        let indent = self.continuation_indent_width();
+        self.width
+            .map(|width| indent.min(width))
+            .unwrap_or(indent)
+            .min(MAX_PROMPT_LINE_CONTINUATION_INDENT)
     }
 }
 
@@ -277,6 +300,44 @@ mod tests {
 
         assert!(rows[0].starts_with(" 💬 hello"));
         assert_eq!(rows[1], "    world");
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let line = PromptLine::new("> ")
+            .text("hello\nworld")
+            .margin(usize::MAX)
+            .continuation_indent(usize::MAX)
+            .width(8);
+        let rendered = line.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(line.margin, MAX_PROMPT_LINE_MARGIN);
+        assert_eq!(
+            line.continuation_indent,
+            Some(MAX_PROMPT_LINE_CONTINUATION_INDENT)
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 8));
+
+        let Element::Box(column) = line.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(first_row) = &column.children[0] else {
+            panic!("expected first row");
+        };
+        let Element::Text(margin) = &first_row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+
+        let Element::Box(second_row) = &column.children[1] else {
+            panic!("expected second row");
+        };
+        let Element::Text(indent) = &second_row.children[0] else {
+            panic!("expected continuation indent text");
+        };
+        assert_eq!(indent.content.len(), 8);
     }
 
     #[test]
