@@ -26,7 +26,7 @@ impl Sparkline {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1).min(MAX_SPARKLINE_WIDTH);
+        self.width = width.clamp(1, MAX_SPARKLINE_WIDTH);
         self
     }
 

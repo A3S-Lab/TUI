@@ -330,7 +330,7 @@ impl SessionStatusChip {
     }
 
     pub fn max_label_width(mut self, width: usize) -> Self {
-        self.max_label_width = Some(width.max(1).min(MAX_SESSION_STATUS_CHIP_LABEL_WIDTH));
+        self.max_label_width = Some(width.clamp(1, MAX_SESSION_STATUS_CHIP_LABEL_WIDTH));
         self
     }
 

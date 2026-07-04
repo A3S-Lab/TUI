@@ -34,12 +34,12 @@ impl MetricTrend {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1).min(MAX_METRIC_TREND_WIDTH);
+        self.width = width.clamp(1, MAX_METRIC_TREND_WIDTH);
         self
     }
 
     pub fn trend_width(mut self, width: usize) -> Self {
-        self.trend_width = width.max(1).min(MAX_METRIC_TREND_SPARKLINE_WIDTH);
+        self.trend_width = width.clamp(1, MAX_METRIC_TREND_SPARKLINE_WIDTH);
         self
     }
 

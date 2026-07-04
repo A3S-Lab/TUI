@@ -73,7 +73,7 @@ impl SideNotePanel {
     }
 
     pub fn max_body_lines(mut self, max: usize) -> Self {
-        self.max_body_lines = max.max(1).min(MAX_SIDE_NOTE_PANEL_BODY_LINES);
+        self.max_body_lines = max.clamp(1, MAX_SIDE_NOTE_PANEL_BODY_LINES);
         self
     }
 

@@ -81,7 +81,7 @@ impl ActivityBlock {
     }
 
     pub fn max_output_lines(mut self, max_output_lines: usize) -> Self {
-        self.max_output_lines = max_output_lines.max(1).min(MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
+        self.max_output_lines = max_output_lines.clamp(1, MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
         self
     }
 

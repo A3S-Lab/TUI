@@ -196,7 +196,7 @@ impl MenuPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1).min(MAX_MENU_PANEL_ITEMS));
+        self.max_items = Some(max_items.clamp(1, MAX_MENU_PANEL_ITEMS));
         self
     }
 

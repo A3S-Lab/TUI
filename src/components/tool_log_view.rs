@@ -157,8 +157,7 @@ impl ToolLogView {
     }
 
     pub fn max_output_lines_per_record(mut self, max: usize) -> Self {
-        self.max_output_lines_per_record =
-            Some(max.max(1).min(MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD));
+        self.max_output_lines_per_record = Some(max.clamp(1, MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD));
         self
     }
 

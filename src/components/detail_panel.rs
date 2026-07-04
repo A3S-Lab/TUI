@@ -167,7 +167,7 @@ impl DetailPanel {
     }
 
     pub fn max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows.max(1).min(MAX_DETAIL_PANEL_ROWS));
+        self.max_rows = Some(max_rows.clamp(1, MAX_DETAIL_PANEL_ROWS));
         self
     }
 

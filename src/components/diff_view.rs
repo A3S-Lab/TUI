@@ -265,7 +265,7 @@ impl DiffView {
     }
 
     pub fn max_lines(mut self, max_lines: usize) -> Self {
-        self.max_lines = max_lines.max(1).min(MAX_DIFF_VIEW_LINES);
+        self.max_lines = max_lines.clamp(1, MAX_DIFF_VIEW_LINES);
         self
     }
 

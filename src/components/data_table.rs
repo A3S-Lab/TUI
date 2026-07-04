@@ -36,12 +36,12 @@ impl DataColumn {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width.max(1).min(MAX_DATA_COLUMN_WIDTH));
+        self.width = Some(width.clamp(1, MAX_DATA_COLUMN_WIDTH));
         self
     }
 
     pub fn min_width(mut self, width: usize) -> Self {
-        self.min_width = width.max(1).min(MAX_DATA_COLUMN_WIDTH);
+        self.min_width = width.clamp(1, MAX_DATA_COLUMN_WIDTH);
         self
     }
 

@@ -61,7 +61,7 @@ impl Confirm {
     }
 
     pub fn max_width(mut self, width: usize) -> Self {
-        self.max_width = width.max(8).min(MAX_CONFIRM_WIDTH);
+        self.max_width = width.clamp(8, MAX_CONFIRM_WIDTH);
         self
     }
 

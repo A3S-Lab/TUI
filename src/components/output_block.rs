@@ -116,7 +116,7 @@ impl OutputBlock {
     }
 
     pub fn max_body_lines(mut self, max_body_lines: usize) -> Self {
-        self.max_body_lines = max_body_lines.max(1).min(MAX_OUTPUT_BLOCK_BODY_LINES);
+        self.max_body_lines = max_body_lines.clamp(1, MAX_OUTPUT_BLOCK_BODY_LINES);
         self
     }
 

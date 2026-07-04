@@ -39,7 +39,7 @@ impl Meter {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1).min(MAX_METER_WIDTH);
+        self.width = width.clamp(1, MAX_METER_WIDTH);
         self
     }
 

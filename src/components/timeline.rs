@@ -161,12 +161,12 @@ impl Timeline {
     }
 
     pub fn time_width(mut self, width: usize) -> Self {
-        self.time_width = width.max(1).min(MAX_TIMELINE_TIME_WIDTH);
+        self.time_width = width.clamp(1, MAX_TIMELINE_TIME_WIDTH);
         self
     }
 
     pub fn badge_width(mut self, width: usize) -> Self {
-        self.badge_width = width.max(1).min(MAX_TIMELINE_BADGE_WIDTH);
+        self.badge_width = width.clamp(1, MAX_TIMELINE_BADGE_WIDTH);
         self
     }
 
@@ -436,17 +436,13 @@ impl Timeline {
     }
 
     fn time_width_for_width(&self, width: usize) -> usize {
-        self.time_width
-            .min(width)
-            .max(1)
-            .min(MAX_TIMELINE_TIME_WIDTH)
+        self.time_width.min(width).clamp(1, MAX_TIMELINE_TIME_WIDTH)
     }
 
     fn badge_width_for_width(&self, width: usize) -> usize {
         self.badge_width
             .min(width)
-            .max(1)
-            .min(MAX_TIMELINE_BADGE_WIDTH)
+            .clamp(1, MAX_TIMELINE_BADGE_WIDTH)
     }
 
     fn fit_slot(&self, value: &str, width: usize, align_right: bool) -> String {
