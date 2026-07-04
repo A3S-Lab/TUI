@@ -6,7 +6,7 @@ use crate::element::{
     AlignItems as ElAlignItems, BoxStyle, Dimension, Element, FlexDirection as ElFlexDir,
     JustifyContent as ElJustify, Overflow as ElOverflow, TextWrap,
 };
-use crate::style::visible_len;
+use crate::style::{strip_ansi, visible_len, wrap_words};
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use taffy::prelude::*;
@@ -381,16 +381,16 @@ fn count_wrapped_lines(text: &str, width: usize) -> usize {
     if width == 0 {
         return text.lines().count().max(1);
     }
-    let mut total = 0;
-    for line in text.lines() {
-        let line_width = visible_len(line);
-        if line_width == 0 {
-            total += 1;
-        } else {
-            total += line_width.div_ceil(width);
-        }
-    }
-    total.max(1)
+
+    let stripped_text;
+    let text = if text.contains('\x1b') {
+        stripped_text = strip_ansi(text);
+        stripped_text.as_str()
+    } else {
+        text
+    };
+
+    wrap_words(text, width).len().max(1)
 }
 
 #[cfg(test)]
@@ -417,6 +417,17 @@ mod tests {
 
         assert_eq!(result.nodes[0].width, 6);
         assert_eq!(result.nodes[0].height, 2);
+    }
+
+    #[test]
+    fn layout_wrap_text_height_matches_word_wrapping() {
+        let mut engine = LayoutEngine::new();
+        let el: Element<()> = Element::Text(TextElement::new("a b c d e f"));
+
+        let result = engine.compute(&el, 3, 5);
+
+        assert_eq!(result.nodes[0].width, 3);
+        assert_eq!(result.nodes[0].height, 3);
     }
 
     #[test]
