@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 const MAX_MENU_ITEM_DEPTH: usize = u16::MAX as usize / 2;
 const MAX_MENU_PANEL_INDENT: usize = u16::MAX as usize;
 const MAX_MENU_PANEL_LABEL_WIDTH: usize = u16::MAX as usize;
+const MAX_MENU_PANEL_ITEMS: usize = u16::MAX as usize;
 
 /// One row in a [`MenuPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,7 +196,7 @@ impl MenuPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.max(1).min(MAX_MENU_PANEL_ITEMS));
         self
     }
 
@@ -772,6 +773,18 @@ mod tests {
         assert_eq!(visible_len(&prefix), 8);
         assert_eq!(visible_len(&line), 8);
         assert!(rendered.lines().all(|line| visible_len(line) == 8));
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let panel = MenuPanel::new("Commands")
+            .max_items(usize::MAX)
+            .item(MenuItem::new("one"))
+            .item(MenuItem::new("two"));
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_items, Some(MAX_MENU_PANEL_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
