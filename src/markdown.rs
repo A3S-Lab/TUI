@@ -7,6 +7,7 @@ use comrak::{parse_document, Arena, Options};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
+use unicode_width::UnicodeWidthChar;
 
 use crate::style::{truncate_visible, visible_len, Color, Style};
 
@@ -434,6 +435,24 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     for word in text.split_whitespace() {
         let word_width = visible_len(word);
         let separator_width = if current.is_empty() { 0 } else { 1 };
+        if word_width > width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+
+            for part in split_visible_word(word, width) {
+                let part_width = visible_len(&part);
+                if part_width >= width {
+                    lines.push(part);
+                } else {
+                    current = part;
+                    current_width = part_width;
+                }
+            }
+            continue;
+        }
+
         if current_width + word_width + separator_width > width && !current.is_empty() {
             lines.push(current);
             current = String::new();
@@ -456,6 +475,47 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+fn split_visible_word(word: &str, width: usize) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    let mut chars = word.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            current.push(ch);
+            if let Some(introducer) = chars.next() {
+                current.push(introducer);
+            }
+            for next in chars.by_ref() {
+                current.push(next);
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width > 0 && current_width + ch_width > width {
+            parts.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+        if current_width >= width {
+            parts.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    parts
 }
 
 // Element-based rendering for the new Ink-like architecture
@@ -613,6 +673,21 @@ mod tests {
         let output = md.render("this is a long sentence that should wrap");
         let lines: Vec<&str> = output.lines().collect();
         assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn paragraph_hard_breaks_long_word_by_display_width() {
+        let md = Markdown::new().with_width(8);
+        let output = md.render("abcdefghijklmnopqrstuvwxyz");
+        let plain = strip_ansi(&output);
+
+        assert_eq!(
+            plain.lines().collect::<String>(),
+            "abcdefghijklmnopqrstuvwxyz"
+        );
+        for line in output.lines() {
+            assert!(visible_len(line) <= 8, "{line:?}");
+        }
     }
 
     #[test]
