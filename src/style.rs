@@ -649,15 +649,37 @@ pub fn slice_visible_cols(s: &str, from: usize, to: usize) -> String {
     let plain = strip_ansi(s);
     let mut col = 0usize;
     let mut out = String::new();
+    let mut chars = plain.chars().peekable();
 
-    for ch in plain.chars() {
+    while let Some(ch) = chars.next() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width == 0 {
+            if col >= to {
+                break;
+            }
+            if col >= from {
+                out.push(ch);
+            }
+            continue;
+        }
+
         if col >= to {
             break;
         }
-        if col >= from {
-            out.push(ch);
+
+        let mut cell = ch.to_string();
+        while let Some(next) = chars.peek().copied() {
+            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            cell.push(next);
+            chars.next();
         }
-        col += UnicodeWidthChar::width(ch).unwrap_or(0);
+
+        if col >= from {
+            out.push_str(&cell);
+        }
+        col = col.saturating_add(width);
     }
 
     out
@@ -941,6 +963,12 @@ mod tests {
         assert_eq!(slice_visible_cols("你好", 1, 4), "好");
         assert_eq!(slice_visible_cols("你好", 0, 3), "你好");
         assert_eq!(slice_visible_cols("hello", 3, 3), "");
+    }
+
+    #[test]
+    fn slices_visible_columns_keep_zero_width_marks_with_base_glyph() {
+        assert_eq!(slice_visible_cols("e\u{301}x", 0, 1), "e\u{301}");
+        assert_eq!(slice_visible_cols("e\u{301}x", 1, 2), "x");
     }
 
     #[test]

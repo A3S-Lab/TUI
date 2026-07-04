@@ -682,6 +682,26 @@ mod tests {
     }
 
     #[test]
+    fn selected_text_keeps_zero_width_marks_with_base_glyph() {
+        let view = "e\u{301}x";
+        let selection = TextSelection::from_cells(0, 0, 0, 1);
+
+        assert_eq!(selected_text(view, selection), "e\u{301}");
+    }
+
+    #[test]
+    fn highlight_selection_keeps_zero_width_marks_with_base_glyph() {
+        let view = "e\u{301}x";
+        let selection = TextSelection::from_cells(0, 0, 0, 1);
+        let style = Style::new().bg(crate::style::Color::Blue);
+
+        let out = highlight_selection(view, selection, &style);
+
+        assert_eq!(strip_ansi(&out), "e\u{301}x");
+        assert!(out.contains("\x1b[44me\u{301}\x1b[0mx"));
+    }
+
+    #[test]
     fn empty_selection_copies_nothing_and_keeps_view_unchanged() {
         let view = "alpha\nbeta";
         let selection = TextSelection::from_cells(0, 2, 0, 2);
