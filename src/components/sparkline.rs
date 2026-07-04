@@ -30,8 +30,10 @@ impl Sparkline {
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.min = Some(min);
-        self.max = Some(max);
+        self.min = min.is_finite().then_some(min);
+        self.max = max
+            .is_finite()
+            .then_some(self.min.map_or(max, |min| max.max(min)));
         self
     }
 
@@ -131,5 +133,16 @@ mod tests {
         let line = Sparkline::new([1.0]).width(1).view();
 
         assert_ne!(strip_ansi(&line), line);
+    }
+
+    #[test]
+    fn non_finite_range_falls_back_to_observed_values() {
+        let line = Sparkline::new([0.0, 50.0, 100.0])
+            .width(3)
+            .range(f64::NAN, f64::INFINITY)
+            .plain();
+
+        assert_eq!(visible_len(&line), 3);
+        assert!(line.ends_with('█'));
     }
 }

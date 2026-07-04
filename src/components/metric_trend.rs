@@ -41,8 +41,10 @@ impl MetricTrend {
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.min = min;
-        self.max = max.max(min);
+        if min.is_finite() && max.is_finite() {
+            self.min = min;
+            self.max = max.max(min);
+        }
         self
     }
 
@@ -120,5 +122,17 @@ mod tests {
         let cell = MetricTrend::new(Some(123.4), [100.0]).width(5).plain();
 
         assert_eq!(visible_len(&cell), 5);
+    }
+
+    #[test]
+    fn ignores_non_finite_range_bounds() {
+        let cell = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .range(f64::NAN, f64::INFINITY)
+            .width(15)
+            .plain();
+
+        assert_eq!(visible_len(&cell), 15);
+        assert!(cell.starts_with(" 50.0% "));
+        assert!(cell.ends_with('█'));
     }
 }

@@ -32,7 +32,7 @@ impl Meter {
     }
 
     pub fn max(mut self, max: f64) -> Self {
-        self.max = max.max(f64::EPSILON);
+        self.max = Self::normalize_max(max);
         self
     }
 
@@ -63,8 +63,9 @@ impl Meter {
         } else {
             0.0
         };
-        let ratio = (value / self.max).clamp(0.0, 1.0);
-        let value_label = if (self.max - 100.0).abs() < f64::EPSILON {
+        let max = Self::normalize_max(self.max);
+        let ratio = (value / max).clamp(0.0, 1.0);
+        let value_label = if (max - 100.0).abs() < f64::EPSILON {
             format!("{value:>5.1}%")
         } else {
             format!("{value:>6.1}")
@@ -100,6 +101,14 @@ impl Meter {
     pub fn plain(&self) -> String {
         crate::style::strip_ansi(&self.view())
     }
+
+    fn normalize_max(max: f64) -> f64 {
+        if max.is_finite() {
+            max.max(f64::EPSILON)
+        } else {
+            f64::EPSILON
+        }
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +137,13 @@ mod tests {
         let line = Meter::new(1.0).label("very-long-label").width(8).plain();
 
         assert_eq!(visible_len(&line), 8);
+    }
+
+    #[test]
+    fn non_finite_max_is_treated_as_minimum_positive_range() {
+        let line = Meter::new(1.0).max(f64::NAN).width(12).plain();
+
+        assert_eq!(visible_len(&line), 12);
+        assert!(!line.contains('░'));
     }
 }
