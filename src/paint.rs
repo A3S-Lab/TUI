@@ -3,7 +3,7 @@
 use crate::element::*;
 use crate::grid::{Cell, CellStyle, Grid};
 use crate::layout_engine::LayoutResult;
-use crate::style::{strip_ansi, visible_len, wrap_words};
+use crate::style::{strip_ansi, truncate_visible, visible_len, wrap_words};
 
 pub fn paint<Msg>(root: &Element<Msg>, layout: &LayoutResult, width: u16, height: u16) -> Grid {
     let mut grid = Grid::new(width, height);
@@ -121,7 +121,7 @@ fn paint_element<Msg>(
                         }
                     }
                     TextWrap::Truncate => {
-                        let display_line = truncate_str(paint_line, max_w);
+                        let display_line = truncate_visible(paint_line, max_w);
                         if !paint_text_row(
                             grid,
                             node.x,
@@ -191,20 +191,6 @@ fn skip_children<Msg>(element: &Element<Msg>, layout: &LayoutResult, idx: &mut u
             skip_children(child, layout, idx);
         }
     }
-}
-
-fn truncate_str(s: &str, max_width: usize) -> String {
-    let mut out = String::new();
-    let mut w = 0;
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw > max_width {
-            break;
-        }
-        out.push(ch);
-        w += cw;
-    }
-    out
 }
 
 fn draw_border(
@@ -361,10 +347,19 @@ mod tests {
     }
 
     #[test]
-    fn paint_truncate_str() {
-        assert_eq!(truncate_str("hello world", 5), "hello");
-        assert_eq!(truncate_str("hi", 10), "hi");
-        assert_eq!(truncate_str("", 5), "");
+    fn paint_text_truncates_with_ellipsis() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(5.0))
+                .child(Element::Text(
+                    TextElement::new("hello world").wrap(TextWrap::Truncate),
+                )),
+        );
+
+        let grid = render(&el, 5, 1);
+
+        assert_eq!(grid.render_to_string(), "hell…");
     }
 
     #[test]

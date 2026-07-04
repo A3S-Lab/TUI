@@ -97,8 +97,8 @@ fn truncating_text_is_clipped_during_terminal_paint() {
     let grid = render(&element, 8, 2);
     let plain = plain(&grid);
 
-    assert!(plain.starts_with("abcdefgh"));
-    assert!(!plain.contains("ijk"));
+    assert!(plain.starts_with("abcdefg…"));
+    assert!(!plain.contains("hijk"));
     assert_eq!(visible_len(plain.lines().next().unwrap()), 8);
 }
 
