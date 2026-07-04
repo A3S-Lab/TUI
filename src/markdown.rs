@@ -598,21 +598,195 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
 }
 
 // Element-based rendering for the new Ink-like architecture
-use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::element::{BoxElement, Element, FlexDirection, TextElement, TextStyle};
+
+struct StyledSegment {
+    text: String,
+    style: TextStyle,
+}
 
 impl Markdown {
     pub fn render_element<Msg>(&self, input: &str) -> Element<Msg> {
         let rendered = self.render(input);
-        let children: Vec<Element<Msg>> = rendered
-            .lines()
-            .map(|line| Element::Text(TextElement::new(line)))
-            .collect();
+        let children: Vec<Element<Msg>> = rendered.lines().map(ansi_line_element).collect();
 
         Element::Box(
             BoxElement::new()
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+}
+
+fn ansi_line_element<Msg>(line: &str) -> Element<Msg> {
+    let segments = ansi_segments(line);
+    if segments.len() == 1 {
+        let Some(segment) = segments.into_iter().next() else {
+            return Element::Text(TextElement::new(""));
+        };
+        return Element::Text(segment_text(segment));
+    }
+
+    Element::Box(
+        BoxElement::new().direction(FlexDirection::Row).children(
+            segments
+                .into_iter()
+                .map(|segment| Element::Text(segment_text(segment)))
+                .collect(),
+        ),
+    )
+}
+
+fn segment_text(segment: StyledSegment) -> TextElement {
+    let mut text = TextElement::new(segment.text);
+    text.style = segment.style;
+    text
+}
+
+fn ansi_segments(line: &str) -> Vec<StyledSegment> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut style = TextStyle::default();
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut sequence = String::new();
+            let mut final_byte = None;
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    final_byte = Some(next);
+                    break;
+                }
+                sequence.push(next);
+            }
+
+            if final_byte == Some('m') {
+                push_segment(&mut segments, &mut current, &style);
+                apply_sgr_sequence(&mut style, &sequence);
+            }
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    push_segment(&mut segments, &mut current, &style);
+    if segments.is_empty() {
+        segments.push(StyledSegment {
+            text: String::new(),
+            style: TextStyle::default(),
+        });
+    }
+    segments
+}
+
+fn push_segment(segments: &mut Vec<StyledSegment>, current: &mut String, style: &TextStyle) {
+    if current.is_empty() {
+        return;
+    }
+
+    segments.push(StyledSegment {
+        text: std::mem::take(current),
+        style: style.clone(),
+    });
+}
+
+fn apply_sgr_sequence(style: &mut TextStyle, sequence: &str) {
+    if sequence.is_empty() {
+        *style = TextStyle::default();
+        return;
+    }
+
+    let codes: Vec<u16> = sequence
+        .split(';')
+        .filter_map(|part| {
+            if part.is_empty() {
+                Some(0)
+            } else {
+                part.parse().ok()
+            }
+        })
+        .collect();
+    if codes.is_empty() {
+        *style = TextStyle::default();
+        return;
+    }
+
+    let mut index = 0usize;
+    while index < codes.len() {
+        match codes[index] {
+            0 => *style = TextStyle::default(),
+            1 => style.bold = true,
+            2 => style.dim = true,
+            3 => style.italic = true,
+            4 => style.underline = true,
+            7 => style.reverse = true,
+            9 => style.strikethrough = true,
+            22 => {
+                style.bold = false;
+                style.dim = false;
+            }
+            23 => style.italic = false,
+            24 => style.underline = false,
+            27 => style.reverse = false,
+            29 => style.strikethrough = false,
+            30..=37 | 90..=97 => style.fg = basic_sgr_color(codes[index]),
+            39 => style.fg = None,
+            40..=47 | 100..=107 => style.bg = basic_sgr_color(codes[index] - 10),
+            49 => style.bg = None,
+            38 | 48 => {
+                let is_fg = codes[index] == 38;
+                if let Some((color, consumed)) = extended_sgr_color(&codes[index + 1..]) {
+                    if is_fg {
+                        style.fg = Some(color);
+                    } else {
+                        style.bg = Some(color);
+                    }
+                    index += consumed;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn basic_sgr_color(code: u16) -> Option<Color> {
+    match code {
+        30 => Some(Color::Black),
+        31 => Some(Color::Red),
+        32 => Some(Color::Green),
+        33 => Some(Color::Yellow),
+        34 => Some(Color::Blue),
+        35 => Some(Color::Magenta),
+        36 => Some(Color::Cyan),
+        37 => Some(Color::White),
+        90 => Some(Color::BrightBlack),
+        91 => Some(Color::BrightRed),
+        92 => Some(Color::BrightGreen),
+        93 => Some(Color::BrightYellow),
+        94 => Some(Color::BrightBlue),
+        95 => Some(Color::BrightMagenta),
+        96 => Some(Color::BrightCyan),
+        97 => Some(Color::BrightWhite),
+        _ => None,
+    }
+}
+
+fn extended_sgr_color(codes: &[u16]) -> Option<(Color, usize)> {
+    match codes {
+        [5, value, ..] => Some((Color::Ansi256((*value).min(u8::MAX as u16) as u8), 2)),
+        [2, r, g, b, ..] => Some((
+            Color::Rgb(
+                (*r).min(u8::MAX as u16) as u8,
+                (*g).min(u8::MAX as u16) as u8,
+                (*b).min(u8::MAX as u16) as u8,
+            ),
+            4,
+        )),
+        _ => None,
     }
 }
 
@@ -793,6 +967,23 @@ mod tests {
             Element::Box(b) => assert!(!b.children.is_empty()),
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn render_element_preserves_heading_style() {
+        let md = Markdown::new();
+        let el: Element<()> = md.render_element("# Hello");
+
+        let Element::Box(box_el) = el else {
+            panic!("expected Box");
+        };
+        let Element::Text(text) = &box_el.children[0] else {
+            panic!("expected heading text");
+        };
+
+        assert!(text.style.bold);
+        assert_eq!(text.style.fg, Some(Color::Rgb(122, 162, 247)));
+        assert!(!text.content.contains('\x1b'));
     }
 
     #[test]

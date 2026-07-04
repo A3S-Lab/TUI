@@ -13,6 +13,7 @@ use a3s_tui::element::{
 };
 use a3s_tui::grid::Grid;
 use a3s_tui::layout_engine::LayoutEngine;
+use a3s_tui::markdown::Markdown;
 use a3s_tui::paint;
 use a3s_tui::style::{strip_ansi, visible_len, Color, Style};
 
@@ -266,6 +267,16 @@ fn text_input_renders_cursor_through_layout_and_paint() {
     assert_eq!(grid.get(0, 0).ch, '>');
     assert_eq!(grid.get(3, 0).ch, 'b');
     assert!(grid.get(3, 0).reverse);
+}
+
+#[test]
+fn markdown_heading_style_paints_through_element_tree() {
+    let element: Element<()> = Markdown::new().render_element("# Hello");
+    let grid = render(&element, 20, 2);
+
+    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert!(grid.get(0, 0).bold);
+    assert_eq!(grid.get(0, 0).fg, Some(Color::Rgb(122, 162, 247)));
 }
 
 #[test]
