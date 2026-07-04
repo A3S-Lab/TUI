@@ -338,7 +338,7 @@ impl MenuPanel {
                 let index = self.window_start(item_count).saturating_add(item_row);
                 if index < self.items.len() {
                     self.selected = index;
-                    Some(MenuPanelMsg::Selected(index))
+                    self.selected_msg()
                 } else {
                     None
                 }
@@ -570,7 +570,8 @@ impl MenuPanel {
     }
 
     fn selected_msg(&self) -> Option<MenuPanelMsg> {
-        if self.items.is_empty() {
+        let item = self.items.get(self.selected)?;
+        if item.disabled {
             None
         } else {
             Some(MenuPanelMsg::Selected(self.selected))
@@ -578,7 +579,8 @@ impl MenuPanel {
     }
 
     fn selected_toggle_msg(&self) -> Option<MenuPanelMsg> {
-        if self.items.is_empty() {
+        let item = self.items.get(self.selected)?;
+        if item.disabled {
             None
         } else {
             Some(MenuPanelMsg::Toggled(self.selected))
@@ -590,7 +592,11 @@ impl MenuPanel {
         if index < self.items.len() {
             self.selected = index;
             self.keep_selected_visible(self.max_items.unwrap_or(10));
-            Some(MenuPanelMsg::Selected(index))
+            if self.items[index].disabled {
+                None
+            } else {
+                Some(MenuPanelMsg::Selected(index))
+            }
         } else {
             None
         }
@@ -730,6 +736,16 @@ mod tests {
     }
 
     #[test]
+    fn disabled_items_do_not_emit_actions() {
+        let mut panel = sample_panel().selected(4).number_shortcuts(true);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Enter)), None);
+        assert_eq!(panel.handle_key(&key(KeyCode::Char(' '))), None);
+        assert_eq!(panel.handle_key(&key(KeyCode::Char('5'))), None);
+        assert_eq!(panel.selected_index(), 4);
+    }
+
+    #[test]
     fn mouse_click_selects_visible_row() {
         let mut panel = sample_panel().selected(2).scroll(1);
         panel.set_y_offset(4);
@@ -742,6 +758,20 @@ mod tests {
 
         assert_eq!(msg, Some(MenuPanelMsg::Selected(2)));
         assert_eq!(panel.selected_index(), 2);
+    }
+
+    #[test]
+    fn mouse_click_on_disabled_item_only_moves_selection() {
+        let mut panel = sample_panel().selected(4);
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 4);
     }
 
     #[test]
