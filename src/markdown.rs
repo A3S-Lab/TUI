@@ -570,6 +570,14 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
         }
 
         let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if ch_width > width {
+            if !current.is_empty() {
+                parts.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            parts.push(truncate_visible(&ch.to_string(), width));
+            continue;
+        }
         if current_width > 0 && current_width + ch_width > width {
             parts.push(std::mem::take(&mut current));
             current_width = 0;
@@ -807,6 +815,16 @@ mod tests {
         );
         for line in output.lines() {
             assert!(visible_len(line) <= 8, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn paragraph_clips_wide_glyphs_at_single_column_width() {
+        let md = Markdown::new().with_width(1);
+        let output = md.render("中文");
+
+        for line in output.lines() {
+            assert!(visible_len(line) <= 1, "{line:?}");
         }
     }
 
