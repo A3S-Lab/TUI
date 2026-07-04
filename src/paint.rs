@@ -55,10 +55,6 @@ impl ClipRect {
         }
     }
 
-    fn intersects_node(self, node: &LayoutNode) -> bool {
-        !self.intersect_node(node).is_empty()
-    }
-
     fn clipped_rect(self, x: u16, y: u16, w: u16, h: u16) -> Option<(u16, u16, u16, u16)> {
         let left = self.left.max(x as usize);
         let top = self.top.max(y as usize);
@@ -97,7 +93,7 @@ fn paint_element<Msg>(
     };
     *idx += 1;
 
-    if !clip.intersects_node(node) {
+    if clip.is_empty() || node.x as usize >= clip.right || node.y as usize >= clip.bottom {
         skip_children(element, layout, idx);
         return;
     }
@@ -492,6 +488,23 @@ mod tests {
         let grid = render(&el, 8, 1);
 
         assert_eq!(grid.render_to_string(), "abcdef  ");
+    }
+
+    #[test]
+    fn paint_visible_overflow_keeps_zero_width_box_children() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .width(Dimension::Points(0.0))
+                .height(Dimension::Points(1.0))
+                .child(Element::Text(
+                    TextElement::new("abc").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 4, 1);
+
+        assert_eq!(grid.render_to_string(), "abc ");
     }
 
     #[test]
