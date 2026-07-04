@@ -382,8 +382,7 @@ impl Style {
     }
 
     pub fn render(&self, content: &str) -> String {
-        let lines: Vec<&str> = content.lines().collect();
-        let lines = if lines.is_empty() { vec![""] } else { lines };
+        let lines = split_lines_preserving_trailing_blank(content);
 
         let content_width = self.content_width(&lines);
         let pad_left = self.padding[3] as usize;
@@ -895,6 +894,16 @@ mod tests {
         assert_eq!(
             out.lines().collect::<Vec<_>>(),
             vec!["╭───╮", "│   │", "│ x │", "│   │", "╰───╯"]
+        );
+    }
+
+    #[test]
+    fn render_border_preserves_trailing_blank_content_row() {
+        let out = Style::new().border(Border::Rounded).render("x\n");
+
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec!["╭─╮", "│x│", "│ │", "╰─╯"]
         );
     }
 
