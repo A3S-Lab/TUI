@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::style::Color;
 
+const MAX_TOAST_VISIBLE: usize = u16::MAX as usize;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -70,7 +72,7 @@ impl ToastManager {
     }
 
     pub fn with_max_visible(mut self, max: usize) -> Self {
-        self.max_visible = max;
+        self.max_visible = max.min(MAX_TOAST_VISIBLE);
         self
     }
 
@@ -200,5 +202,19 @@ mod tests {
         assert_eq!(ToastKind::Success.color(), Color::Green);
         assert_eq!(ToastKind::Warning.color(), Color::Yellow);
         assert_eq!(ToastKind::Error.color(), Color::Red);
+    }
+
+    #[test]
+    fn oversized_visible_limit_is_clamped() {
+        let mut tm = ToastManager::new().with_max_visible(usize::MAX);
+        tm.push(ToastKind::Info, "one");
+        tm.push(ToastKind::Info, "two");
+
+        assert_eq!(tm.max_visible, MAX_TOAST_VISIBLE);
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 2);
     }
 }
