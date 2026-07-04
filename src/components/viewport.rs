@@ -3,6 +3,7 @@ use crate::event::{MouseEvent, MouseEventKind};
 use crate::style::{slice_visible_cols, strip_ansi, truncate_visible, visible_len, Style};
 
 pub struct Viewport {
+    content: String,
     lines: Vec<String>,
     offset: usize,
     width: u16,
@@ -104,6 +105,7 @@ impl SelectionRange {
 impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
+            content: String::new(),
             lines: Vec::new(),
             offset: 0,
             width,
@@ -123,21 +125,24 @@ impl Viewport {
     }
 
     pub fn set_content(&mut self, content: &str) {
-        self.lines = self.wrap_content(content);
+        self.content.clear();
+        self.content.push_str(content);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
     }
 
     pub fn append(&mut self, content: &str) {
-        let new_lines = self.wrap_content(content);
-        self.lines.extend(new_lines);
+        self.content.push_str(content);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
     }
 
     pub fn clear(&mut self) {
+        self.content.clear();
         self.lines.clear();
         self.offset = 0;
     }
@@ -145,8 +150,7 @@ impl Viewport {
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
-        let raw: String = self.lines.join("\n");
-        self.lines = self.wrap_content(&raw);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
@@ -279,30 +283,33 @@ impl Viewport {
         (offset, end)
     }
 
-    fn wrap_content(&self, content: &str) -> Vec<String> {
-        let w = self.width as usize;
-        let mut result = Vec::new();
-
-        for line in content.lines() {
-            if w == 0 {
-                result.push(line.to_string());
-                continue;
-            }
-            let vis = visible_len(line);
-            if vis <= w {
-                result.push(line.to_string());
-            } else {
-                let wrapped = wrap_line(line, w);
-                result.extend(wrapped);
-            }
-        }
-
-        if content.ends_with('\n') && !content.is_empty() {
-            result.push(String::new());
-        }
-
-        result
+    fn rewrap_content(&mut self) {
+        self.lines = wrap_content(&self.content, self.width as usize);
     }
+}
+
+fn wrap_content(content: &str, width: usize) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        if width == 0 {
+            result.push(line.to_string());
+            continue;
+        }
+        let vis = visible_len(line);
+        if vis <= width {
+            result.push(line.to_string());
+        } else {
+            let wrapped = wrap_line(line, width);
+            result.extend(wrapped);
+        }
+    }
+
+    if content.ends_with('\n') && !content.is_empty() {
+        result.push(String::new());
+    }
+
+    result
 }
 
 /// Return plain text selected from a rendered viewport view.
@@ -598,6 +605,32 @@ mod tests {
         assert!(vp.total_lines() >= 2);
         let view = vp.view();
         assert!(view.contains("second"));
+    }
+
+    #[test]
+    fn append_content_without_newline_extends_current_line() {
+        let mut vp = Viewport::new(80, 2);
+        vp.set_content("first");
+        vp.append(" second");
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+
+        assert_eq!(rows[0], "first second");
+    }
+
+    #[test]
+    fn resize_rewraps_from_raw_content() {
+        let mut vp = Viewport::new(5, 3);
+        vp.set_content("abcdef");
+        assert_eq!(vp.total_lines(), 2);
+
+        vp.resize(20, 3);
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+        assert_eq!(rows[0], "abcdef");
+        assert_eq!(vp.total_lines(), 1);
     }
 
     #[test]
