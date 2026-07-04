@@ -10,6 +10,8 @@ use syntect::parsing::SyntaxSet;
 
 use crate::style::{visible_len, Color, Style};
 
+const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
+
 pub struct Markdown {
     width: usize,
     syntax_set: SyntaxSet,
@@ -28,7 +30,7 @@ impl Markdown {
     }
 
     pub fn with_width(mut self, width: usize) -> Self {
-        self.width = width;
+        self.width = width.min(MAX_MARKDOWN_WIDTH);
         self
     }
 
@@ -542,6 +544,14 @@ mod tests {
         let output = md.render("this is a long sentence that should wrap");
         let lines: Vec<&str> = output.lines().collect();
         assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let md = Markdown::new().with_width(usize::MAX);
+
+        assert_eq!(md.width, MAX_MARKDOWN_WIDTH);
+        assert!(md.render("hello").contains("hello"));
     }
 
     #[test]
