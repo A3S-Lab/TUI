@@ -129,8 +129,8 @@ impl ShimmerText {
         let span = chars
             .len()
             .saturating_add(self.cycle_gap)
-            .min(MAX_CYCLE_GAP) as isize;
-        let head = (self.phase / self.speed_divisor) as isize % span;
+            .min(MAX_CYCLE_GAP);
+        let head = ((self.phase / self.speed_divisor) % span) as isize;
 
         chars
             .into_iter()
@@ -266,5 +266,22 @@ mod tests {
 
         assert_eq!(shimmer.cycle_gap, MAX_CYCLE_GAP);
         assert_eq!(strip_ansi(&shimmer.view()), "go");
+    }
+
+    #[test]
+    fn oversized_phase_wraps_within_cycle() {
+        let rendered = ShimmerText::new("go")
+            .phase(usize::MAX)
+            .cycle_gap(1)
+            .speed_divisor(1)
+            .view();
+        let expected = ShimmerText::new("go")
+            .phase(usize::MAX % 3)
+            .cycle_gap(1)
+            .speed_divisor(1)
+            .view();
+
+        assert_eq!(rendered, expected);
+        assert_eq!(strip_ansi(&rendered), "go");
     }
 }
