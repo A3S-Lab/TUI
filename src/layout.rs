@@ -1,4 +1,4 @@
-use crate::style::visible_len;
+use crate::style::{split_lines_preserving_trailing_blank, visible_len};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Constraint {
@@ -102,7 +102,7 @@ impl Layout {
 
         for (i, (content, _)) in self.items.iter().enumerate() {
             let height = sizes[i] as usize;
-            let lines: Vec<&str> = content.lines().collect();
+            let lines = split_lines_preserving_trailing_blank(content);
 
             for row in 0..height {
                 if row < lines.len() {
@@ -120,7 +120,7 @@ impl Layout {
         let max_height = self
             .items
             .iter()
-            .map(|(content, _)| content.lines().count().max(1))
+            .map(|(content, _)| split_lines_preserving_trailing_blank(content).len())
             .max()
             .unwrap_or(1);
 
@@ -130,7 +130,7 @@ impl Layout {
             .enumerate()
             .map(|(i, (content, _))| {
                 let width = sizes[i] as usize;
-                let lines: Vec<&str> = content.lines().collect();
+                let lines = split_lines_preserving_trailing_blank(content);
                 (0..max_height)
                     .map(|row| {
                         if row < lines.len() {
@@ -275,6 +275,15 @@ mod tests {
         let output = layout.render(12);
         assert!(output.contains("left"));
         assert!(output.contains("right"));
+    }
+
+    #[test]
+    fn render_horizontal_preserves_trailing_blank_rows() {
+        let layout = Layout::horizontal()
+            .item("A\n", Constraint::Fixed(2))
+            .item("B", Constraint::Fixed(2));
+
+        assert_eq!(layout.render(4), "A B \n    ");
     }
 
     #[test]
