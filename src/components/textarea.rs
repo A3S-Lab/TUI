@@ -302,12 +302,36 @@ impl Textarea {
     fn render_line_with_cursor(&self, line: &str) -> String {
         let width = (self.width as usize).max(1);
         let start = self.scroll_start();
+        let end = start.saturating_add(width);
 
         let mut out = String::new();
         let mut disp = 0usize; // absolute display column scanned
         let mut shown = 0usize; // visible columns emitted
-        for ch in line.chars() {
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
             let w = Self::char_width(ch);
+            if w == 0 {
+                if disp >= end {
+                    break;
+                }
+                if disp >= start {
+                    out.push(ch);
+                }
+                continue;
+            }
+
+            let mut cell = ch.to_string();
+            while let Some(next) = chars.peek().copied() {
+                if Self::char_width(next) != 0 {
+                    break;
+                }
+                cell.push(next);
+                chars.next();
+            }
+
+            if disp >= end {
+                break;
+            }
             if disp < start {
                 disp += w; // starts before the scroll window — skip wholly
                 continue;
@@ -315,7 +339,7 @@ impl Textarea {
             if shown + w > width {
                 break; // right edge reached
             }
-            out.push(ch);
+            out.push_str(&cell);
             disp += w;
             shown += w;
         }
@@ -644,6 +668,42 @@ mod tests {
             "cursor col {} out of view",
             ta.cursor_display_col()
         );
+    }
+
+    #[test]
+    fn horizontal_scroll_keeps_zero_width_marks_with_visible_base_glyph() {
+        let mut ta = Textarea::new().with_width(1).with_height(1);
+        ta.set_value("e\u{301}x");
+        ta.handle_key(&key(KeyCode::Home));
+
+        assert_eq!(ta.view(), "e\u{301}");
+        assert_eq!(crate::style::visible_len(&ta.view()), 1);
+
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected textarea element box");
+        };
+        let Element::Text(line) = &box_el.children[0] else {
+            panic!("expected textarea text line");
+        };
+        assert_eq!(line.content, "e\u{301}");
+    }
+
+    #[test]
+    fn horizontal_scroll_drops_zero_width_marks_with_hidden_base_glyph() {
+        let mut ta = Textarea::new().with_width(2).with_height(1);
+        ta.set_value("e\u{301}x");
+
+        assert_eq!(ta.view(), "x");
+        assert_eq!(crate::style::visible_len(&ta.view()), 1);
+        assert_eq!(ta.cursor_display_col(), 1);
+
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected textarea element box");
+        };
+        let Element::Text(line) = &box_el.children[0] else {
+            panic!("expected textarea text line");
+        };
+        assert_eq!(line.content, "x");
     }
 
     #[test]
