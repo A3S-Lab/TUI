@@ -20,6 +20,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+fn frame_delay(last_render: Instant, frame_duration: Duration) -> Duration {
+    frame_duration.saturating_sub(last_render.elapsed())
+}
+
 /// Builder for configuring and running an element-based TUI program.
 ///
 /// ```rust,no_run
@@ -137,6 +141,7 @@ impl ElementProgram {
             let layout = layout_engine.compute(&element, width, height);
             let grid = paint::paint(&element, &layout, width, height);
             diff_renderer.render(&mut terminal, grid)?;
+            last_render = Instant::now();
         }
 
         loop {
@@ -164,6 +169,8 @@ impl ElementProgram {
                         Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                     }
                     dirty = true;
+                }
+                _ = tokio::time::sleep(frame_delay(last_render, frame_duration)), if dirty => {
                 }
             }
 
@@ -220,5 +227,27 @@ impl ElementProgram {
                 CmdResult::None => {}
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_delay_reaches_zero_after_deadline() {
+        let frame_duration = Duration::from_millis(16);
+        let last_render = Instant::now() - Duration::from_millis(20);
+
+        assert_eq!(frame_delay(last_render, frame_duration), Duration::ZERO);
+    }
+
+    #[test]
+    fn frame_delay_reports_remaining_frame_time() {
+        let frame_duration = Duration::from_millis(16);
+        let delay = frame_delay(Instant::now(), frame_duration);
+
+        assert!(delay <= frame_duration);
+        assert!(delay > Duration::ZERO);
     }
 }

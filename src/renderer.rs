@@ -40,20 +40,31 @@ impl Renderer {
     }
 
     pub fn render_if_changed(&mut self, terminal: &mut Terminal, view: &str) -> io::Result<()> {
-        let new_lines: Vec<&str> = view.lines().collect();
-        let same = new_lines.len() == self.last_lines.len()
-            && new_lines
-                .iter()
-                .zip(self.last_lines.iter())
-                .all(|(a, b)| *a == b.as_str());
-
-        if same {
+        if !self.is_changed(view) {
             return Ok(());
         }
-        if self.last_render.elapsed() < self.frame_duration {
+        if !self.is_frame_due() {
             return Ok(());
         }
         self.render(terminal, view)
+    }
+
+    pub fn is_changed(&self, view: &str) -> bool {
+        let new_lines: Vec<&str> = view.lines().collect();
+        new_lines.len() != self.last_lines.len()
+            || new_lines
+                .iter()
+                .zip(self.last_lines.iter())
+                .any(|(a, b)| *a != b.as_str())
+    }
+
+    pub fn is_frame_due(&self) -> bool {
+        self.last_render.elapsed() >= self.frame_duration
+    }
+
+    pub fn time_until_next_frame(&self) -> Duration {
+        self.frame_duration
+            .saturating_sub(self.last_render.elapsed())
     }
 
     fn diff_render(&self, terminal: &mut Terminal, new_lines: &[String]) -> io::Result<()> {
@@ -72,5 +83,33 @@ impl Renderer {
         }
 
         terminal.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renderer_detects_changed_view_lines() {
+        let mut renderer = Renderer::new(60);
+        renderer.last_lines = vec!["one".to_string(), "two".to_string()];
+
+        assert!(!renderer.is_changed("one\ntwo"));
+        assert!(renderer.is_changed("one\nthree"));
+        assert!(renderer.is_changed("one\ntwo\nthree"));
+    }
+
+    #[test]
+    fn renderer_reports_frame_deadline() {
+        let mut renderer = Renderer::new(60);
+
+        renderer.last_render = Instant::now();
+        assert!(!renderer.is_frame_due());
+        assert!(renderer.time_until_next_frame() <= renderer.frame_duration);
+
+        renderer.last_render = Instant::now() - renderer.frame_duration - Duration::from_millis(1);
+        assert!(renderer.is_frame_due());
+        assert_eq!(renderer.time_until_next_frame(), Duration::ZERO);
     }
 }
