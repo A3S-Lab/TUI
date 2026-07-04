@@ -739,27 +739,10 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
             }
 
             while visible_len(&line) > width {
-                let mut head = String::new();
-                let mut used = 0usize;
-                for ch in line.chars() {
-                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
-                    if cw > width {
-                        head = truncate_visible(&ch.to_string(), width);
-                        break;
-                    }
-                    if used > 0 && used + cw > width {
-                        break;
-                    }
-                    used += cw;
-                    head.push(ch);
-                    if used >= width {
-                        break;
-                    }
-                }
+                let (head, rest) = split_visible_prefix(&line, width);
                 if head.is_empty() {
                     break;
                 }
-                let rest: String = line.chars().skip(head.chars().count()).collect();
                 out.push(head);
                 line = rest;
             }
@@ -774,6 +757,57 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
         out.push(String::new());
     }
     out
+}
+
+fn split_visible_prefix(value: &str, width: usize) -> (String, String) {
+    let mut head = String::new();
+    let mut used = 0usize;
+    let mut consumed_bytes = 0usize;
+    let mut chars = value.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.peek().copied() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if ch_width == 0 {
+            chars.next();
+            head.push(ch);
+            consumed_bytes = idx + ch.len_utf8();
+            continue;
+        }
+
+        let mut preview = chars.clone();
+        preview.next();
+        let mut cell = ch.to_string();
+        let mut cell_end = idx + ch.len_utf8();
+        while let Some((next_idx, next)) = preview.peek().copied() {
+            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            preview.next();
+            cell.push(next);
+            cell_end = next_idx + next.len_utf8();
+        }
+
+        if ch_width > width {
+            if head.is_empty() {
+                head = truncate_visible(&cell, width);
+                consumed_bytes = cell_end;
+            }
+            break;
+        }
+        if used > 0 && used + ch_width > width {
+            break;
+        }
+
+        chars = preview;
+        head.push_str(&cell);
+        consumed_bytes = cell_end;
+        used += ch_width;
+        if used >= width {
+            break;
+        }
+    }
+
+    (head, value[consumed_bytes..].to_string())
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -1030,6 +1064,22 @@ mod tests {
 
         assert!(lines.iter().all(|line| visible_len(line) <= 8));
         assert_eq!(lines.concat(), "中文测试内容");
+    }
+
+    #[test]
+    fn wrap_words_hard_break_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_words_compact("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_words_hard_break_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_words_compact("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
     }
 
     #[test]
