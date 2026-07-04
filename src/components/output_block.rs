@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_OUTPUT_BLOCK_INDENT: usize = u16::MAX as usize;
+
 /// Status indicator for an [`OutputBlock`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputStatus {
@@ -118,7 +120,7 @@ impl OutputBlock {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_OUTPUT_BLOCK_INDENT);
         self
     }
 
@@ -239,7 +241,7 @@ impl OutputBlock {
     }
 
     fn render_header(&self, width: usize) -> String {
-        let prefix = " ".repeat(self.indent);
+        let prefix = " ".repeat(self.header_indent_for_width(width));
         let bullet = Style::new()
             .fg(self.status_color())
             .bold()
@@ -248,7 +250,7 @@ impl OutputBlock {
         let mut raw = format!("{prefix}{bullet} {title}");
         if let Some(detail) = self.detail.as_deref().filter(|detail| !detail.is_empty()) {
             let used = visible_len(&raw);
-            let available = width.saturating_sub(used + 1);
+            let available = width.saturating_sub(used.saturating_add(1));
             let detail = truncate_visible(detail, available);
             raw.push(' ');
             raw.push_str(&Style::new().fg(self.detail_color).render(&detail));
@@ -263,9 +265,9 @@ impl OutputBlock {
             .enumerate()
             .map(|(index, row)| {
                 let prefix = if index == 0 && !row.is_continuation {
-                    self.body_prefix_styled()
+                    self.body_prefix_styled_for_width(width)
                 } else {
-                    self.body_continuation_plain()
+                    self.body_continuation_plain_for_width(width)
                 };
                 let color = if row.omitted {
                     self.detail_color
@@ -307,23 +309,28 @@ impl OutputBlock {
         match self.detail.as_deref().filter(|detail| !detail.is_empty()) {
             Some(detail) => format!(
                 "{}{} {} {}",
-                " ".repeat(self.indent),
+                " ".repeat(self.indent_for_element()),
                 self.bullet,
                 self.title,
                 detail
             ),
-            None => format!("{}{} {}", " ".repeat(self.indent), self.bullet, self.title),
+            None => format!(
+                "{}{} {}",
+                " ".repeat(self.indent_for_element()),
+                self.bullet,
+                self.title
+            ),
         }
     }
 
     fn body_prefix_plain(&self) -> String {
-        format!("{}  {}  ", " ".repeat(self.indent), self.connector)
+        self.body_prefix_plain_for_indent(self.indent_for_element())
     }
 
-    fn body_prefix_styled(&self) -> String {
+    fn body_prefix_styled_for_width(&self, width: usize) -> String {
         format!(
             "{}  {}  ",
-            " ".repeat(self.indent),
+            " ".repeat(self.body_indent_for_width(width)),
             Style::new()
                 .fg(self.connector_color)
                 .render(&self.connector)
@@ -334,10 +341,40 @@ impl OutputBlock {
         " ".repeat(visible_len(&self.body_prefix_plain()))
     }
 
+    fn body_continuation_plain_for_width(&self, width: usize) -> String {
+        " ".repeat(visible_len(&self.body_prefix_plain_for_width(width)))
+    }
+
     fn body_text_width(&self, width: usize) -> usize {
         width
-            .saturating_sub(visible_len(&self.body_prefix_plain()))
+            .saturating_sub(visible_len(&self.body_prefix_plain_for_width(width)))
             .max(1)
+    }
+
+    fn header_indent_for_width(&self, width: usize) -> usize {
+        let fixed_width = visible_len(&self.bullet).saturating_add(1);
+        self.indent
+            .min(width.saturating_sub(fixed_width))
+            .min(MAX_OUTPUT_BLOCK_INDENT)
+    }
+
+    fn body_indent_for_width(&self, width: usize) -> usize {
+        let fixed_width = visible_len(&self.connector).saturating_add(5);
+        self.indent
+            .min(width.saturating_sub(fixed_width))
+            .min(MAX_OUTPUT_BLOCK_INDENT)
+    }
+
+    fn body_prefix_plain_for_width(&self, width: usize) -> String {
+        self.body_prefix_plain_for_indent(self.body_indent_for_width(width))
+    }
+
+    fn body_prefix_plain_for_indent(&self, indent: usize) -> String {
+        format!("{}  {}  ", " ".repeat(indent), self.connector)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_OUTPUT_BLOCK_INDENT)
     }
 
     fn status_color(&self) -> Color {
@@ -438,6 +475,36 @@ mod tests {
     #[test]
     fn zero_width_renders_empty_string() {
         assert_eq!(OutputBlock::new("Ran").line("x").view(0), "");
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let block = OutputBlock::new("Ran")
+            .detail("npm test")
+            .indent(usize::MAX)
+            .line("completed");
+        let rendered = block.view(8);
+
+        assert_eq!(block.indent, MAX_OUTPUT_BLOCK_INDENT);
+        assert_eq!(block.header_indent_for_width(8), 6);
+        assert_eq!(block.body_indent_for_width(8), 2);
+        assert_eq!(block.body_text_width(8), 1);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let body = block.render_body(8);
+        let plain_body = strip_ansi(&body[0]);
+        assert!(plain_body.starts_with("    ⎿  "));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(header) = &column.children[0] else {
+            panic!("expected header text");
+        };
+        assert_eq!(
+            visible_len(&header.content),
+            MAX_OUTPUT_BLOCK_INDENT + visible_len("• Ran npm test")
+        );
     }
 
     #[test]
