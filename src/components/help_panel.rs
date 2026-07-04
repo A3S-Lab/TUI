@@ -1,6 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, Color, Style};
 
+const MAX_HELP_PANEL_GAP: usize = u16::MAX as usize;
+const MAX_HELP_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_HELP_PANEL_KEY_WIDTH: usize = u16::MAX as usize;
+
 /// One key/action row inside a help section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelpRow {
@@ -119,17 +123,17 @@ impl HelpPanel {
     }
 
     pub fn key_width(mut self, width: usize) -> Self {
-        self.key_width = width;
+        self.key_width = width.min(MAX_HELP_PANEL_KEY_WIDTH);
         self
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_HELP_PANEL_INDENT);
         self
     }
 
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_HELP_PANEL_GAP);
         self
     }
 
@@ -209,7 +213,9 @@ impl HelpPanel {
                         .child(Element::Text(
                             TextElement::new(row.key.as_str()).fg(self.key_color).bold(),
                         ))
-                        .child(Element::Text(TextElement::new(" ".repeat(self.gap))))
+                        .child(Element::Text(TextElement::new(
+                            " ".repeat(self.gap_for_element()),
+                        )))
                         .child(Element::Text(
                             TextElement::new(row.description.as_str()).fg(self.description_color),
                         )),
@@ -265,10 +271,13 @@ impl HelpPanel {
     }
 
     fn render_row(&self, row: &HelpRow, width: usize) -> String {
-        let indent = " ".repeat(self.indent);
-        let key = fit_visible(&row.key, self.key_width);
-        let gap = " ".repeat(self.gap);
-        let used = self.indent + self.key_width + self.gap;
+        let (indent_width, key_width, gap_width) = self.spacing_for_width(width);
+        let indent = " ".repeat(indent_width);
+        let key = fit_visible(&row.key, key_width);
+        let gap = " ".repeat(gap_width);
+        let used = [indent_width, key_width, gap_width]
+            .into_iter()
+            .fold(0usize, usize::saturating_add);
         let description_width = width.saturating_sub(used);
         let description = truncate_visible(&row.description, description_width);
 
@@ -278,6 +287,19 @@ impl HelpPanel {
             gap,
             Style::new().fg(self.description_color).render(&description)
         )
+    }
+
+    fn spacing_for_width(&self, width: usize) -> (usize, usize, usize) {
+        let indent = self.indent.min(width).min(MAX_HELP_PANEL_INDENT);
+        let remaining = width.saturating_sub(indent);
+        let key_width = self.key_width.min(remaining).min(MAX_HELP_PANEL_KEY_WIDTH);
+        let remaining = remaining.saturating_sub(key_width);
+        let gap = self.gap.min(remaining).min(MAX_HELP_PANEL_GAP);
+        (indent, key_width, gap)
+    }
+
+    fn gap_for_element(&self) -> usize {
+        self.gap.min(MAX_HELP_PANEL_GAP)
     }
 }
 
@@ -350,6 +372,34 @@ mod tests {
         let rendered = sample_panel().view(60, 3);
 
         assert_eq!(rendered.lines().count(), 3);
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel = HelpPanel::without_title()
+            .indent(usize::MAX)
+            .gap(usize::MAX)
+            .key_width(usize::MAX)
+            .section(HelpSection::new("Keys").row("Enter", "send"));
+        let rendered = panel.view(8, 4);
+        let raw_row = panel.render_row(panel.sections[0].rows.first().unwrap(), 8);
+
+        assert_eq!(panel.indent, MAX_HELP_PANEL_INDENT);
+        assert_eq!(panel.gap, MAX_HELP_PANEL_GAP);
+        assert_eq!(panel.key_width, MAX_HELP_PANEL_KEY_WIDTH);
+        assert_eq!(visible_len(&raw_row), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[1] else {
+            panic!("expected row element");
+        };
+        let Element::Text(gap) = &row.children[1] else {
+            panic!("expected gap text");
+        };
+        assert_eq!(gap.content.len(), MAX_HELP_PANEL_GAP);
     }
 
     #[test]
