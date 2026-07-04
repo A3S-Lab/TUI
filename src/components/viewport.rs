@@ -194,7 +194,8 @@ impl Viewport {
         if max == 0 {
             return 100;
         }
-        ((self.offset as f64 / max as f64) * 100.0) as u8
+        let offset = self.offset.min(max);
+        ((offset as u128 * 100) / max as u128) as u8
     }
 
     pub fn at_bottom(&self) -> bool {
@@ -474,6 +475,21 @@ mod tests {
             panic!("expected first rendered line");
         };
         assert_eq!(first.content, "only");
+    }
+
+    #[test]
+    fn scroll_percent_clamps_stale_offset_after_shrink() {
+        let mut vp = Viewport::new(80, 5).with_auto_scroll(false);
+        vp.set_content(
+            &(1..=50)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        vp.update(ViewportMsg::ScrollDown(40));
+        vp.set_content("only\ntwo\nthree\nfour\nfive\nsix");
+
+        assert_eq!(vp.scroll_percent(), 100);
     }
 
     #[test]
