@@ -156,6 +156,13 @@ mod tests {
     }
 
     #[test]
+    fn preserves_trailing_newline() {
+        let p = Paragraph::new("line1\n").width(80);
+
+        assert_eq!(p.wrap(), vec!["line1", ""]);
+    }
+
+    #[test]
     fn indent_adds_spaces() {
         let p = Paragraph::new("hello").width(80).indent(4);
         let lines = p.wrap();

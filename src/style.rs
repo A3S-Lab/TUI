@@ -688,7 +688,7 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
     }
 
     let mut out = Vec::new();
-    for para in text.lines() {
+    for para in split_lines_preserving_trailing_blank(text) {
         if para.trim().is_empty() {
             if !compact {
                 out.push(String::new());
@@ -941,6 +941,13 @@ mod tests {
         let lines = wrap_words("alpha\n\nbeta", 40);
 
         assert_eq!(lines, vec!["alpha", "", "beta"]);
+    }
+
+    #[test]
+    fn wrap_words_preserves_trailing_blank_lines() {
+        let lines = wrap_words("alpha\n", 40);
+
+        assert_eq!(lines, vec!["alpha", ""]);
     }
 
     #[test]
