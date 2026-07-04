@@ -310,6 +310,19 @@ impl Grid {
                     });
                 }
             }
+
+            if other.width > self.width {
+                for x in self.width..other.width {
+                    let cell = &other.cells[y as usize][x as usize];
+                    if *cell != Cell::default() {
+                        changes.push(CellChange {
+                            x,
+                            y,
+                            cell: cell.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         if other.height > self.height {
@@ -528,6 +541,20 @@ mod tests {
         let grid2 = Grid::new(5, 3);
         let changes = grid1.diff(&grid2);
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn grid_diff_detects_non_empty_cells_in_new_columns() {
+        let grid1 = Grid::new(1, 2);
+        let mut grid2 = Grid::new(3, 2);
+        grid2.set(2, 1, Cell::with_char('B'));
+
+        let changes = grid1.diff(&grid2);
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].x, 2);
+        assert_eq!(changes[0].y, 1);
+        assert_eq!(changes[0].cell.ch, 'B');
     }
 
     #[test]
