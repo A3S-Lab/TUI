@@ -4,6 +4,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 const MAX_CONNECTOR_BLOCK_GAP: usize = u16::MAX as usize;
 const MAX_CONNECTOR_BLOCK_INDENT: usize = u16::MAX as usize;
 const MAX_CONNECTOR_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_CONNECTOR_BLOCK_ROWS: usize = u16::MAX as usize;
 
 /// Connector-led rows for compact tool output and task summaries.
 ///
@@ -84,7 +85,7 @@ impl ConnectorBlock {
     }
 
     pub fn max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows.max(1));
+        self.max_rows = Some(max_rows.max(1).min(MAX_CONNECTOR_BLOCK_ROWS));
         self
     }
 
@@ -192,7 +193,8 @@ impl ConnectorBlock {
         }
 
         let start = self.rows.len().saturating_sub(max_rows);
-        let mut rows = Vec::with_capacity(max_rows + usize::from(self.show_omitted_count));
+        let mut rows =
+            Vec::with_capacity(max_rows.saturating_add(usize::from(self.show_omitted_count)));
         if self.show_omitted_count {
             rows.push(ConnectorRow::new(format!("… +{start} earlier lines")).omitted());
         }
@@ -475,6 +477,16 @@ mod tests {
                 + visible_len(&block.connector)
                 + MAX_CONNECTOR_BLOCK_GAP
         );
+    }
+
+    #[test]
+    fn oversized_row_limit_is_clamped() {
+        let block = ConnectorBlock::text("one\ntwo").max_rows(usize::MAX);
+        let rendered = block.view(8);
+
+        assert_eq!(block.max_rows, Some(MAX_CONNECTOR_BLOCK_ROWS));
+        assert_eq!(block.visible_rows().len(), 2);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
     }
 
     #[test]
