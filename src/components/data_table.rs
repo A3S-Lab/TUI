@@ -1,5 +1,7 @@
 use crate::style::{truncate_visible, visible_len, Color, Style};
 
+const MAX_DATA_TABLE_GAP: usize = u16::MAX as usize;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellAlign {
     Left,
@@ -172,7 +174,7 @@ impl DataTable {
     }
 
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_DATA_TABLE_GAP);
         self
     }
 
@@ -207,6 +209,8 @@ impl DataTable {
         }
 
         let widths = self.column_widths(&cols, width);
+        let gap = self.gap_for_width(width, cols.len());
+        let gap_text = " ".repeat(gap);
         let mut lines = Vec::new();
         let header = cols
             .iter()
@@ -216,7 +220,7 @@ impl DataTable {
                 format_cell(&column.header_label(), *w, column.align)
             })
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap));
+            .join(&gap_text);
         lines.push(
             Style::new()
                 .fg(self.header_fg)
@@ -232,7 +236,7 @@ impl DataTable {
             .iter()
             .map(|w| "─".repeat(*w))
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap));
+            .join(&gap_text);
         lines.push(
             Style::new()
                 .fg(self.separator_fg)
@@ -262,7 +266,7 @@ impl DataTable {
         );
         for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
             let selected = self.selected == Some(idx);
-            let raw = self.row_line(row, &cols, &widths, selected);
+            let raw = self.row_line(row, &cols, &widths, selected, &gap_text);
             let line = pad_or_truncate(&raw, width);
             let mut style = Style::new();
             if selected {
@@ -288,7 +292,14 @@ impl DataTable {
         lines.join("\n")
     }
 
-    fn row_line(&self, row: &DataRow, cols: &[usize], widths: &[usize], selected: bool) -> String {
+    fn row_line(
+        &self,
+        row: &DataRow,
+        cols: &[usize],
+        widths: &[usize],
+        selected: bool,
+        gap: &str,
+    ) -> String {
         cols.iter()
             .zip(widths.iter())
             .map(|(col_idx, w)| {
@@ -304,7 +315,7 @@ impl DataTable {
                 }
             })
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap))
+            .join(gap)
     }
 
     fn visible_columns(&self) -> Vec<usize> {
@@ -321,7 +332,7 @@ impl DataTable {
             return cols;
         }
 
-        while cols.len() > 1 && self.requested_total_width(&cols) > width {
+        while cols.len() > 1 && self.requested_total_width(&cols, width) > width {
             let Some(lowest_priority) = cols
                 .iter()
                 .filter_map(|idx| self.columns[*idx].priority)
@@ -341,13 +352,13 @@ impl DataTable {
         cols
     }
 
-    fn requested_total_width(&self, cols: &[usize]) -> usize {
-        let gap_total = self.gap.saturating_mul(cols.len().saturating_sub(1));
-        gap_total
-            + cols
-                .iter()
-                .map(|idx| self.requested_column_width(*idx))
-                .sum::<usize>()
+    fn requested_total_width(&self, cols: &[usize], width: usize) -> usize {
+        cols.iter()
+            .map(|idx| self.requested_column_width(*idx))
+            .fold(
+                self.gap_total_for_width(width, cols.len()),
+                usize::saturating_add,
+            )
     }
 
     fn requested_column_width(&self, idx: usize) -> usize {
@@ -366,7 +377,7 @@ impl DataTable {
     }
 
     fn column_widths(&self, cols: &[usize], width: usize) -> Vec<usize> {
-        let gap_total = self.gap.saturating_mul(cols.len().saturating_sub(1));
+        let gap_total = self.gap_total_for_width(width, cols.len());
         let available = width.saturating_sub(gap_total).max(cols.len());
         let mut widths = cols
             .iter()
@@ -396,6 +407,21 @@ impl DataTable {
         }
 
         widths
+    }
+
+    fn gap_for_width(&self, width: usize, column_count: usize) -> usize {
+        let separators = column_count.saturating_sub(1);
+        if separators == 0 {
+            return 0;
+        }
+
+        let max_gap = width.saturating_sub(column_count) / separators;
+        self.gap.min(max_gap).min(MAX_DATA_TABLE_GAP)
+    }
+
+    fn gap_total_for_width(&self, width: usize, column_count: usize) -> usize {
+        self.gap_for_width(width, column_count)
+            .saturating_mul(column_count.saturating_sub(1))
     }
 }
 
@@ -503,6 +529,27 @@ mod tests {
         for line in strip_ansi(&table.view(12, 4)).lines() {
             assert!(visible_len(line) <= 12, "{line:?}");
         }
+    }
+
+    #[test]
+    fn oversized_gap_is_clamped_to_render_width() {
+        let table = DataTable::new(vec![
+            DataColumn::new("A").width(1),
+            DataColumn::new("B").width(1),
+            DataColumn::new("C").width(1),
+        ])
+        .gap(usize::MAX)
+        .row(DataRow::new(vec!["1", "2", "3"]));
+
+        assert_eq!(table.gap, MAX_DATA_TABLE_GAP);
+        assert_eq!(table.gap_for_width(9, 3), 3);
+        assert_eq!(table.gap_total_for_width(9, 3), 6);
+
+        let plain = strip_ansi(&table.view(9, 4));
+        let header = plain.lines().next().unwrap();
+        assert_eq!(visible_len(header), 9);
+        assert!(header.contains("A   B   C"));
+        assert!(plain.lines().all(|line| visible_len(line) == 9));
     }
 
     #[test]
