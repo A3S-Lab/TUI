@@ -1,6 +1,5 @@
 use crate::element::{BoxElement, Element, TextElement};
-use crate::style::{slice_visible_cols, visible_len, Color, Style};
-use unicode_width::UnicodeWidthChar;
+use crate::style::{next_display_cell_boundary, slice_visible_cols, visible_len, Color, Style};
 
 const MAX_CURSOR_LINE_WIDTH: usize = u16::MAX as usize;
 
@@ -176,30 +175,24 @@ struct CursorLineParts {
 fn split_window_at_cursor(window: &str, cursor_col: usize) -> (String, String, String) {
     let mut before = String::new();
     let mut col = 0usize;
+    let mut index = 0usize;
 
-    for (index, ch) in window.char_indices() {
-        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    while let Some((end, width)) = next_display_cell_boundary(window, index) {
+        let cell = &window[index..end];
         if width == 0 {
-            before.push(ch);
+            before.push_str(cell);
+            index = end;
             continue;
         }
 
         let next_col = col.saturating_add(width);
         if cursor_col < next_col {
-            let mut cursor = ch.to_string();
-            let mut after_index = index + ch.len_utf8();
-            for next in window[after_index..].chars() {
-                if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                    break;
-                }
-                cursor.push(next);
-                after_index += next.len_utf8();
-            }
-            return (before, cursor, window[after_index..].to_string());
+            return (before, cell.to_string(), window[end..].to_string());
         }
 
-        before.push(ch);
+        before.push_str(cell);
         col = next_col;
+        index = end;
     }
 
     (window.to_string(), " ".to_string(), String::new())
