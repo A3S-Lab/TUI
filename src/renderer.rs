@@ -1,4 +1,4 @@
-use crate::terminal::Terminal;
+use crate::terminal::{terminal_row, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -64,7 +64,10 @@ impl Renderer {
             let old_line = self.last_lines.get(row).map(|s| s.as_str()).unwrap_or("");
 
             if new_line != old_line {
-                terminal.draw_line(row as u16, new_line)?;
+                let Some(row) = terminal_row(row) else {
+                    break;
+                };
+                terminal.draw_line(row, new_line)?;
             }
         }
 
