@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{pad_visible, visible_len, Color};
 
 pub struct Table {
     headers: Vec<String>,
@@ -10,7 +10,7 @@ pub struct Table {
 impl Table {
     pub fn new(headers: Vec<impl Into<String>>) -> Self {
         let headers: Vec<String> = headers.into_iter().map(|h| h.into()).collect();
-        let col_widths = headers.iter().map(|h| h.len()).collect();
+        let col_widths = headers.iter().map(|h| visible_len(h)).collect();
         Self {
             headers,
             rows: Vec::new(),
@@ -22,7 +22,7 @@ impl Table {
         let row: Vec<String> = cells.into_iter().map(|c| c.into()).collect();
         for (i, cell) in row.iter().enumerate() {
             if i < self.col_widths.len() {
-                self.col_widths[i] = self.col_widths[i].max(cell.len());
+                self.col_widths[i] = self.col_widths[i].max(visible_len(cell));
             }
         }
         self.rows.push(row);
@@ -33,7 +33,7 @@ impl Table {
         let row: Vec<String> = cells.into_iter().map(|c| c.into()).collect();
         for (i, cell) in row.iter().enumerate() {
             if i < self.col_widths.len() {
-                self.col_widths[i] = self.col_widths[i].max(cell.len());
+                self.col_widths[i] = self.col_widths[i].max(visible_len(cell));
             }
         }
         self.rows.push(row);
@@ -50,7 +50,7 @@ impl Table {
         let separator = self
             .col_widths
             .iter()
-            .map(|w| "─".repeat(*w + 2))
+            .map(|w| "─".repeat(w.saturating_add(2)))
             .collect::<Vec<_>>()
             .join("┼");
         lines.push(Element::Text(
@@ -74,8 +74,12 @@ impl Table {
             .iter()
             .enumerate()
             .map(|(i, cell)| {
-                let width = self.col_widths.get(i).copied().unwrap_or(cell.len());
-                format!(" {:width$} ", cell, width = width)
+                let width = self
+                    .col_widths
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| visible_len(cell));
+                format!(" {} ", pad_visible(cell, width))
             })
             .collect::<Vec<_>>()
             .join("│")
@@ -85,6 +89,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::visible_len;
 
     #[test]
     fn empty_table() {
@@ -118,6 +123,17 @@ mod tests {
     fn col_widths_expand() {
         let table = Table::new(vec!["X"]).row(vec!["longer text"]);
         assert_eq!(table.col_widths[0], 11);
+    }
+
+    #[test]
+    fn columns_align_wide_cells_by_display_width() {
+        let table = Table::new(vec!["文件", "State"]).row(vec!["中", "ok"]);
+        let header = table.format_row(&table.headers);
+        let row = table.format_row(&table.rows[0]);
+        let header_first_col = header.split('│').next().unwrap();
+        let row_first_col = row.split('│').next().unwrap();
+
+        assert_eq!(visible_len(header_first_col), visible_len(row_first_col));
     }
 
     #[test]
