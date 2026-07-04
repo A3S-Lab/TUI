@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_INPUT_BORDER_MARGIN: usize = u16::MAX as usize;
+const MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH: usize = u16::MAX as usize;
+
 /// Input-area border line with optional context and mode/effort labels.
 ///
 /// This extracts the CLI input chrome pattern: a margin, a horizontal rule,
@@ -37,7 +40,7 @@ impl InputBorder {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_INPUT_BORDER_MARGIN);
         self
     }
 
@@ -63,7 +66,7 @@ impl InputBorder {
     }
 
     pub fn suffix_rule_width(mut self, width: usize) -> Self {
-        self.suffix_rule_width = width;
+        self.suffix_rule_width = width.min(MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH);
         self
     }
 
@@ -130,8 +133,9 @@ impl InputBorder {
             return Vec::new();
         }
 
-        let inner_width = width.saturating_sub(self.margin);
-        let mut segments = vec![BorderSegment::plain(" ".repeat(self.margin))];
+        let margin = self.margin_for_width(width);
+        let inner_width = width.saturating_sub(margin);
+        let mut segments = vec![BorderSegment::plain(" ".repeat(margin))];
         if inner_width == 0 {
             return segments;
         }
@@ -149,6 +153,7 @@ impl InputBorder {
 
         let context = self.context.as_deref().unwrap_or_default();
         let label = self.label.as_deref().unwrap_or_default();
+        let suffix_rule_width = self.suffix_rule_width_for_width(inner_width);
         if context.is_empty() && label.is_empty() {
             segments.push(BorderSegment::styled(
                 self.rule.to_string().repeat(inner_width),
@@ -160,12 +165,16 @@ impl InputBorder {
 
         let context_width = visible_len(context);
         let label_width = visible_len(label);
-        let label_group_width = usize::from(!context.is_empty())
-            + context_width
-            + usize::from(!label.is_empty())
-            + label_width
-            + usize::from(!context.is_empty() || !label.is_empty())
-            + self.suffix_rule_width;
+        let label_group_width = [
+            usize::from(!context.is_empty()),
+            context_width,
+            usize::from(!label.is_empty()),
+            label_width,
+            usize::from(!context.is_empty() || !label.is_empty()),
+            suffix_rule_width,
+        ]
+        .into_iter()
+        .fold(0usize, usize::saturating_add);
         let prefix_rule_width = inner_width.saturating_sub(label_group_width);
 
         if prefix_rule_width > 0 {
@@ -194,10 +203,10 @@ impl InputBorder {
             ));
         }
 
-        if self.suffix_rule_width > 0 {
+        if suffix_rule_width > 0 {
             segments.push(BorderSegment::plain(" "));
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(self.suffix_rule_width),
+                self.rule.to_string().repeat(suffix_rule_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -212,6 +221,16 @@ impl InputBorder {
         } else {
             segments
         }
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_INPUT_BORDER_MARGIN)
+    }
+
+    fn suffix_rule_width_for_width(&self, inner_width: usize) -> usize {
+        self.suffix_rule_width
+            .min(inner_width)
+            .min(MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH)
     }
 }
 
@@ -332,6 +351,35 @@ mod tests {
 
         assert_eq!(visible_len(&rendered), 20);
         assert!(strip_ansi(&rendered).contains('…'));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let border = InputBorder::new().margin(usize::MAX);
+        let rendered = border.view(8);
+
+        assert_eq!(border.margin, MAX_INPUT_BORDER_MARGIN);
+        assert_eq!(visible_len(&rendered), 8);
+
+        let Element::Box(row) = border.element::<()>(8) else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_suffix_rule_width_is_clamped_to_render_width() {
+        let border = InputBorder::new()
+            .context("ctx")
+            .label("max")
+            .suffix_rule_width(usize::MAX);
+        let rendered = border.view(12);
+
+        assert_eq!(border.suffix_rule_width, MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH);
+        assert_eq!(visible_len(&rendered), 12);
     }
 
     #[test]
