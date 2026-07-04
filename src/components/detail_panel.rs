@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_DETAIL_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_DETAIL_PANEL_LABEL_WIDTH: usize = u16::MAX as usize;
+
 /// Visual role for a row inside a [`DetailPanel`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DetailRowKind {
@@ -183,12 +186,12 @@ impl DetailPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_DETAIL_PANEL_INDENT);
         self
     }
 
     pub fn label_width(mut self, width: usize) -> Self {
-        self.label_width = Some(width);
+        self.label_width = Some(width.min(MAX_DETAIL_PANEL_LABEL_WIDTH));
         self
     }
 
@@ -281,7 +284,7 @@ impl DetailPanel {
                         .fg(self.title_color)
                         .bold()
                         .render(&fit_visible(
-                            &format!("{}{}", " ".repeat(self.indent), title),
+                            &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                             width,
                         )),
                 );
@@ -301,18 +304,17 @@ impl DetailPanel {
     }
 
     fn render_row(&self, row: &DetailRow, width: usize) -> String {
-        let indent = " ".repeat(self.indent);
-        let available = width.saturating_sub(self.indent);
+        let indent_width = self.indent_for_width(width);
+        let indent = " ".repeat(indent_width);
+        let available = width.saturating_sub(indent_width);
         match row.kind {
             DetailRowKind::KeyValue | DetailRowKind::Action => {
                 let label = row.label.as_deref().unwrap_or_default();
-                let label_width = self
-                    .label_width
-                    .unwrap_or_else(|| self.computed_label_width())
-                    .min(available);
+                let label_width = self.label_width_for_available(available);
                 let label_text = fit_visible(label, label_width);
-                let gap = " ";
-                let value_width = available.saturating_sub(label_width + visible_len(gap));
+                let gap = if available > label_width { " " } else { "" };
+                let value_width =
+                    available.saturating_sub(label_width.saturating_add(visible_len(gap)));
                 let value = truncate_visible(&row.value, value_width);
                 format!(
                     "{indent}{}{}{}",
@@ -394,6 +396,17 @@ impl DetailPanel {
             .max()
             .unwrap_or(0)
             .max(1)
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_DETAIL_PANEL_INDENT)
+    }
+
+    fn label_width_for_available(&self, available: usize) -> usize {
+        self.label_width
+            .unwrap_or_else(|| self.computed_label_width())
+            .min(available)
+            .min(MAX_DETAIL_PANEL_LABEL_WIDTH)
     }
 }
 
@@ -484,6 +497,23 @@ mod tests {
     fn zero_size_renders_empty_string() {
         assert_eq!(sample().view(0, 8), "");
         assert_eq!(sample().view(40, 0), "");
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel = DetailPanel::new("meta")
+            .indent(usize::MAX)
+            .label_width(usize::MAX)
+            .pair("pid", "42");
+        let rendered = panel.view(8, 4);
+        let row = panel.render_row(panel.rows.first().unwrap(), 8);
+
+        assert_eq!(panel.indent, MAX_DETAIL_PANEL_INDENT);
+        assert_eq!(panel.label_width, Some(MAX_DETAIL_PANEL_LABEL_WIDTH));
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(panel.label_width_for_available(8), 8);
+        assert_eq!(visible_len(&row), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
     }
 
     #[test]
