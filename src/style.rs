@@ -586,7 +586,10 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
         if ch == '\x1b' && chars.peek() == Some(&'[') {
             saw_ansi = true;
             out.push(ch);
-            out.push(chars.next().expect("peeked CSI introducer"));
+            let Some(introducer) = chars.next() else {
+                break;
+            };
+            out.push(introducer);
             for next in chars.by_ref() {
                 out.push(next);
                 if next.is_ascii_alphabetic() {
@@ -870,6 +873,17 @@ mod tests {
 
         assert!(visible_len(&out) <= 6, "{out:?}");
         assert!(out.ends_with('…') || out.ends_with(' '));
+    }
+
+    #[test]
+    fn truncate_visible_preserves_ansi_when_truncating() {
+        let styled = Style::new().fg(Color::Red).render("abcdef");
+        let out = truncate_visible(&styled, 4);
+
+        assert_eq!(visible_len(&out), 4);
+        assert_eq!(strip_ansi(&out), "abc…");
+        assert!(out.starts_with("\x1b[31m"));
+        assert!(out.ends_with("\x1b[0m"));
     }
 
     #[test]
