@@ -328,15 +328,20 @@ fn fallback_root_size<Msg>(
 ) -> (u16, u16) {
     match root {
         Element::Text(text_el) => {
-            let lines: Vec<&str> = text_el.content.lines().collect();
-            let lines = if lines.is_empty() { vec![""] } else { lines };
-            let max_width = lines
-                .iter()
-                .map(|line| visible_len(line))
-                .max()
-                .unwrap_or(0);
-            let width = (max_width.min(available_width as usize)) as u16;
-            let height = (lines.len().min(available_height as usize)) as u16;
+            let measured = measure_text_node(
+                &text_el.content,
+                text_el.wrap,
+                Size {
+                    width: None,
+                    height: None,
+                },
+                Size {
+                    width: AvailableSpace::Definite(available_width as f32),
+                    height: AvailableSpace::Definite(available_height as f32),
+                },
+            );
+            let width = layout_value_to_u16(measured.width).min(available_width);
+            let height = layout_value_to_u16(measured.height).min(available_height);
             (width, height)
         }
         Element::Box(_) | Element::Spacer | Element::_Phantom(_) => {
@@ -577,6 +582,22 @@ mod tests {
                 y: 0,
                 width: 3,
                 height: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn fallback_layout_wraps_text_root_to_available_width() {
+        let el: Element<()> = Element::Text(TextElement::new("a b c d e f"));
+        let result = LayoutResult::fallback(&el, 3, 5);
+
+        assert_eq!(
+            result.nodes,
+            vec![LayoutNode {
+                x: 0,
+                y: 0,
+                width: 3,
+                height: 3,
             }]
         );
     }
