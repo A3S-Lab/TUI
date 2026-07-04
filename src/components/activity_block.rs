@@ -3,6 +3,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
 const MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_WIDTH: usize = u16::MAX as usize;
 
 /// In-flight activity line with an optional live output tail.
 ///
@@ -89,7 +90,7 @@ impl ActivityBlock {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_ACTIVITY_BLOCK_WIDTH));
         self
     }
 
@@ -422,6 +423,20 @@ mod tests {
             panic!("expected output indent text");
         };
         assert_eq!(indent.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = ActivityBlock::new("Running")
+            .detail("cargo test")
+            .width(usize::MAX)
+            .line("ok");
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_ACTIVITY_BLOCK_WIDTH));
+        assert!(rendered
+            .lines()
+            .all(|line| visible_len(line) == MAX_ACTIVITY_BLOCK_WIDTH));
     }
 
     #[test]

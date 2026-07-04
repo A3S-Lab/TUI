@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, wrap_words, wrap_words_compact, Color, Style};
 
 const MAX_WRAPPED_PREFIX_MARGIN: usize = u16::MAX as usize;
+const MAX_WRAPPED_PREFIX_WIDTH: usize = u16::MAX as usize;
 
 /// Wrapped text block with a first-line prefix and aligned continuation prefix.
 ///
@@ -54,7 +55,7 @@ impl WrappedPrefixBlock {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_WRAPPED_PREFIX_WIDTH));
         self
     }
 
@@ -287,6 +288,19 @@ mod tests {
             panic!("expected margin text");
         };
         assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = WrappedPrefixBlock::new("alpha")
+            .prefixes("> ", "  ")
+            .width(usize::MAX);
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_WRAPPED_PREFIX_WIDTH));
+        assert!(rendered
+            .lines()
+            .all(|line| visible_len(line) == MAX_WRAPPED_PREFIX_WIDTH));
     }
 
     #[test]

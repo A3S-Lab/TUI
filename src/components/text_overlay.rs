@@ -1,5 +1,7 @@
 use crate::style::fit_visible;
 
+const MAX_TEXT_OVERLAY_WIDTH: usize = u16::MAX as usize;
+
 /// Where overlay rows are placed in a rendered text frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextOverlayPosition {
@@ -63,7 +65,7 @@ impl TextOverlay {
 
     /// Fit every overlay row to the provided display-column width.
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_TEXT_OVERLAY_WIDTH));
         self
     }
 
@@ -178,5 +180,15 @@ mod tests {
         assert_eq!(visible_len(first), 8);
         assert!(strip_ansi(first).contains("中文"));
         assert!(first.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let overlay = TextOverlay::new(["menu"]).width(usize::MAX);
+        let rendered = overlay.apply(&frame(1));
+        let first = rendered.lines().next().unwrap();
+
+        assert_eq!(overlay.width, Some(MAX_TEXT_OVERLAY_WIDTH));
+        assert_eq!(visible_len(first), MAX_TEXT_OVERLAY_WIDTH);
     }
 }
