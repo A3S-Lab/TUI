@@ -1,5 +1,6 @@
 use crate::style::{truncate_visible, visible_len, Color, Style};
 
+const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
 const MAX_DATA_TABLE_GAP: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,8 +105,9 @@ impl DataRow {
     }
 
     pub fn cell_fg(mut self, index: usize, color: Color) -> Self {
+        let index = index.min(MAX_DATA_ROW_CELL_STYLES.saturating_sub(1));
         if index >= self.cell_fg.len() {
-            self.cell_fg.resize(index + 1, None);
+            self.cell_fg.resize(index.saturating_add(1), None);
         }
         self.cell_fg[index] = Some(color);
         self
@@ -648,6 +650,14 @@ mod tests {
         let rendered = table.view(16, 4);
 
         assert!(!rendered.contains("\x1b[31m"));
+    }
+
+    #[test]
+    fn oversized_cell_style_index_is_clamped() {
+        let row = DataRow::new(vec!["dead"]).cell_fg(usize::MAX, Color::Red);
+
+        assert_eq!(row.cell_fg.len(), MAX_DATA_ROW_CELL_STYLES);
+        assert_eq!(row.cell_fg[MAX_DATA_ROW_CELL_STYLES - 1], Some(Color::Red));
     }
 
     #[test]
