@@ -1,6 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, wrap_words, Color, Style};
 
+const MAX_SIDE_NOTE_PANEL_BODY_LINES: usize = u16::MAX as usize;
 const MAX_SIDE_NOTE_PANEL_INDENT: usize = u16::MAX as usize;
 
 /// Side-note panel for background questions, side-channel answers, and compact
@@ -72,7 +73,7 @@ impl SideNotePanel {
     }
 
     pub fn max_body_lines(mut self, max: usize) -> Self {
-        self.max_body_lines = max.max(1);
+        self.max_body_lines = max.max(1).min(MAX_SIDE_NOTE_PANEL_BODY_LINES);
         self
     }
 
@@ -377,6 +378,17 @@ mod tests {
             panic!("expected title text");
         };
         assert!(visible_len(&title.content) <= 8);
+    }
+
+    #[test]
+    fn oversized_body_line_limit_is_clamped() {
+        let panel = SideNotePanel::new("note")
+            .answer("one\ntwo")
+            .max_body_lines(usize::MAX);
+        let rendered = panel.view(24, 3);
+
+        assert_eq!(panel.max_body_lines, MAX_SIDE_NOTE_PANEL_BODY_LINES);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
