@@ -136,8 +136,17 @@ impl Markdown {
             NodeValue::BlockQuote => {
                 let text = self.collect_inline_from_children(node);
                 let bar = Style::new().fg(Color::BrightBlack).render("│");
-                let styled_text = Style::new().italic().fg(Color::White).render(&text);
-                output.push(format!("{} {}", bar, styled_text));
+                if self.width == 0 {
+                    let styled_text = Style::new().italic().fg(Color::White).render(&text);
+                    output.push(format!("{} {}", bar, styled_text));
+                } else if self.width == 1 {
+                    output.push(bar);
+                } else {
+                    for line in wrap_text(&text, self.width - 2) {
+                        let styled_text = Style::new().italic().fg(Color::White).render(&line);
+                        output.push(format!("{} {}", bar, styled_text));
+                    }
+                }
             }
             NodeValue::ThematicBreak => {
                 let rule = Style::new()
@@ -655,6 +664,25 @@ mod tests {
         let output = md.render("> quoted text");
         let plain = strip_ansi(&output);
         assert!(plain.contains("quoted text"));
+    }
+
+    #[test]
+    fn blockquote_wraps_to_configured_width() {
+        let md = Markdown::new().with_width(8);
+        let output = md.render("> abcdefghijklmnopqrstuvwxyz");
+        let plain = strip_ansi(&output);
+
+        assert_eq!(
+            plain
+                .lines()
+                .map(|line| line.trim_start_matches("│ "))
+                .collect::<String>(),
+            "abcdefghijklmnopqrstuvwxyz"
+        );
+        assert!(output.lines().count() > 1);
+        for line in output.lines() {
+            assert!(visible_len(line) <= 8, "{line:?}");
+        }
     }
 
     #[test]
