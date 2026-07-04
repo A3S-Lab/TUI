@@ -5,6 +5,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
 const MAX_TABBED_MENU_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_TABBED_MENU_PANEL_ITEMS: usize = u16::MAX as usize;
 const MAX_TABBED_MENU_PANEL_TAB_GAP: usize = u16::MAX as usize;
 
 /// One selectable row in a [`TabbedMenuPanel`].
@@ -222,7 +223,7 @@ impl TabbedMenuPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.max(1).min(MAX_TABBED_MENU_PANEL_ITEMS));
         self
     }
 
@@ -859,6 +860,19 @@ mod tests {
             visible_len(&item.content),
             MAX_TABBED_MENU_PANEL_INDENT + visible_len("● gpt-5")
         );
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let panel = TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+            .item(TabbedMenuItem::new("gpt-5"))
+            .item(TabbedMenuItem::new("gpt-5-mini"))])
+        .show_tabs_when_single(true)
+        .max_items(usize::MAX);
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_items, Some(MAX_TABBED_MENU_PANEL_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]

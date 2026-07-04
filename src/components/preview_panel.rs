@@ -4,6 +4,7 @@ use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color
 use crossterm::event::KeyCode;
 
 const MAX_PREVIEW_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_PREVIEW_PANEL_ITEMS: usize = u16::MAX as usize;
 
 /// One selectable row in a [`PreviewPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +164,7 @@ impl PreviewPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.max(1).min(MAX_PREVIEW_PANEL_ITEMS));
         self
     }
 
@@ -789,6 +790,18 @@ mod tests {
             visible_len(&item.content),
             MAX_PREVIEW_PANEL_INDENT + visible_len("▸ Atom  default")
         );
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let panel = PreviewPanel::new("Theme")
+            .max_items(usize::MAX)
+            .item(PreviewItem::new("Atom"))
+            .item(PreviewItem::new("Ayu"));
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_items, Some(MAX_PREVIEW_PANEL_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]

@@ -7,6 +7,7 @@ const MAX_TREE_PICKER_DEPTH_INDENT: usize = u16::MAX as usize;
 const MAX_TREE_PICKER_DEPTH_WIDTH: usize = u16::MAX as usize;
 const MAX_TREE_PICKER_INDENT: usize = u16::MAX as usize;
 const MAX_TREE_PICKER_ITEM_DEPTH: usize = u16::MAX as usize;
+const MAX_TREE_PICKER_ITEMS: usize = u16::MAX as usize;
 
 /// Node kind for a [`TreePickerItem`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,7 +218,7 @@ impl TreePicker {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.max(1).min(MAX_TREE_PICKER_ITEMS));
         self
     }
 
@@ -792,6 +793,18 @@ mod tests {
             visible_len(&item.content),
             MAX_TREE_PICKER_INDENT + MAX_TREE_PICKER_DEPTH_WIDTH + visible_len("▸ src  dir")
         );
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let picker = TreePicker::new("@ file")
+            .max_items(usize::MAX)
+            .item(TreePickerItem::branch("src").open(true))
+            .item(TreePickerItem::leaf("main.rs").depth(1));
+        let rendered = picker.view(24, 4);
+
+        assert_eq!(picker.max_items, Some(MAX_TREE_PICKER_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
