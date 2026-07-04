@@ -378,7 +378,7 @@ fn context_percent(used: usize, limit: usize) -> usize {
     } else if used >= limit {
         100
     } else {
-        used.saturating_mul(100) / limit
+        ((used as u128 * 100) / limit as u128) as usize
     }
 }
 
@@ -416,6 +416,16 @@ mod tests {
 
         assert!(strip_ansi(&rendered).contains("ctx:85%"));
         assert!(rendered.contains("\x1b[31mctx:85%\x1b[0m"));
+    }
+
+    #[test]
+    fn context_percent_handles_large_token_counts() {
+        let limit = usize::MAX / 2;
+        let used = limit / 2;
+        let expected = ((used as u128 * 100) / limit as u128) as usize;
+
+        assert_eq!(expected, 49);
+        assert_eq!(context_percent(used, limit), expected);
     }
 
     #[test]
