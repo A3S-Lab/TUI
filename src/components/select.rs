@@ -47,7 +47,10 @@ impl Select {
         self.cursor
     }
     pub fn selected_value(&self) -> &str {
-        &self.items[self.cursor]
+        self.selected_value_opt().unwrap_or("")
+    }
+    pub fn selected_value_opt(&self) -> Option<&str> {
+        self.items.get(self.cursor).map(String::as_str)
     }
     pub fn cursor(&self) -> usize {
         self.cursor
@@ -265,6 +268,30 @@ mod tests {
         select.handle_key(&key(KeyCode::Down));
         select.handle_key(&key(KeyCode::Down));
         assert_eq!(select.selected_index(), 1);
+    }
+
+    #[test]
+    fn empty_select_has_no_selected_value_and_ignores_selection_input() {
+        let mut select = Select::new(Vec::<&str>::new()).with_selected(9);
+
+        assert_eq!(select.selected_index(), 0);
+        assert_eq!(select.selected_value(), "");
+        assert_eq!(select.selected_value_opt(), None);
+        assert!(select.handle_key(&key(KeyCode::Enter)).is_none());
+        assert!(select
+            .handle_mouse(&MouseEvent {
+                kind: MouseEventKind::Down(crate::event::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })
+            .is_none());
+        assert_eq!(select.view(10, 2), "");
+
+        let Element::Box(box_el) = select.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert!(box_el.children.is_empty());
     }
 
     #[test]
