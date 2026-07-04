@@ -70,7 +70,9 @@ fn paint_element<Msg>(
                 if line_idx >= max_h {
                     break;
                 }
-                let row_y = node.y + line_idx as u16;
+                let Some(row_y) = node.y.checked_add(line_idx as u16) else {
+                    break;
+                };
                 if row_y >= grid_h {
                     break;
                 }
@@ -125,6 +127,12 @@ fn draw_border(
     if w < 2 || h < 2 {
         return;
     }
+    let Some(right) = x.checked_add(w - 1) else {
+        return;
+    };
+    let Some(bottom) = y.checked_add(h - 1) else {
+        return;
+    };
 
     let (tl, tr, bl, br, hz, vt) = match border {
         BorderStyle::Single => ('┌', '┐', '└', '┘', '─', '│'),
@@ -139,18 +147,18 @@ fn draw_border(
     };
 
     grid.set(x, y, Cell::styled(tl, &style));
-    grid.set(x + w - 1, y, Cell::styled(tr, &style));
-    grid.set(x, y + h - 1, Cell::styled(bl, &style));
-    grid.set(x + w - 1, y + h - 1, Cell::styled(br, &style));
+    grid.set(right, y, Cell::styled(tr, &style));
+    grid.set(x, bottom, Cell::styled(bl, &style));
+    grid.set(right, bottom, Cell::styled(br, &style));
 
-    for col in (x + 1)..(x + w - 1) {
+    for col in (x + 1)..right {
         grid.set(col, y, Cell::styled(hz, &style));
-        grid.set(col, y + h - 1, Cell::styled(hz, &style));
+        grid.set(col, bottom, Cell::styled(hz, &style));
     }
 
-    for row in (y + 1)..(y + h - 1) {
+    for row in (y + 1)..bottom {
         grid.set(x, row, Cell::styled(vt, &style));
-        grid.set(x + w - 1, row, Cell::styled(vt, &style));
+        grid.set(right, row, Cell::styled(vt, &style));
     }
 }
 
@@ -305,5 +313,44 @@ mod tests {
         let grid = paint(&el, &layout, 8, 2);
 
         assert!(grid.render_to_string().starts_with("visible "));
+    }
+
+    #[test]
+    fn paint_overflowing_border_layout_does_not_panic() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .border(BorderStyle::Rounded)
+                .width(Dimension::Points(4.0))
+                .height(Dimension::Points(2.0)),
+        );
+        let layout = LayoutResult {
+            nodes: vec![crate::layout_engine::LayoutNode {
+                x: u16::MAX - 1,
+                y: u16::MAX - 1,
+                width: 4,
+                height: 2,
+            }],
+        };
+
+        let grid = paint(&el, &layout, 8, 2);
+
+        assert_eq!(grid.render_to_string(), "        \n        ");
+    }
+
+    #[test]
+    fn paint_overflowing_text_row_layout_does_not_panic() {
+        let el: Element<()> = Element::Text(TextElement::new("line1\nline2"));
+        let layout = LayoutResult {
+            nodes: vec![crate::layout_engine::LayoutNode {
+                x: 0,
+                y: u16::MAX,
+                width: 8,
+                height: 2,
+            }],
+        };
+
+        let grid = paint(&el, &layout, 8, 2);
+
+        assert_eq!(grid.render_to_string(), "        \n        ");
     }
 }

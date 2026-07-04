@@ -228,8 +228,10 @@ impl Grid {
     }
 
     pub fn fill_bg(&mut self, x: u16, y: u16, w: u16, h: u16, color: Color) {
-        for row in y..(y + h).min(self.height) {
-            for col in x..(x + w).min(self.width) {
+        let end_y = y.saturating_add(h).min(self.height);
+        let end_x = x.saturating_add(w).min(self.width);
+        for row in y..end_y {
+            for col in x..end_x {
                 self.cells[row as usize][col as usize].bg = Some(color);
             }
         }
@@ -351,6 +353,19 @@ mod tests {
         assert_eq!(grid.get(1, 1).bg, Some(Color::Red));
         assert_eq!(grid.get(3, 2).bg, Some(Color::Red));
         assert_eq!(grid.get(0, 0).bg, None);
+    }
+
+    #[test]
+    fn grid_fill_bg_saturates_overflowing_bounds() {
+        let mut grid = Grid::new(4, 2);
+        grid.fill_bg(u16::MAX - 1, u16::MAX - 1, 10, 10, Color::Red);
+        assert!(grid.cells.iter().flatten().all(|cell| cell.bg.is_none()));
+
+        grid.fill_bg(2, 1, u16::MAX, u16::MAX, Color::Blue);
+        assert_eq!(grid.get(2, 1).bg, Some(Color::Blue));
+        assert_eq!(grid.get(3, 1).bg, Some(Color::Blue));
+        assert_eq!(grid.get(1, 1).bg, None);
+        assert_eq!(grid.get(2, 0).bg, None);
     }
 
     #[test]
