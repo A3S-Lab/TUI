@@ -1,5 +1,7 @@
 use crate::style::{truncate_visible, visible_len, Color, Style};
 
+const MAX_METER_WIDTH: usize = u16::MAX as usize;
+
 #[derive(Debug, Clone)]
 pub struct Meter {
     label: String,
@@ -37,7 +39,7 @@ impl Meter {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.max(1).min(MAX_METER_WIDTH);
         self
     }
 
@@ -145,5 +147,14 @@ mod tests {
 
         assert_eq!(visible_len(&line), 12);
         assert!(!line.contains('░'));
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let meter = Meter::new(50.0).width(usize::MAX);
+        let line = meter.plain();
+
+        assert_eq!(meter.width, MAX_METER_WIDTH);
+        assert_eq!(visible_len(&line), MAX_METER_WIDTH);
     }
 }
