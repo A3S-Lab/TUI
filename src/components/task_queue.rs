@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
 const MAX_TASK_QUEUE_MARGIN: usize = u16::MAX as usize;
+const MAX_TASK_QUEUE_QUEUED_ROWS: usize = u16::MAX as usize;
 
 /// Pinned queued-task panel with a running task and ordered queue rows.
 ///
@@ -80,7 +81,7 @@ impl TaskQueue {
     }
 
     pub fn max_queued_rows(mut self, max_queued_rows: usize) -> Self {
-        self.max_queued_rows = max_queued_rows;
+        self.max_queued_rows = max_queued_rows.min(MAX_TASK_QUEUE_QUEUED_ROWS);
         self
     }
 
@@ -401,6 +402,19 @@ mod tests {
             panic!("expected margin text");
         };
         assert_eq!(margin.content.len(), MAX_TASK_QUEUE_MARGIN);
+    }
+
+    #[test]
+    fn oversized_queued_row_limit_is_clamped() {
+        let queue = TaskQueue::new()
+            .max_queued_rows(usize::MAX)
+            .queued(QueuedTask::new("one"))
+            .queued(QueuedTask::new("two"));
+        let view = queue.view(24);
+
+        assert_eq!(queue.max_queued_rows, MAX_TASK_QUEUE_QUEUED_ROWS);
+        assert_eq!(queue.visible_queued().len(), 2);
+        assert!(view.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
