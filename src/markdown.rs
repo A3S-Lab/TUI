@@ -186,7 +186,7 @@ impl Markdown {
                 let border = Style::new().fg(Color::BrightBlack);
                 let rule = |l: &str, m: &str, r: &str| -> String {
                     let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-                    fit_table_line(
+                    fit_markdown_line(
                         border.render(&format!("{l}{}{r}", segs.join(m))),
                         self.width,
                     )
@@ -200,7 +200,7 @@ impl Markdown {
                         line.push_str(&format!(" {} ", fit_visible(c, *w)));
                         line.push_str(&bar);
                     }
-                    output.push(fit_table_line(line, self.width));
+                    output.push(fit_markdown_line(line, self.width));
                     if ri == 0 {
                         output.push(rule("├", "┼", "┤"));
                     }
@@ -233,9 +233,12 @@ impl Markdown {
         let wrapped = wrap_text(text, avail);
         for (i, line) in wrapped.iter().enumerate() {
             if i == 0 {
-                output.push(format!("{indent}{bullet} {line}"));
+                output.push(fit_markdown_line(
+                    format!("{indent}{bullet} {line}"),
+                    self.width,
+                ));
             } else {
-                output.push(format!("{hang}{line}"));
+                output.push(fit_markdown_line(format!("{hang}{line}"), self.width));
             }
         }
     }
@@ -483,7 +486,7 @@ fn constrain_table_widths(widths: &[usize], max_width: usize) -> Vec<usize> {
     constrained
 }
 
-fn fit_table_line(line: String, width: usize) -> String {
+fn fit_markdown_line(line: String, width: usize) -> String {
     if width == 0 {
         line
     } else {
@@ -709,6 +712,16 @@ mod tests {
         let plain = strip_ansi(&output);
         assert!(plain.contains("item 1"));
         assert!(plain.contains("item 2"));
+    }
+
+    #[test]
+    fn list_items_respect_configured_width() {
+        let md = Markdown::new().with_width(8);
+        let output = md.render("- abcdefghijklmnopqrstuvwxyz");
+
+        for line in output.lines() {
+            assert!(visible_len(line) <= 8, "{line:?}");
+        }
     }
 
     #[test]
