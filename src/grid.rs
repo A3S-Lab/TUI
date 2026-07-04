@@ -241,11 +241,39 @@ impl Grid {
             if col.saturating_add(width) > self.width as usize {
                 break;
             }
+            for target_col in col..col.saturating_add(width).max(col + 1) {
+                self.clear_wide_span_at(row, target_col);
+            }
             self.cells[row][col] = Cell::styled(ch, style);
             for offset in 1..width {
                 self.cells[row][col + offset] = Cell::styled(WIDE_CONTINUATION, style);
             }
             col += width;
+        }
+    }
+
+    fn clear_wide_span_at(&mut self, row: usize, col: usize) {
+        if row >= self.height as usize || col >= self.width as usize {
+            return;
+        }
+
+        let row_cells = &mut self.cells[row];
+        let mut start = col;
+        if row_cells[col].ch == WIDE_CONTINUATION {
+            while start > 0 && row_cells[start].ch == WIDE_CONTINUATION {
+                start -= 1;
+            }
+        }
+
+        let width = unicode_width::UnicodeWidthChar::width(row_cells[start].ch).unwrap_or(1);
+        if width <= 1 || start.saturating_add(width) <= col {
+            row_cells[col] = Cell::default();
+            return;
+        }
+
+        let end = start.saturating_add(width).min(row_cells.len());
+        for cell in row_cells.iter_mut().take(end).skip(start) {
+            *cell = Cell::default();
         }
     }
 
@@ -396,6 +424,28 @@ mod tests {
         grid.write_str(0, 0, "界", &style);
 
         assert_eq!(crate::style::visible_len(&grid.render_to_string()), 2);
+    }
+
+    #[test]
+    fn grid_write_str_clears_stale_wide_continuation_after_narrow_overwrite() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.write_str(0, 0, "A", &style);
+
+        assert_eq!(grid.render_to_string(), "A ");
+    }
+
+    #[test]
+    fn grid_write_str_clears_wide_char_when_overwriting_its_continuation() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.write_str(1, 0, "B", &style);
+
+        assert_eq!(grid.render_to_string(), " B");
     }
 
     #[test]
