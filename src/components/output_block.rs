@@ -1,6 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_OUTPUT_BLOCK_BODY_LINES: usize = u16::MAX as usize;
 const MAX_OUTPUT_BLOCK_INDENT: usize = u16::MAX as usize;
 
 /// Status indicator for an [`OutputBlock`].
@@ -115,7 +116,7 @@ impl OutputBlock {
     }
 
     pub fn max_body_lines(mut self, max_body_lines: usize) -> Self {
-        self.max_body_lines = max_body_lines.max(1);
+        self.max_body_lines = max_body_lines.max(1).min(MAX_OUTPUT_BLOCK_BODY_LINES);
         self
     }
 
@@ -505,6 +506,18 @@ mod tests {
             visible_len(&header.content),
             MAX_OUTPUT_BLOCK_INDENT + visible_len("• Ran npm test")
         );
+    }
+
+    #[test]
+    fn oversized_body_line_limit_is_clamped() {
+        let block = OutputBlock::new("Ran")
+            .max_body_lines(usize::MAX)
+            .text("one\ntwo");
+        let rendered = block.view(8);
+
+        assert_eq!(block.max_body_lines, MAX_OUTPUT_BLOCK_BODY_LINES);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+        assert_eq!(block.body_rows().len(), 2);
     }
 
     #[test]
