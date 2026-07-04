@@ -24,6 +24,13 @@ fn frame_delay(last_render: Instant, frame_duration: Duration) -> Duration {
     frame_duration.saturating_sub(last_render.elapsed())
 }
 
+fn resize_dimensions(event: &crossterm::event::Event) -> Option<(u16, u16)> {
+    match event {
+        crossterm::event::Event::Resize(width, height) => Some((*width, *height)),
+        _ => None,
+    }
+}
+
 /// Builder for configuring and running an element-based TUI program.
 ///
 /// ```rust,no_run
@@ -108,7 +115,6 @@ impl ElementProgram {
         Self::run_inner(model, TerminalOptions::default(), 60).await
     }
 
-    #[allow(unused_assignments)]
     async fn run_inner<M: ElementModel>(
         mut model: M,
         options: TerminalOptions,
@@ -123,7 +129,6 @@ impl ElementProgram {
         let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<M::Msg>();
         let quit_flag = Arc::new(AtomicBool::new(false));
         let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
-        let mut last_render = Instant::now();
         let mut dirty = false;
 
         if let Some(cmd) = model.init() {
@@ -134,15 +139,16 @@ impl ElementProgram {
         let mut layout_engine = LayoutEngine::new();
         let mut diff_renderer = DiffRenderer::new();
 
-        let (width, height) = Terminal::size().unwrap_or((80, 24));
+        let mut viewport_size = Terminal::size().unwrap_or((80, 24));
 
         {
+            let (width, height) = viewport_size;
             let element = model.view();
             let layout = layout_engine.compute(&element, width, height);
             let grid = paint::paint(&element, &layout, width, height);
             diff_renderer.render(&mut terminal, grid)?;
-            last_render = Instant::now();
         }
+        let mut last_render = Instant::now();
 
         loop {
             if quit_flag.load(Ordering::Relaxed) {
@@ -153,6 +159,9 @@ impl ElementProgram {
                 event = event_stream.next() => {
                     match event {
                         Some(Ok(ct_event)) => {
+                            if let Some(size) = resize_dimensions(&ct_event) {
+                                viewport_size = size;
+                            }
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
@@ -179,7 +188,7 @@ impl ElementProgram {
             }
 
             if dirty && last_render.elapsed() >= frame_duration {
-                let (w, h) = Terminal::size().unwrap_or((width, height));
+                let (w, h) = viewport_size;
                 let element = model.view();
                 let layout = layout_engine.compute(&element, w, h);
                 let grid = paint::paint(&element, &layout, w, h);
@@ -249,5 +258,14 @@ mod tests {
 
         assert!(delay <= frame_duration);
         assert!(delay > Duration::ZERO);
+    }
+
+    #[test]
+    fn resize_dimensions_extracts_terminal_size() {
+        let resize = crossterm::event::Event::Resize(120, 40);
+        let focus = crossterm::event::Event::FocusGained;
+
+        assert_eq!(resize_dimensions(&resize), Some((120, 40)));
+        assert_eq!(resize_dimensions(&focus), None);
     }
 }
