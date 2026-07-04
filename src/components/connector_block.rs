@@ -1,6 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_CONNECTOR_BLOCK_GAP: usize = u16::MAX as usize;
+const MAX_CONNECTOR_BLOCK_INDENT: usize = u16::MAX as usize;
+const MAX_CONNECTOR_BLOCK_MARGIN: usize = u16::MAX as usize;
+
 /// Connector-led rows for compact tool output and task summaries.
 ///
 /// This extracts the CLI pattern used below completed tool calls: the first row
@@ -95,7 +99,7 @@ impl ConnectorBlock {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_CONNECTOR_BLOCK_MARGIN);
         self
     }
 
@@ -108,12 +112,12 @@ impl ConnectorBlock {
     }
 
     pub fn connector_indent(mut self, indent: usize) -> Self {
-        self.connector_indent = indent;
+        self.connector_indent = indent.min(MAX_CONNECTOR_BLOCK_INDENT);
         self
     }
 
     pub fn connector_gap(mut self, gap: usize) -> Self {
-        self.connector_gap = gap;
+        self.connector_gap = gap.min(MAX_CONNECTOR_BLOCK_GAP);
         self
     }
 
@@ -148,9 +152,9 @@ impl ConnectorBlock {
             .enumerate()
             .map(|(index, row)| {
                 let prefix = if index == 0 {
-                    self.render_first_prefix()
+                    self.render_first_prefix(width)
                 } else {
-                    self.continuation_prefix()
+                    self.continuation_prefix(width)
                 };
                 let text = truncate_visible(&row.text, body_width);
                 let color = row.color.unwrap_or_else(|| self.row_color(&row));
@@ -199,15 +203,19 @@ impl ConnectorBlock {
     fn row_element<Msg>(&self, index: usize, row: ConnectorRow) -> Element<Msg> {
         let mut children = Vec::new();
         if index == 0 {
-            children.push(Element::Text(TextElement::new(self.first_prefix_margin())));
+            children.push(Element::Text(TextElement::new(
+                self.first_prefix_margin_for_element(),
+            )));
             children.push(Element::Text(
                 TextElement::new(self.connector.clone()).fg(self.connector_color),
             ));
             children.push(Element::Text(TextElement::new(
-                " ".repeat(self.connector_gap),
+                " ".repeat(self.connector_gap_for_element()),
             )));
         } else {
-            children.push(Element::Text(TextElement::new(self.continuation_prefix())));
+            children.push(Element::Text(TextElement::new(
+                self.continuation_prefix_for_element(),
+            )));
         }
 
         let color = row.color.unwrap_or_else(|| self.row_color(&row));
@@ -228,35 +236,91 @@ impl ConnectorBlock {
         }
     }
 
-    fn render_first_prefix(&self) -> String {
+    fn render_first_prefix(&self, width: usize) -> String {
         format!(
             "{}{}{}",
-            self.first_prefix_margin(),
+            self.first_prefix_margin(width),
             Style::new()
                 .fg(self.connector_color)
                 .render(&self.connector),
-            " ".repeat(self.connector_gap)
+            " ".repeat(self.connector_gap_for_width(width))
         )
     }
 
-    fn first_prefix_margin(&self) -> String {
+    fn first_prefix_margin(&self, width: usize) -> String {
         format!(
             "{}{}",
-            " ".repeat(self.margin),
-            " ".repeat(self.connector_indent)
+            " ".repeat(self.margin_for_width(width)),
+            " ".repeat(self.connector_indent_for_width(width))
         )
     }
 
-    fn continuation_prefix(&self) -> String {
-        " ".repeat(self.prefix_width())
+    fn first_prefix_margin_for_element(&self) -> String {
+        format!(
+            "{}{}",
+            " ".repeat(self.margin_for_element()),
+            " ".repeat(self.connector_indent_for_element())
+        )
     }
 
-    fn prefix_width(&self) -> usize {
-        self.margin + self.connector_indent + visible_len(&self.connector) + self.connector_gap
+    fn continuation_prefix(&self, width: usize) -> String {
+        " ".repeat(self.prefix_width(width))
+    }
+
+    fn continuation_prefix_for_element(&self) -> String {
+        " ".repeat(self.prefix_width_for_element())
+    }
+
+    fn prefix_width(&self, width: usize) -> usize {
+        [
+            self.margin_for_width(width),
+            self.connector_indent_for_width(width),
+            visible_len(&self.connector),
+            self.connector_gap_for_width(width),
+        ]
+        .into_iter()
+        .fold(0usize, usize::saturating_add)
+    }
+
+    fn prefix_width_for_element(&self) -> usize {
+        [
+            self.margin_for_element(),
+            self.connector_indent_for_element(),
+            visible_len(&self.connector),
+            self.connector_gap_for_element(),
+        ]
+        .into_iter()
+        .fold(0usize, usize::saturating_add)
     }
 
     fn body_width(&self, width: usize) -> usize {
-        width.saturating_sub(self.prefix_width()).max(1)
+        width.saturating_sub(self.prefix_width(width)).max(1)
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_CONNECTOR_BLOCK_MARGIN)
+    }
+
+    fn connector_indent_for_width(&self, width: usize) -> usize {
+        self.connector_indent
+            .min(width)
+            .min(MAX_CONNECTOR_BLOCK_INDENT)
+    }
+
+    fn connector_gap_for_width(&self, width: usize) -> usize {
+        self.connector_gap.min(width).min(MAX_CONNECTOR_BLOCK_GAP)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_CONNECTOR_BLOCK_MARGIN)
+    }
+
+    fn connector_indent_for_element(&self) -> usize {
+        self.connector_indent.min(MAX_CONNECTOR_BLOCK_INDENT)
+    }
+
+    fn connector_gap_for_element(&self) -> usize {
+        self.connector_gap.min(MAX_CONNECTOR_BLOCK_GAP)
     }
 }
 
@@ -363,6 +427,54 @@ mod tests {
         for row in rendered.lines() {
             assert_eq!(visible_len(row), 24, "{row:?}");
         }
+    }
+
+    #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let block = ConnectorBlock::new()
+            .margin(usize::MAX)
+            .connector_indent(usize::MAX)
+            .connector_gap(usize::MAX)
+            .line("one")
+            .line("two");
+        let rendered = block.view(8);
+
+        assert_eq!(block.margin, MAX_CONNECTOR_BLOCK_MARGIN);
+        assert_eq!(block.connector_indent, MAX_CONNECTOR_BLOCK_INDENT);
+        assert_eq!(block.connector_gap, MAX_CONNECTOR_BLOCK_GAP);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(first_row) = &column.children[0] else {
+            panic!("expected first row");
+        };
+        let Element::Text(margin) = &first_row.children[0] else {
+            panic!("expected margin text");
+        };
+        let Element::Text(gap) = &first_row.children[2] else {
+            panic!("expected gap text");
+        };
+        assert_eq!(
+            margin.content.len(),
+            MAX_CONNECTOR_BLOCK_MARGIN + MAX_CONNECTOR_BLOCK_INDENT
+        );
+        assert_eq!(gap.content.len(), MAX_CONNECTOR_BLOCK_GAP);
+
+        let Element::Box(second_row) = &column.children[1] else {
+            panic!("expected second row");
+        };
+        let Element::Text(continuation) = &second_row.children[0] else {
+            panic!("expected continuation prefix");
+        };
+        assert_eq!(
+            continuation.content.len(),
+            MAX_CONNECTOR_BLOCK_MARGIN
+                + MAX_CONNECTOR_BLOCK_INDENT
+                + visible_len(&block.connector)
+                + MAX_CONNECTOR_BLOCK_GAP
+        );
     }
 
     #[test]
