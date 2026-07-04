@@ -241,6 +241,9 @@ impl Grid {
         }
         for ch in text.chars() {
             let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            if width == 0 {
+                continue;
+            }
             if col.saturating_add(width) > self.width as usize {
                 break;
             }
@@ -417,6 +420,17 @@ mod tests {
         grid.write_str(3, 0, "界", &style);
 
         assert_eq!(grid.get(3, 0).ch, ' ');
+    }
+
+    #[test]
+    fn grid_write_str_ignores_zero_width_char_at_boundary() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "ab\u{0301}", &style);
+        grid.write_str(2, 0, "\u{0301}", &style);
+
+        assert_eq!(grid.render_to_string(), "ab");
     }
 
     #[test]
