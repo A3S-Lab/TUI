@@ -166,10 +166,13 @@ fn truncate_to_width(s: &str, width: usize) -> String {
     let mut out = String::new();
     let mut current_width = 0;
     let mut in_escape = false;
+    let mut saw_escape = false;
+    let mut truncated = false;
 
     for c in s.chars() {
         if c == '\x1b' {
             in_escape = true;
+            saw_escape = true;
             out.push(c);
             continue;
         }
@@ -182,12 +185,16 @@ fn truncate_to_width(s: &str, width: usize) -> String {
         }
         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
         if current_width + cw > width {
+            truncated = true;
             break;
         }
         current_width += cw;
         out.push(c);
     }
 
+    if truncated && saw_escape {
+        out.push_str("\x1b[0m");
+    }
     if current_width < width {
         out.push_str(&" ".repeat(width - current_width));
     }
@@ -289,5 +296,13 @@ mod tests {
     fn pad_or_truncate_truncates() {
         let result = pad_or_truncate("hello world", 5);
         assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn pad_or_truncate_resets_ansi_after_truncating_styled_text() {
+        let result = pad_or_truncate("\x1b[31mhello\x1b[0m", 3);
+
+        assert_eq!(visible_len(&result), 3);
+        assert!(result.ends_with("\x1b[0m"), "{result:?}");
     }
 }
