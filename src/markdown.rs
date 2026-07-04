@@ -572,19 +572,33 @@ fn split_visible_word(word: &str, width: usize) -> Vec<String> {
         }
 
         let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if ch_width == 0 {
+            current.push(ch);
+            continue;
+        }
+
+        let mut cell = ch.to_string();
+        while let Some(next) = chars.peek().copied() {
+            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            cell.push(next);
+            chars.next();
+        }
+
         if ch_width > width {
             if !current.is_empty() {
                 parts.push(std::mem::take(&mut current));
                 current_width = 0;
             }
-            parts.push(truncate_visible(&ch.to_string(), width));
+            parts.push(truncate_visible(&cell, width));
             continue;
         }
         if current_width > 0 && current_width + ch_width > width {
             parts.push(std::mem::take(&mut current));
             current_width = 0;
         }
-        current.push(ch);
+        current.push_str(&cell);
         current_width += ch_width;
         if current_width >= width {
             parts.push(std::mem::take(&mut current));
@@ -1049,6 +1063,22 @@ mod tests {
         for line in output.lines() {
             assert!(visible_len(line) <= 8, "{line:?}");
         }
+    }
+
+    #[test]
+    fn wrap_text_hard_break_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_text("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_text_hard_break_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_text("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
     }
 
     #[test]
