@@ -19,7 +19,9 @@ fn paint_element<Msg>(
     grid_w: u16,
     grid_h: u16,
 ) {
-    let node = &layout.nodes[*idx];
+    let Some(node) = layout.nodes.get(*idx) else {
+        return;
+    };
     *idx += 1;
 
     // Early culling: skip elements entirely outside the visible area
@@ -88,7 +90,9 @@ fn paint_element<Msg>(
 fn skip_children<Msg>(element: &Element<Msg>, layout: &LayoutResult, idx: &mut usize) {
     if let Element::Box(box_el) = element {
         for child in &box_el.children {
-            let _ = &layout.nodes[*idx];
+            if *idx >= layout.nodes.len() {
+                return;
+            }
             *idx += 1;
             skip_children(child, layout, idx);
         }
@@ -257,5 +261,49 @@ mod tests {
         let grid = render(&el, 20, 2);
         assert_eq!(grid.get(0, 0).ch, 'v');
         assert_eq!(grid.get(0, 1).ch, 'a');
+    }
+
+    #[test]
+    fn paint_missing_layout_nodes_is_blank_and_does_not_panic() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("hidden"))),
+        );
+        let layout = LayoutResult { nodes: Vec::new() };
+
+        let grid = paint(&el, &layout, 8, 2);
+
+        assert_eq!(grid.render_to_string(), "        \n        ");
+    }
+
+    #[test]
+    fn paint_short_layout_nodes_renders_available_prefix() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .child(Element::Text(TextElement::new("visible")))
+                .child(Element::Text(TextElement::new("missing"))),
+        );
+        let layout = LayoutResult {
+            nodes: vec![
+                crate::layout_engine::LayoutNode {
+                    x: 0,
+                    y: 0,
+                    width: 8,
+                    height: 2,
+                },
+                crate::layout_engine::LayoutNode {
+                    x: 0,
+                    y: 0,
+                    width: 8,
+                    height: 1,
+                },
+            ],
+        };
+
+        let grid = paint(&el, &layout, 8, 2);
+
+        assert!(grid.render_to_string().starts_with("visible "));
     }
 }
