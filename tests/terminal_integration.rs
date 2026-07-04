@@ -1,12 +1,12 @@
 use a3s_tui::components::{
     highlight_selection, selected_text, ActivityBlock, Checklist, ChecklistItem, Chip, ChipStrip,
-    ChoicePrompt, ConnectorBlock, CursorLine, DetailPanel, DiffView, GitPanel, GitStatusFile,
-    GutterBlock, HelpPanel, HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem,
-    MenuPanel, ModeLine, OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar,
-    SessionStatus, SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane,
-    StatusBar, SubagentRow, SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel,
-    TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection, Timeline, TimelineItem,
-    ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
+    ChoicePrompt, ConnectorBlock, CursorLine, DetailPanel, DiffView, GutterBlock, HelpPanel,
+    HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem, MenuPanel, ModeLine,
+    OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar, SessionStatus,
+    SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow,
+    SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue,
+    TextOverlay, TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView, TreePicker,
+    TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
 };
 use a3s_tui::element::{
     BorderStyle, BoxElement, Dimension, Element, FlexDirection, TextElement, TextWrap,
@@ -493,40 +493,6 @@ fn side_note_panel_renders_btw_overlay_through_layout_and_paint() {
     assert!(plain.contains("side-channel"), "{plain:?}");
     assert_eq!(grid.get(2, 0).ch, '↘');
     assert_eq!(grid.get(2, 0).fg, Some(Color::Yellow));
-    assert!(grid.get(2, 0).bold);
-    assert!(ansi.contains("\x1b["));
-}
-
-#[test]
-fn git_panel_renders_status_overlay_through_layout_and_paint() {
-    let element: Element<()> = GitPanel::new("main")
-        .files(vec![
-            GitStatusFile::new('M', ' ', "src/lib.rs"),
-            GitStatusFile::new('?', '?', "tests/git_panel.rs"),
-        ])
-        .selected_file(0)
-        .log_entries(vec!["1234567 initial commit", "cafebabe add git panel"])
-        .diff_lines(vec![
-            "diff --git a/src/lib.rs b/src/lib.rs",
-            "@@ -1,2 +1,3 @@",
-            "+pub mod git_panel;",
-            "-inline git renderer",
-        ])
-        .note("ready")
-        .fill_height(true)
-        .element(72, 8);
-    let grid = render(&element, 72, 8);
-    let plain = plain(&grid);
-    let ansi = grid.render_to_string();
-
-    assert!(plain.contains("git · main"), "{plain:?}");
-    assert!(plain.contains("Status"), "{plain:?}");
-    assert!(plain.contains("Log (2)"), "{plain:?}");
-    assert!(plain.contains("src/lib.rs"), "{plain:?}");
-    assert!(plain.contains("pub mod git_panel"), "{plain:?}");
-    assert!(plain.contains("Space/s stage"), "{plain:?}");
-    assert_eq!(grid.get(2, 0).ch, 'g');
-    assert_eq!(grid.get(2, 0).fg, Some(Color::Cyan));
     assert!(grid.get(2, 0).bold);
     assert!(ansi.contains("\x1b["));
 }

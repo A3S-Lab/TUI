@@ -122,9 +122,8 @@ Run with `cargo run --example counter_element`.
 | `CursorLine` | Display-width-aware editor line with a block cursor |
 | `DataTable` | Responsive, scrollable data table |
 | `DetailPanel` | Compact selected-row details with metadata and actions |
-| `DiffView` | Unified diff renderer for edits, git panels, and tool output |
+| `DiffView` | Unified diff renderer for edits and tool output |
 | `Divider` | Horizontal/vertical separators |
-| `GitPanel` | Git status/log panel with selectable files, commits, diffs, and commit input |
 | `GutterBlock` | Transcript/message block with marker gutter and optional bubble background |
 | `HelpPanel` | Grouped shortcut and command help |
 | `InputBorder` | Input-area border line with context, effort, and ribbon variants |

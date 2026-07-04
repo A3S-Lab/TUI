@@ -66,7 +66,7 @@ impl DiffLine {
     }
 }
 
-/// Width-aware unified diff renderer for edits, git panels, and tool output.
+/// Width-aware unified diff renderer for edits and tool output.
 ///
 /// `DiffView` can render pre-existing unified diff lines or compute a compact
 /// grouped diff from before/after text. It uses a stable line-number gutter,

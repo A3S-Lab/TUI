@@ -127,7 +127,7 @@ pub enum TabbedMenuPanelMsg {
 
 /// Colored tab strip plus a scroll-aware selectable list.
 ///
-/// This extracts the model/relay picker pattern from the CLI: colored source
+/// This extracts the tabbed picker pattern from the CLI: colored source
 /// chips, optional title and hint rows, active-tab switching, and a selected
 /// list whose window follows the cursor.
 #[derive(Debug, Clone)]
