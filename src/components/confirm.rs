@@ -3,6 +3,8 @@ use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{center_visible, fit_visible, wrap_words, Color, Style};
 use crossterm::event::KeyCode;
 
+const MAX_CONFIRM_WIDTH: usize = u16::MAX as usize;
+
 /// A confirmation dialog with Yes/No options.
 pub struct Confirm {
     title: Option<String>,
@@ -59,7 +61,7 @@ impl Confirm {
     }
 
     pub fn max_width(mut self, width: usize) -> Self {
-        self.max_width = width.max(8);
+        self.max_width = width.max(8).min(MAX_CONFIRM_WIDTH);
         self
     }
 
@@ -348,6 +350,15 @@ mod tests {
         for line in rendered.lines() {
             assert!(visible_len(line) <= 32, "{line:?}");
         }
+    }
+
+    #[test]
+    fn oversized_max_width_is_clamped() {
+        let confirm = Confirm::new("Proceed?").max_width(usize::MAX);
+        let rendered = confirm.box_view(16);
+
+        assert_eq!(confirm.max_width, MAX_CONFIRM_WIDTH);
+        assert!(rendered.lines().all(|line| visible_len(line) <= 16));
     }
 
     #[test]
