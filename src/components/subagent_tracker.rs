@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_SUBAGENT_CHILD_INDENT: usize = u16::MAX as usize;
+const MAX_SUBAGENT_MARGIN: usize = u16::MAX as usize;
+
 /// Durable status rows for parallel subagents or background workers.
 ///
 /// This extracts the common CLI pattern of a summary row with aggregate
@@ -65,12 +68,12 @@ impl SubagentTracker {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_SUBAGENT_MARGIN);
         self
     }
 
     pub fn child_indent(mut self, child_indent: usize) -> Self {
-        self.child_indent = child_indent;
+        self.child_indent = child_indent.min(MAX_SUBAGENT_CHILD_INDENT);
         self
     }
 
@@ -175,7 +178,10 @@ impl SubagentTracker {
         right: String,
         width: usize,
     ) -> String {
-        let pad = width.saturating_sub(visible_len(&left) + visible_len(&right) + 1);
+        let content_width = [visible_len(&left), visible_len(&right), 1]
+            .into_iter()
+            .fold(0usize, usize::saturating_add);
+        let pad = width.saturating_sub(content_width);
         let mut left_style = Style::new().fg(left_color);
         if bold_left {
             left_style = left_style.bold();
@@ -191,7 +197,7 @@ impl SubagentTracker {
     fn summary_left(&self, width: usize, right: &str) -> String {
         let raw = format!(
             "{}{} {}  {}",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_width(width)),
             self.marker,
             self.slug_text(),
             self.title.trim()
@@ -202,7 +208,7 @@ impl SubagentTracker {
     fn child_left(&self, row: &SubagentRow, width: usize, right: &str) -> String {
         let raw = format!(
             "{}{} {}  {}",
-            " ".repeat(self.child_indent),
+            " ".repeat(self.child_indent_for_width(width)),
             self.marker,
             row.agent,
             row.description
@@ -251,7 +257,7 @@ impl SubagentTracker {
         let right = self.summary_status();
         let left = format!(
             "{}{} {}  {}",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_element()),
             self.marker,
             self.slug_text(),
             self.title.trim()
@@ -262,7 +268,7 @@ impl SubagentTracker {
     fn child_element<Msg>(&self, row: &SubagentRow) -> Element<Msg> {
         let left = format!(
             "{}{} {}  {}",
-            " ".repeat(self.child_indent),
+            " ".repeat(self.child_indent_for_element()),
             self.marker,
             row.agent,
             row.description
@@ -283,6 +289,22 @@ impl SubagentTracker {
             .filter(|slug| !slug.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| slugify(&self.title))
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_SUBAGENT_MARGIN)
+    }
+
+    fn child_indent_for_width(&self, width: usize) -> usize {
+        self.child_indent.min(width).min(MAX_SUBAGENT_CHILD_INDENT)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_SUBAGENT_MARGIN)
+    }
+
+    fn child_indent_for_element(&self) -> usize {
+        self.child_indent.min(MAX_SUBAGENT_CHILD_INDENT)
     }
 }
 
@@ -564,6 +586,41 @@ mod tests {
     }
 
     #[test]
+    fn oversized_indents_are_clamped_to_render_width() {
+        let tracker = SubagentTracker::new("Extract")
+            .margin(usize::MAX)
+            .child_indent(usize::MAX)
+            .row(SubagentRow::new("coder", "build").elapsed("1s"));
+        let view = tracker.view(8);
+
+        assert_eq!(tracker.margin, MAX_SUBAGENT_MARGIN);
+        assert_eq!(tracker.child_indent, MAX_SUBAGENT_CHILD_INDENT);
+        assert!(view.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = tracker.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(summary) = &column.children[0] else {
+            panic!("expected summary row");
+        };
+        let Element::Text(summary_left) = &summary.children[0] else {
+            panic!("expected summary text");
+        };
+        assert_eq!(leading_spaces(&summary_left.content), MAX_SUBAGENT_MARGIN);
+
+        let Element::Box(child) = &column.children[1] else {
+            panic!("expected child row");
+        };
+        let Element::Text(child_left) = &child.children[0] else {
+            panic!("expected child text");
+        };
+        assert_eq!(
+            leading_spaces(&child_left.content),
+            MAX_SUBAGENT_CHILD_INDENT
+        );
+    }
+
+    #[test]
     fn element_exposes_structured_rows() {
         let element: Element<()> = SubagentTracker::new("Extract")
             .slug("extract")
@@ -581,5 +638,9 @@ mod tests {
         let tracker = SubagentTracker::new("提取通用组件");
 
         assert_eq!(tracker.slug_text(), "parallel-agents");
+    }
+
+    fn leading_spaces(value: &str) -> usize {
+        value.chars().take_while(|ch| *ch == ' ').count()
     }
 }
