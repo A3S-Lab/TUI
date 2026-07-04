@@ -228,8 +228,19 @@ impl Grid {
         if x < self.width && y < self.height {
             let row = y as usize;
             let col = x as usize;
-            self.clear_wide_span_at(row, col);
-            self.cells[row][col] = cell;
+            let width = unicode_width::UnicodeWidthChar::width(cell.ch).unwrap_or(1);
+            if width == 0 || col.saturating_add(width) > self.width as usize {
+                return;
+            }
+            for target_col in col..col.saturating_add(width).max(col + 1) {
+                self.clear_wide_span_at(row, target_col);
+            }
+            self.cells[row][col] = cell.clone();
+            for offset in 1..width {
+                let mut continuation = cell.clone();
+                continuation.ch = WIDE_CONTINUATION;
+                self.cells[row][col + offset] = continuation;
+            }
         }
     }
 
@@ -498,6 +509,26 @@ mod tests {
         grid.set(1, 0, Cell::with_char('B'));
 
         assert_eq!(grid.render_to_string(), " B");
+    }
+
+    #[test]
+    fn grid_set_marks_wide_char_continuation() {
+        let mut grid = Grid::new(2, 1);
+
+        grid.set(0, 0, Cell::with_char('界'));
+
+        assert_eq!(grid.get(0, 0).ch, '界');
+        assert_eq!(grid.get(1, 0).ch, WIDE_CONTINUATION);
+        assert_eq!(crate::style::visible_len(&grid.render_to_string()), 2);
+    }
+
+    #[test]
+    fn grid_set_drops_wide_char_that_would_overflow() {
+        let mut grid = Grid::new(2, 1);
+
+        grid.set(1, 0, Cell::with_char('界'));
+
+        assert_eq!(grid.render_to_string(), "  ");
     }
 
     #[test]
