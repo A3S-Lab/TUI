@@ -1,5 +1,5 @@
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{fit_visible, Color, Style};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AlertKind {
@@ -13,6 +13,7 @@ pub struct Alert {
     kind: AlertKind,
     title: String,
     body: String,
+    color: Option<Color>,
 }
 
 impl Alert {
@@ -21,6 +22,7 @@ impl Alert {
             kind,
             title: String::new(),
             body: body.into(),
+            color: None,
         }
     }
 
@@ -29,13 +31,22 @@ impl Alert {
         self
     }
 
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub fn view(&self) -> String {
+        let (icon, color) = self.presentation();
+        Style::new().fg(color).render(&self.line_text(icon))
+    }
+
+    pub fn view_with_width(&self, width: u16) -> String {
+        fit_visible(&self.view(), width as usize)
+    }
+
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let (icon, color) = match self.kind {
-            AlertKind::Info => ("ℹ", Color::Blue),
-            AlertKind::Success => ("✓", Color::Green),
-            AlertKind::Warning => ("⚠", Color::Yellow),
-            AlertKind::Error => ("✗", Color::Red),
-        };
+        let (icon, color) = self.presentation();
 
         let mut children: Vec<Element<Msg>> = Vec::new();
 
@@ -60,11 +71,33 @@ impl Alert {
                 .children(children),
         )
     }
+
+    fn presentation(&self) -> (&'static str, Color) {
+        let (icon, default_color) = match self.kind {
+            AlertKind::Info => ("ℹ", Color::Blue),
+            AlertKind::Success => ("✓", Color::Green),
+            AlertKind::Warning => ("⚠", Color::Yellow),
+            AlertKind::Error => ("✗", Color::Red),
+        };
+        (icon, self.color.unwrap_or(default_color))
+    }
+
+    fn line_text(&self, icon: &str) -> String {
+        let title = self.title.trim();
+        let body = self.body.trim();
+        match (!title.is_empty(), !body.is_empty()) {
+            (true, true) => format!("{icon} {title}: {body}"),
+            (true, false) => format!("{icon} {title}"),
+            (false, true) => format!("{icon} {body}"),
+            (false, false) => icon.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn alert_without_title() {
@@ -97,5 +130,39 @@ mod tests {
             let alert = Alert::new(kind, "test");
             let _el: Element<()> = alert.element();
         }
+    }
+
+    #[test]
+    fn alert_view_renders_icon_title_and_body() {
+        let rendered = Alert::new(AlertKind::Warning, "needs login")
+            .title("OS")
+            .view();
+
+        assert_eq!(strip_ansi(&rendered), "⚠ OS: needs login");
+        assert!(rendered.contains("\x1b[33m"));
+    }
+
+    #[test]
+    fn alert_view_without_title_renders_body() {
+        let rendered = Alert::new(AlertKind::Error, "failed").view();
+
+        assert_eq!(strip_ansi(&rendered), "✗ failed");
+    }
+
+    #[test]
+    fn alert_view_uses_custom_color() {
+        let rendered = Alert::new(AlertKind::Info, "custom")
+            .color(Color::Rgb(1, 2, 3))
+            .view();
+
+        assert_eq!(strip_ansi(&rendered), "ℹ custom");
+        assert!(rendered.contains("\x1b[38;2;1;2;3m"));
+    }
+
+    #[test]
+    fn alert_view_with_width_bounds_visible_length() {
+        let rendered = Alert::new(AlertKind::Warning, "a long warning").view_with_width(8);
+
+        assert_eq!(visible_len(&rendered), 8);
     }
 }
