@@ -616,12 +616,18 @@ impl Style {
     }
 
     fn apply_border_style(&self, text: &str) -> String {
-        if let Some(ref c) = self.border_fg {
-            format!("\x1b[{}m{}\x1b[0m", c.fg_code(), text)
-        } else if let Some(ref c) = self.fg {
-            format!("\x1b[{}m{}\x1b[0m", c.fg_code(), text)
-        } else {
+        let mut codes = Vec::new();
+        if let Some(c) = self.border_fg.or(self.fg) {
+            codes.push(c.fg_code());
+        }
+        if let Some(c) = self.bg {
+            codes.push(c.bg_code());
+        }
+
+        if codes.is_empty() {
             text.to_string()
+        } else {
+            format!("\x1b[{}m{}\x1b[0m", codes.join(";"), text)
         }
     }
 }
@@ -1222,6 +1228,25 @@ mod tests {
     }
 
     #[test]
+    fn render_bordered_cells_inherit_background_style() {
+        let out = Style::new()
+            .fg(Color::Red)
+            .bg(Color::Blue)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36;44m╭─╮\x1b[0m");
+        assert_eq!(
+            lines[1],
+            "\x1b[36;44m│\x1b[0m\x1b[31;44mx\x1b[0m\x1b[36;44m│\x1b[0m"
+        );
+        assert_eq!(lines[2], "\x1b[36;44m╰─╯\x1b[0m");
+        assert!(lines.iter().all(|line| visible_len(line) == 3));
+    }
+
+    #[test]
     fn render_bordered_padding_uses_text_style_inside_vertical_edges() {
         let out = Style::new()
             .bg(Color::Blue)
@@ -1231,10 +1256,10 @@ mod tests {
             .render("x");
         let lines = out.lines().collect::<Vec<_>>();
 
-        assert_eq!(lines[0], "\x1b[36m╭───╮\x1b[0m");
+        assert_eq!(lines[0], "\x1b[36;44m╭───╮\x1b[0m");
         assert_eq!(
             lines[1],
-            "\x1b[36m│\x1b[0m\x1b[44m   \x1b[0m\x1b[36m│\x1b[0m"
+            "\x1b[36;44m│\x1b[0m\x1b[44m   \x1b[0m\x1b[36;44m│\x1b[0m"
         );
         assert_eq!(strip_ansi(lines[1]), "│   │");
         assert_eq!(visible_len(lines[1]), 5);
