@@ -407,7 +407,8 @@ impl PreviewPanel {
         }
 
         let selected = self.normalized_selected();
-        for (index, item) in self.items.iter().enumerate() {
+        for index in self.element_item_range() {
+            let item = &self.items[index];
             let mut text = TextElement::new(self.plain_item_line(index, None));
             if index == selected {
                 text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
@@ -584,6 +585,16 @@ impl PreviewPanel {
             start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let visible_items = self
+            .max_items
+            .unwrap_or(self.items.len())
+            .min(self.items.len());
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -825,7 +836,8 @@ mod tests {
         let Element::Box(box_el) = panel.element::<()>() else {
             panic!("expected box element");
         };
-        let Element::Text(last_item) = &box_el.children[2] else {
+        assert_eq!(box_el.children.len(), 4);
+        let Element::Text(last_item) = &box_el.children[1] else {
             panic!("expected selected item");
         };
         assert_eq!(last_item.content, "  ▸ two");
@@ -907,5 +919,35 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let items = (0..5)
+            .map(|index| PreviewItem::new(format!("entry-{index}")))
+            .collect::<Vec<_>>();
+        let el: Element<()> = PreviewPanel::without_title()
+            .items(items)
+            .without_preview_title()
+            .selected(3)
+            .scroll(1)
+            .max_items(3)
+            .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("entry-1"));
+        assert!(text.contains("entry-2"));
+        assert!(text.contains("entry-3"));
+        assert!(!text.contains("entry-0"));
+        assert!(!text.contains("entry-4"));
     }
 }

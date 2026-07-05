@@ -430,7 +430,8 @@ impl TreePicker {
         }
 
         let selected = self.normalized_selected();
-        for (index, item) in self.items.iter().enumerate() {
+        for index in self.element_item_range() {
+            let item = &self.items[index];
             let mut text = TextElement::new(self.plain_item_line(index, None));
             if index == selected {
                 text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
@@ -582,6 +583,16 @@ impl TreePicker {
             start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let visible_items = self
+            .max_items
+            .unwrap_or(self.items.len())
+            .min(self.items.len());
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -887,7 +898,8 @@ mod tests {
         let Element::Box(column) = picker.element::<()>() else {
             panic!("expected column element");
         };
-        let Element::Text(selected_item) = &column.children[1] else {
+        assert_eq!(column.children.len(), 1);
+        let Element::Text(selected_item) = &column.children[0] else {
             panic!("expected selected item");
         };
         assert_eq!(selected_item.content, "    two");
@@ -944,5 +956,34 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let items = (0..5)
+            .map(|idx| TreePickerItem::leaf(format!("file-{idx}.rs")))
+            .collect::<Vec<_>>();
+        let el: Element<()> = TreePicker::without_title()
+            .items(items)
+            .selected(3)
+            .scroll(1)
+            .max_items(3)
+            .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("file-1.rs"));
+        assert!(text.contains("file-2.rs"));
+        assert!(text.contains("file-3.rs"));
+        assert!(!text.contains("file-0.rs"));
+        assert!(!text.contains("file-4.rs"));
     }
 }
