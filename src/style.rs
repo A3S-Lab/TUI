@@ -425,18 +425,12 @@ impl Style {
 
         // Top padding
         for _ in 0..self.padding[0] {
-            let pad_line = match &border_chars {
-                Some(bc) => format!(
-                    "{}{}{}{}{}",
-                    margin_left,
-                    bc.v,
-                    " ".repeat(inner_width),
-                    bc.v,
-                    margin_right
-                ),
-                None => format!("{}{}{}", margin_left, " ".repeat(inner_width), margin_right),
-            };
-            result.push(self.apply_border_style(&pad_line));
+            result.push(self.apply_padding_line_style(
+                border_chars.as_ref(),
+                &margin_left,
+                inner_width,
+                &margin_right,
+            ));
         }
 
         // Content lines
@@ -469,18 +463,12 @@ impl Style {
 
         // Bottom padding
         for _ in 0..self.padding[2] {
-            let pad_line = match &border_chars {
-                Some(bc) => format!(
-                    "{}{}{}{}{}",
-                    margin_left,
-                    bc.v,
-                    " ".repeat(inner_width),
-                    bc.v,
-                    margin_right
-                ),
-                None => format!("{}{}{}", margin_left, " ".repeat(inner_width), margin_right),
-            };
-            result.push(self.apply_border_style(&pad_line));
+            result.push(self.apply_padding_line_style(
+                border_chars.as_ref(),
+                &margin_left,
+                inner_width,
+                &margin_right,
+            ));
         }
 
         // Bottom border
@@ -564,6 +552,25 @@ impl Style {
             self.apply_border_style(&right_border),
             self.apply_text_style_nonempty(margin_right)
         )
+    }
+
+    fn apply_padding_line_style(
+        &self,
+        border_chars: Option<&BorderChars>,
+        margin_left: &str,
+        inner_width: usize,
+        margin_right: &str,
+    ) -> String {
+        let content = " ".repeat(inner_width);
+        match border_chars {
+            Some(bc) => {
+                self.apply_bordered_content_style(margin_left, bc.v, &content, bc.v, margin_right)
+            }
+            None => {
+                let line = format!("{margin_left}{content}{margin_right}");
+                self.apply_text_style(&line)
+            }
+        }
     }
 
     fn apply_text_style_nonempty(&self, text: &str) -> String {
@@ -1212,6 +1219,41 @@ mod tests {
         assert_eq!(lines[2], "\x1b[36m╰─╯\x1b[0m");
         assert_eq!(strip_ansi(lines[1]), "│x│");
         assert_eq!(visible_len(lines[1]), 3);
+    }
+
+    #[test]
+    fn render_bordered_padding_uses_text_style_inside_vertical_edges() {
+        let out = Style::new()
+            .bg(Color::Blue)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .padding(1, 1)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36m╭───╮\x1b[0m");
+        assert_eq!(
+            lines[1],
+            "\x1b[36m│\x1b[0m\x1b[44m   \x1b[0m\x1b[36m│\x1b[0m"
+        );
+        assert_eq!(strip_ansi(lines[1]), "│   │");
+        assert_eq!(visible_len(lines[1]), 5);
+    }
+
+    #[test]
+    fn render_unbordered_padding_uses_text_style() {
+        let out = Style::new()
+            .bg(Color::Blue)
+            .border_fg(Color::Cyan)
+            .padding(1, 0)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(
+            lines,
+            vec!["\x1b[44m \x1b[0m", "\x1b[44mx\x1b[0m", "\x1b[44m \x1b[0m"]
+        );
+        assert!(lines.iter().all(|line| visible_len(line) == 1));
     }
 
     #[test]
