@@ -307,11 +307,11 @@ impl TabbedMenuPanel {
     }
 
     pub fn active_tab_value(&self) -> usize {
-        self.active_tab
+        self.normalized_active_tab()
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn active_items(&self) -> &[TabbedMenuItem] {
@@ -321,7 +321,7 @@ impl TabbedMenuPanel {
     }
 
     pub fn selected_item(&self) -> Option<&TabbedMenuItem> {
-        self.active_items().get(self.selected)
+        self.active_items().get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TabbedMenuPanelMsg> {
@@ -329,27 +329,30 @@ impl TabbedMenuPanel {
             KeyCode::Left | KeyCode::Char('h') => self.move_tab_left(),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.move_tab_right(),
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.selected + 1 < self.active_items().len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.active_items().len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::PageUp => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = self.selected.saturating_sub(step);
+                self.selected = self.normalized_selected().saturating_sub(step);
                 self.keep_selected_visible(step);
                 None
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
                 self.selected = self
-                    .selected
+                    .normalized_selected()
                     .saturating_add(step)
                     .min(self.active_items().len().saturating_sub(1));
                 self.keep_selected_visible(step);
@@ -435,9 +438,10 @@ impl TabbedMenuPanel {
             children.push(Element::Text(TextElement::new(hint).fg(self.hint_color)));
         }
 
+        let selected = self.normalized_selected();
         for (index, item) in self.active_items().iter().enumerate() {
             let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == self.selected {
+            if index == selected {
                 text = text
                     .fg(self.selected_fg)
                     .bg(self.selected_bg.unwrap_or(active_tab.color))
@@ -529,7 +533,7 @@ impl TabbedMenuPanel {
             .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
-            .active(self.active_tab)
+            .active(self.normalized_active_tab())
             .margin(self.indent_for_width(width))
             .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .view(width as u16)
@@ -542,7 +546,7 @@ impl TabbedMenuPanel {
             .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
-            .active(self.active_tab)
+            .active(self.normalized_active_tab())
             .margin(self.indent_for_element())
             .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .element()
@@ -551,7 +555,7 @@ impl TabbedMenuPanel {
     fn render_item(&self, index: usize, width: usize, active_tab: &TabbedMenuTab) -> String {
         let raw = fit_visible(&self.plain_item_line(index, Some(width)), width);
         let item = &active_tab.items[index];
-        if index == self.selected {
+        if index == self.normalized_selected() {
             Style::new()
                 .fg(self.selected_fg)
                 .bg(self.selected_bg.unwrap_or(active_tab.color))
@@ -595,7 +599,7 @@ impl TabbedMenuPanel {
             &format!(
                 "{}{up}{down} {}/{}",
                 " ".repeat(self.indent_for_width(width)),
-                self.selected.saturating_add(1).min(total),
+                self.normalized_selected().saturating_add(1).min(total),
                 total
             ),
             width,
@@ -603,7 +607,7 @@ impl TabbedMenuPanel {
     }
 
     fn move_tab_left(&mut self) -> Option<TabbedMenuPanelMsg> {
-        let active = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        let active = self.normalized_active_tab();
         if active == 0 {
             self.active_tab = active;
             return None;
@@ -615,7 +619,7 @@ impl TabbedMenuPanel {
     }
 
     fn move_tab_right(&mut self) -> Option<TabbedMenuPanelMsg> {
-        let active = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        let active = self.normalized_active_tab();
         if active.saturating_add(1) >= self.tabs.len() {
             self.active_tab = active;
             return None;
@@ -627,13 +631,15 @@ impl TabbedMenuPanel {
     }
 
     fn selected_msg(&self) -> Option<TabbedMenuPanelMsg> {
-        let item = self.active_items().get(self.selected)?;
+        let active_tab = self.normalized_active_tab();
+        let selected = self.normalized_selected();
+        let item = self.active_items().get(selected)?;
         if item.disabled {
             None
         } else {
             Some(TabbedMenuPanelMsg::Selected {
-                tab: self.active_tab,
-                item: self.selected,
+                tab: active_tab,
+                item: selected,
             })
         }
     }
@@ -660,10 +666,11 @@ impl TabbedMenuPanel {
         }
         let max_start = item_count.saturating_sub(visible_items);
         let mut start = self.scroll.min(max_start);
-        if self.selected < start {
-            start = self.selected;
-        } else if self.selected >= start + visible_items {
-            start = self.selected + 1 - visible_items;
+        let selected = self.normalized_selected();
+        if selected < start {
+            start = selected;
+        } else if selected >= start + visible_items {
+            start = selected + 1 - visible_items;
         }
         start.min(max_start)
     }
@@ -684,7 +691,7 @@ impl TabbedMenuPanel {
     }
 
     fn current_tab(&self) -> Option<&TabbedMenuTab> {
-        self.tabs.get(self.active_tab)
+        self.tabs.get(self.normalized_active_tab())
     }
 
     fn item_color(&self, item: &TabbedMenuItem, active_tab: &TabbedMenuTab) -> Color {
@@ -701,10 +708,17 @@ impl TabbedMenuPanel {
     }
 
     fn clamp_state(&mut self) {
-        self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
-        self.selected = self
-            .selected
-            .min(self.active_items().len().saturating_sub(1));
+        self.active_tab = self.normalized_active_tab();
+        self.selected = self.normalized_selected();
+    }
+
+    fn normalized_active_tab(&self) -> usize {
+        self.active_tab.min(self.tabs.len().saturating_sub(1))
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected
+            .min(self.active_items().len().saturating_sub(1))
     }
 
     fn indent_for_width(&self, width: usize) -> usize {
@@ -914,6 +928,44 @@ mod tests {
             Some(TabbedMenuPanelMsg::TabChanged(0))
         );
         assert_eq!(panel.active_tab_value(), 0);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_rendering_and_input() {
+        let mut panel = TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+            .item(TabbedMenuItem::new("one"))
+            .item(TabbedMenuItem::new("two"))])
+        .show_tabs_when_single(true)
+        .max_items(1);
+        panel.selected = usize::MAX;
+
+        assert_eq!(panel.selected_index(), 1);
+        assert_eq!(
+            panel.selected_item().map(TabbedMenuItem::label),
+            Some("two")
+        );
+        assert_eq!(
+            panel.handle_key(&key(KeyCode::Enter)),
+            Some(TabbedMenuPanelMsg::Selected { tab: 0, item: 1 })
+        );
+
+        let plain = strip_ansi(&panel.view(24, 4));
+        assert!(plain.contains("two"), "{plain:?}");
+        assert!(!plain.contains("one"), "{plain:?}");
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(selected_item) = &column.children[2] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(selected_item.content, "  two");
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Down)), None);
+        assert_eq!(panel.selected_index(), 1);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Up)), None);
         assert_eq!(panel.selected_index(), 0);
     }
 
