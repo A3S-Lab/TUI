@@ -143,7 +143,7 @@ Run with `cargo run --example counter_element`.
 | `PreviewPanel` | Selectable item list with a live preview section |
 | `Progress` | Progress bar |
 | `PromptLine` | Prompt-prefixed input text with aligned continuation rows |
-| `Scrollbar` | Scrollbar indicator |
+| `Scrollbar` | Scrollbar indicator with offset, percent, and append-to-view rendering |
 | `Select` | Single-selection dropdown |
 | `SessionStatus` | Agent/session footer row with context and live chips |
 | `SectionHeader` | Width-safe panel heading with metadata and divider rows |

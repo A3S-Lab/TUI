@@ -30,6 +30,18 @@ impl Scrollbar {
         }
     }
 
+    /// Build a scrollbar from a 0-100 scroll percentage.
+    pub fn from_scroll_percent(total: usize, visible: usize, scroll_percent: u8) -> Self {
+        let max_offset = total.saturating_sub(visible);
+        let offset = if max_offset == 0 {
+            0
+        } else {
+            ((max_offset as u128 * scroll_percent.min(100) as u128) / 100) as usize
+        };
+
+        Self::new(total, visible, offset)
+    }
+
     pub fn track_char(mut self, ch: char) -> Self {
         self.track_char = ch;
         self
@@ -221,6 +233,17 @@ mod tests {
         let (pos, size) = sb.thumb_range(10);
         assert_eq!(size, 5);
         assert_eq!(pos, 5);
+    }
+
+    #[test]
+    fn from_scroll_percent_maps_percent_to_offset() {
+        let top = Scrollbar::from_scroll_percent(20, 10, 0);
+        let bottom = Scrollbar::from_scroll_percent(20, 10, 100);
+        let clamped = Scrollbar::from_scroll_percent(20, 10, 200);
+
+        assert_eq!(top.offset, 0);
+        assert_eq!(bottom.offset, 10);
+        assert_eq!(clamped.offset, 10);
     }
 
     #[test]
