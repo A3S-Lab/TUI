@@ -197,7 +197,7 @@ impl ToolLogView {
     }
 
     pub fn scroll_value(&self) -> usize {
-        self.scroll
+        self.normalized_scroll()
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -236,7 +236,9 @@ impl ToolLogView {
                     .italic(),
             ));
         } else {
-            let visible = self.plain_rows().into_iter().skip(self.scroll).take(height);
+            let rows = self.plain_rows();
+            let scroll = self.normalized_scroll_for_len(rows.len());
+            let visible = rows.into_iter().skip(scroll).take(height);
             for row in visible {
                 children.push(row.element(
                     self.header_color,
@@ -278,12 +280,9 @@ impl ToolLogView {
         }
 
         let available = height.saturating_sub(lines.len());
-        for row in self
-            .plain_rows()
-            .into_iter()
-            .skip(self.scroll)
-            .take(available)
-        {
+        let rows = self.plain_rows();
+        let scroll = self.normalized_scroll_for_len(rows.len());
+        for row in rows.into_iter().skip(scroll).take(available) {
             lines.push(row.render(
                 width,
                 self.header_color,
@@ -329,8 +328,16 @@ impl ToolLogView {
         rows
     }
 
+    fn normalized_scroll(&self) -> usize {
+        self.normalized_scroll_for_len(self.plain_rows().len())
+    }
+
+    fn normalized_scroll_for_len(&self, row_count: usize) -> usize {
+        self.scroll.min(row_count.saturating_sub(1))
+    }
+
     fn clamp_scroll(&mut self) {
-        self.scroll = self.scroll.min(self.plain_rows().len().saturating_sub(1));
+        self.scroll = self.normalized_scroll();
     }
 
     fn status_color(&self, status: ToolLogStatus) -> Color {
@@ -535,6 +542,33 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_stale_scroll_when_rendering() {
+        let mut view = sample();
+        let last_row = view.plain_rows().len().saturating_sub(1);
+        view.scroll = usize::MAX;
+
+        assert_eq!(view.scroll_value(), last_row);
+
+        let rendered = view.view(40, 3);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#2 · bash · exit 2"));
+        assert!(!plain.contains("#1 · read"));
+    }
+
+    #[test]
+    fn element_normalizes_stale_scroll_when_rendering() {
+        let mut view = sample();
+        view.scroll = usize::MAX;
+
+        let element = view.element::<()>(2);
+        let text = element_text(&element);
+
+        assert!(text.contains("#2 · bash · exit 2"));
+        assert!(!text.contains("#1 · read"));
+    }
+
+    #[test]
     fn limits_output_tail_per_record() {
         let rendered = ToolLogView::new()
             .record(ToolLogRecord::ok("test").output("one\ntwo\nthree\nfour"))
@@ -608,6 +642,19 @@ mod tests {
                 assert!(!column.children.is_empty());
             }
             _ => panic!("expected Box"),
+        }
+    }
+
+    fn element_text(element: &Element<()>) -> String {
+        match element {
+            Element::Text(text) => text.content.clone(),
+            Element::Box(box_element) => box_element
+                .children
+                .iter()
+                .map(element_text)
+                .collect::<Vec<_>>()
+                .join(""),
+            Element::Spacer | Element::_Phantom(_) => String::new(),
         }
     }
 }
