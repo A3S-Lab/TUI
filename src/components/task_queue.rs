@@ -81,7 +81,7 @@ impl TaskQueue {
     }
 
     pub fn max_queued_rows(mut self, max_queued_rows: usize) -> Self {
-        self.max_queued_rows = max_queued_rows.min(MAX_TASK_QUEUE_QUEUED_ROWS);
+        self.max_queued_rows = max_queued_rows.clamp(1, MAX_TASK_QUEUE_QUEUED_ROWS);
         self
     }
 
@@ -426,6 +426,21 @@ mod tests {
         assert_eq!(queue.max_queued_rows, MAX_TASK_QUEUE_QUEUED_ROWS);
         assert_eq!(queue.visible_queued().len(), 2);
         assert!(view.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
+    fn zero_queued_row_limit_keeps_one_row_visible() {
+        let queue = TaskQueue::new()
+            .max_queued_rows(0)
+            .queued(QueuedTask::new("one"))
+            .queued(QueuedTask::new("two"));
+        let view = queue.view(24);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(queue.max_queued_rows, 1);
+        assert_eq!(queue.visible_queued().len(), 1);
+        assert!(plain.contains("▱ one"));
+        assert!(!plain.contains("▱ two"));
     }
 
     #[test]
