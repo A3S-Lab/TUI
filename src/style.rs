@@ -400,15 +400,17 @@ impl Style {
         }
 
         let margin_left = " ".repeat(self.margin[3] as usize);
+        let margin_right = " ".repeat(self.margin[1] as usize);
 
         // Top border
         if let Some(ref bc) = border_chars {
             let border_line = format!(
-                "{}{}{}{}",
+                "{}{}{}{}{}",
                 margin_left,
                 bc.tl,
                 str::repeat(&bc.h.to_string(), inner_width),
-                bc.tr
+                bc.tr,
+                margin_right
             );
             result.push(self.apply_border_style(&border_line));
         }
@@ -416,8 +418,15 @@ impl Style {
         // Top padding
         for _ in 0..self.padding[0] {
             let pad_line = match &border_chars {
-                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v),
-                None => format!("{}{}", margin_left, " ".repeat(inner_width)),
+                Some(bc) => format!(
+                    "{}{}{}{}{}",
+                    margin_left,
+                    bc.v,
+                    " ".repeat(inner_width),
+                    bc.v,
+                    margin_right
+                ),
+                None => format!("{}{}{}", margin_left, " ".repeat(inner_width), margin_right),
             };
             result.push(self.apply_border_style(&pad_line));
         }
@@ -434,8 +443,8 @@ impl Style {
             );
 
             let full_line = match &border_chars {
-                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, padded, bc.v),
-                None => format!("{}{}", margin_left, padded),
+                Some(bc) => format!("{}{}{}{}{}", margin_left, bc.v, padded, bc.v, margin_right),
+                None => format!("{}{}{}", margin_left, padded, margin_right),
             };
 
             result.push(self.apply_line_style(&full_line, has_border));
@@ -444,8 +453,15 @@ impl Style {
         // Bottom padding
         for _ in 0..self.padding[2] {
             let pad_line = match &border_chars {
-                Some(bc) => format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v),
-                None => format!("{}{}", margin_left, " ".repeat(inner_width)),
+                Some(bc) => format!(
+                    "{}{}{}{}{}",
+                    margin_left,
+                    bc.v,
+                    " ".repeat(inner_width),
+                    bc.v,
+                    margin_right
+                ),
+                None => format!("{}{}{}", margin_left, " ".repeat(inner_width), margin_right),
             };
             result.push(self.apply_border_style(&pad_line));
         }
@@ -453,11 +469,12 @@ impl Style {
         // Bottom border
         if let Some(ref bc) = border_chars {
             let border_line = format!(
-                "{}{}{}{}",
+                "{}{}{}{}{}",
                 margin_left,
                 bc.bl,
                 str::repeat(&bc.h.to_string(), inner_width),
-                bc.br
+                bc.br,
+                margin_right
             );
             result.push(self.apply_border_style(&border_line));
         }
@@ -1177,6 +1194,32 @@ mod tests {
 
         assert_eq!(lines, vec!["╭────╮", "│abc…│", "╰────╯"]);
         assert!(lines.iter().all(|line| visible_len(line) == 6));
+    }
+
+    #[test]
+    fn render_width_includes_right_margin() {
+        let out = Style::new()
+            .width(8)
+            .margin_left(1)
+            .margin_right(2)
+            .render("abcd");
+
+        assert_eq!(visible_len(&out), 8);
+        assert_eq!(out, " abcd   ");
+    }
+
+    #[test]
+    fn render_bordered_width_includes_right_margin() {
+        let out = Style::new()
+            .width(8)
+            .margin_left(1)
+            .margin_right(1)
+            .border(Border::Rounded)
+            .render("abcdef");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec![" ╭────╮ ", " │abc…│ ", " ╰────╯ "]);
+        assert!(lines.iter().all(|line| visible_len(line) == 8));
     }
 
     #[test]
