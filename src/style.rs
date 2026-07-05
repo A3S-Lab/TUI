@@ -483,7 +483,7 @@ impl Style {
 
     fn align_text(&self, text: &str, text_width: usize, target_width: usize) -> String {
         if text_width >= target_width {
-            return text.to_string();
+            return truncate_visible(text, target_width);
         }
         match self.align {
             Align::Left => pad_visible(text, target_width),
@@ -1154,6 +1154,29 @@ mod tests {
         assert!(right.ends_with("\x1b[0m"));
         assert_eq!(visible_len(&center), 7);
         assert_eq!(center, "  中   ");
+    }
+
+    #[test]
+    fn render_width_truncates_long_content_by_visible_width() {
+        let out = Style::new().width(4).render("abcdef");
+        let cjk = Style::new().width(5).render("中文测试");
+
+        assert_eq!(visible_len(&out), 4);
+        assert_eq!(out, "abc…");
+        assert_eq!(visible_len(&cjk), 5);
+        assert_eq!(cjk, "中文…");
+    }
+
+    #[test]
+    fn render_bordered_width_truncates_inner_content() {
+        let out = Style::new()
+            .width(6)
+            .border(Border::Rounded)
+            .render("abcdef");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["╭────╮", "│abc…│", "╰────╯"]);
+        assert!(lines.iter().all(|line| visible_len(line) == 6));
     }
 
     #[test]
