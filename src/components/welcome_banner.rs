@@ -162,12 +162,37 @@ impl WelcomeBanner {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(self.element_children()),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = self.element_children();
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    fn element_children<Msg>(&self) -> Vec<Element<Msg>> {
         let mut children = Vec::new();
-        for row in self.logo_rows() {
+        let logo_rows = self.logo_rows();
+        for row in logo_rows.iter().cloned() {
             children.push(self.logo_row_element(row));
         }
 
-        if !self.logo_rows().is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
+        if !logo_rows.is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
             children.push(Element::Text(TextElement::new("")));
         }
 
@@ -194,11 +219,7 @@ impl WelcomeBanner {
             ));
         }
 
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Column)
-                .children(children),
-        )
+        children
     }
 
     fn render_lines(&self, width: usize) -> Vec<String> {
@@ -471,5 +492,51 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows_before_metadata() {
+        let el: Element<()> = sample().element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 4);
+        assert!(matches!(column.children[0], Element::Box(_)));
+        assert!(matches!(column.children[1], Element::Box(_)));
+        assert!(matches!(column.children[2], Element::Box(_)));
+        assert_eq!(column.children[3].text_content(), Some(""));
+        assert!(!column.children.iter().any(|child| child
+            .text_content()
+            .is_some_and(|text| text.contains("a3s-code"))));
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = WelcomeBanner::new()
+            .metadata("meta")
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 3);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("meta")));
+        assert_eq!(column.children[1].text_content(), Some(""));
+        assert_eq!(column.children[2].text_content(), Some(""));
     }
 }
