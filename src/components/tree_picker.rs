@@ -431,20 +431,58 @@ impl TreePicker {
 
         let selected = self.normalized_selected();
         for index in self.element_item_range() {
-            let item = &self.items[index];
-            let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == selected {
-                text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
-            } else if item.disabled {
-                text = text.fg(self.disabled_color);
-            } else {
-                text = text.fg(item.color.unwrap_or(self.default_item_color(item)));
-            }
-            children.push(Element::Text(text));
+            children.push(Element::Text(self.item_text_element(index, selected)));
         }
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if let Some(subtitle) = self
+            .subtitle
+            .as_deref()
+            .filter(|subtitle| !subtitle.is_empty())
+        {
+            children.push(Element::Text(
+                TextElement::new(subtitle).fg(self.subtitle_color),
+            ));
+        }
+
+        let visible_items = self.visible_item_count_for_height(height);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        let selected = self.normalized_selected();
+        for index in start..end {
+            children.push(Element::Text(self.item_text_element(index, selected)));
+        }
+
+        if self.show_scroll && self.items.len() > visible_items && visible_items > 0 {
+            children.push(Element::Text(self.scroll_footer_element(start, end)));
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
         }
 
         Element::Box(
@@ -497,6 +535,19 @@ impl TreePicker {
         }
 
         lines
+    }
+
+    fn item_text_element(&self, index: usize, selected: usize) -> TextElement {
+        let item = &self.items[index];
+        let mut text = TextElement::new(self.plain_item_line(index, None));
+        if index == selected {
+            text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
+        } else if item.disabled {
+            text = text.fg(self.disabled_color);
+        } else {
+            text = text.fg(item.color.unwrap_or(self.default_item_color(item)));
+        }
+        text
     }
 
     fn render_item(&self, index: usize, width: usize) -> String {
@@ -553,6 +604,20 @@ impl TreePicker {
             ),
             width,
         ))
+    }
+
+    fn scroll_footer_element(&self, start: usize, end: usize) -> TextElement {
+        let up = if start > 0 { "↑" } else { " " };
+        let down = if end < self.items.len() { "↓" } else { " " };
+        TextElement::new(format!(
+            "{}{up}{down} {}/{}",
+            " ".repeat(self.indent_for_element()),
+            self.normalized_selected()
+                .saturating_add(1)
+                .min(self.items.len()),
+            self.items.len()
+        ))
+        .fg(self.muted_color)
     }
 
     fn visible_item_count_for_height(&self, height: usize) -> usize {
@@ -985,5 +1050,65 @@ mod tests {
         assert!(text.contains("file-3.rs"));
         assert!(!text.contains("file-0.rs"));
         assert!(!text.contains("file-4.rs"));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_items_and_keeps_scroll_footer() {
+        let items = (0..6)
+            .map(|idx| TreePickerItem::leaf(format!("file-{idx}.rs")))
+            .collect::<Vec<_>>();
+        let el: Element<()> = TreePicker::without_title()
+            .items(items)
+            .selected(4)
+            .scroll(2)
+            .element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 4);
+        assert!(text.contains("file-2.rs"), "{text:?}");
+        assert!(text.contains("file-4.rs"), "{text:?}");
+        assert!(text.contains("5/6"), "{text:?}");
+        assert!(!text.contains("file-0.rs"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = TreePicker::without_title()
+            .item(TreePickerItem::leaf("only.rs"))
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], "    only.rs");
+        assert_eq!(rows[1], "");
+        assert_eq!(rows[2], "");
     }
 }
