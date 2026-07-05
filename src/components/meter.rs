@@ -12,6 +12,7 @@ pub struct Meter {
     empty_fg: Color,
     fill: char,
     empty: char,
+    show_value: bool,
 }
 
 impl Meter {
@@ -25,6 +26,7 @@ impl Meter {
             empty_fg: Color::BrightBlack,
             fill: '█',
             empty: '░',
+            show_value: true,
         }
     }
 
@@ -59,6 +61,11 @@ impl Meter {
         self
     }
 
+    pub fn show_value(mut self, show: bool) -> Self {
+        self.show_value = show;
+        self
+    }
+
     pub fn view(&self) -> String {
         let value = if self.value.is_finite() {
             self.value
@@ -67,15 +74,18 @@ impl Meter {
         };
         let max = Self::normalize_max(self.max);
         let ratio = (value / max).clamp(0.0, 1.0);
-        let value_label = if (max - 100.0).abs() < f64::EPSILON {
+        let value_label = if !self.show_value {
+            String::new()
+        } else if (max - 100.0).abs() < f64::EPSILON {
             format!("{value:>5.1}%")
         } else {
             format!("{value:>6.1}")
         };
-        let prefix = if self.label.is_empty() {
-            format!("{value_label} ")
-        } else {
-            format!("{} {value_label} ", self.label)
+        let prefix = match (self.label.is_empty(), self.show_value) {
+            (true, true) => format!("{value_label} "),
+            (true, false) => String::new(),
+            (false, true) => format!("{} {value_label} ", self.label),
+            (false, false) => format!("{} ", self.label),
         };
 
         let prefix_width = visible_len(&prefix).min(self.width);
@@ -139,6 +149,18 @@ mod tests {
         let line = Meter::new(1.0).label("very-long-label").width(8).plain();
 
         assert_eq!(visible_len(&line), 8);
+    }
+
+    #[test]
+    fn can_render_bar_without_value_label() {
+        let line = Meter::new(50.0)
+            .width(6)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .plain();
+
+        assert_eq!(visible_len(&line), 6);
+        assert_eq!(line, "▰▰▰▱▱▱");
     }
 
     #[test]

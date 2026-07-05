@@ -1,8 +1,10 @@
+use crate::components::Meter;
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
 
 const MAX_SESSION_STATUS_CHIP_LABEL_WIDTH: usize = u16::MAX as usize;
 const MAX_SESSION_STATUS_MARGIN: usize = u16::MAX as usize;
+const CONTEXT_METER_WIDTH: usize = 6;
 
 /// Agent/session status row with workspace, model, context, and live chips.
 ///
@@ -178,6 +180,11 @@ impl SessionStatus {
                 .child(Element::Text(
                     TextElement::new(format!("ctx:{}%", context_percent(used, limit)))
                         .fg(self.context_color()),
+                ))
+                .child(Element::Text(TextElement::new(" ")))
+                .child(Element::Text(
+                    TextElement::new(self.context_meter(used, limit).plain())
+                        .fg(self.context_color()),
                 ));
         } else if let Some(tokens) = self.output_tokens.filter(|tokens| *tokens > 0) {
             row = row.child(Element::Text(
@@ -239,10 +246,11 @@ impl SessionStatus {
 
         if let Some((used, limit)) = self.context {
             raw.push_str(&format!(
-                " {}",
+                " {} {}",
                 Style::new()
                     .fg(self.context_color())
-                    .render(&format!("ctx:{}%", context_percent(used, limit)))
+                    .render(&format!("ctx:{}%", context_percent(used, limit))),
+                self.context_meter(used, limit).view()
             ));
         } else if let Some(tokens) = self.output_tokens.filter(|tokens| *tokens > 0) {
             raw.push_str(&format!(
@@ -296,6 +304,15 @@ impl SessionStatus {
         } else {
             self.muted_color
         }
+    }
+
+    fn context_meter(&self, used: usize, limit: usize) -> Meter {
+        Meter::new(context_percent(used, limit) as f64)
+            .width(CONTEXT_METER_WIDTH)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .fg(self.context_color())
+            .empty_fg(self.muted_color)
     }
 }
 
@@ -402,6 +419,8 @@ mod tests {
         assert!(plain.contains("a3s git:(main)"));
         assert!(plain.contains("gpt-5 (128k context)"));
         assert!(plain.contains("ctx:70%"));
+        assert!(plain.contains('▰'));
+        assert!(plain.contains('▱'));
         assert!(plain.contains("🎯 ship tui"));
         assert!(plain.contains("⚙ 2 running"));
         assert!(rendered.contains("\x1b[33mctx:70%\x1b[0m"));
@@ -416,6 +435,21 @@ mod tests {
 
         assert!(strip_ansi(&rendered).contains("ctx:85%"));
         assert!(rendered.contains("\x1b[31mctx:85%\x1b[0m"));
+    }
+
+    #[test]
+    fn context_status_uses_shared_meter() {
+        let status = SessionStatus::new("a3s").context(50, 100);
+        let rendered = status.view(32);
+        let plain = strip_ansi(&rendered);
+        let expected = Meter::new(50.0)
+            .width(CONTEXT_METER_WIDTH)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .plain();
+
+        assert!(plain.contains("ctx:50%"), "{plain}");
+        assert!(plain.contains(&expected), "{plain}");
     }
 
     #[test]

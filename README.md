@@ -133,7 +133,7 @@ Run with `cargo run --example counter_element`.
 | `List` | Scrollable list with selection |
 | `LogView` | Scrollable log/output panel with loading and empty states |
 | `MenuPanel` | Titled scroll-aware menu for command palettes and overlays |
-| `Meter` | Compact value meter |
+| `Meter` | Compact value meter with optional value label |
 | `MetricTrend` | Metric with trend visualization |
 | `ModeLine` | Current mode row with shortcut hints |
 | `MultiSelect` | Multi-selection list with checkboxes |
@@ -145,7 +145,7 @@ Run with `cargo run --example counter_element`.
 | `PromptLine` | Prompt-prefixed input text with aligned continuation rows |
 | `Scrollbar` | Scrollbar indicator with offset, percent, and append-to-view rendering |
 | `Select` | Single-selection dropdown |
-| `SessionStatus` | Agent/session footer row with context and live chips |
+| `SessionStatus` | Agent/session footer row with context meter and live chips |
 | `SectionHeader` | Width-safe panel heading with metadata and divider rows |
 | `ShimmerText` | Animated gliding highlight for activity text |
 | `SideNotePanel` | Compact side-channel question and answer panel |
