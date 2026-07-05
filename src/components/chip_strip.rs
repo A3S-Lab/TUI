@@ -131,7 +131,7 @@ impl ChipStrip {
     }
 
     pub fn active_value(&self) -> Option<usize> {
-        self.active
+        self.normalized_active()
     }
 
     pub fn view(&self, width: u16) -> String {
@@ -153,13 +153,14 @@ impl ChipStrip {
 
         let margin = self.margin_for_element();
         let gap = self.gap_for_element();
+        let active = self.normalized_active();
         let mut children = vec![Element::Text(TextElement::new(" ".repeat(margin)))];
         for (index, chip) in self.chips.iter().enumerate() {
             if index > 0 && gap > 0 {
                 children.push(Element::Text(TextElement::new(" ".repeat(gap))));
             }
             let mut text = TextElement::new(format!(" {} ", chip.label));
-            if self.active == Some(index) {
+            if active == Some(index) {
                 text = text.fg(self.active_fg).bg(self.active_bg_for(chip));
                 if self.bold_active {
                     text = text.bold();
@@ -179,12 +180,13 @@ impl ChipStrip {
 
     fn render_raw(&self, margin: usize, gap: usize) -> String {
         let mut out = " ".repeat(margin);
+        let active = self.normalized_active();
         for (index, chip) in self.chips.iter().enumerate() {
             if index > 0 && gap > 0 {
                 out.push_str(&" ".repeat(gap));
             }
             let raw = format!(" {} ", chip.label);
-            if self.active == Some(index) {
+            if active == Some(index) {
                 let mut style = Style::new().fg(self.active_fg).bg(self.active_bg_for(chip));
                 if self.bold_active {
                     style = style.bold();
@@ -221,10 +223,13 @@ impl ChipStrip {
         chip.color.unwrap_or(self.inactive_color)
     }
 
+    fn normalized_active(&self) -> Option<usize> {
+        self.active
+            .and_then(|active| (!self.chips.is_empty()).then_some(active.min(self.chips.len() - 1)))
+    }
+
     fn clamp_active(&mut self) {
-        self.active = self.active.and_then(|active| {
-            (!self.chips.is_empty()).then_some(active.min(self.chips.len() - 1))
-        });
+        self.active = self.normalized_active();
     }
 }
 
@@ -265,6 +270,28 @@ mod tests {
         let strip = ChipStrip::from_labels(vec!["one", "two"]).active(99);
 
         assert_eq!(strip.active_value(), Some(1));
+    }
+
+    #[test]
+    fn stale_active_index_is_normalized_for_rendering() {
+        let mut strip = ChipStrip::from_labels(vec!["one", "two"]);
+        strip.active = Some(usize::MAX);
+
+        assert_eq!(strip.active_value(), Some(1));
+
+        let rendered = strip.view(32);
+        assert!(rendered.contains("\x1b[1;30;46m two \x1b[0m"));
+        assert!(!rendered.contains("\x1b[1;30;46m one \x1b[0m"));
+
+        let Element::Box(row) = strip.element::<()>() else {
+            panic!("expected row");
+        };
+        let Element::Text(last) = row.children.last().expect("expected last chip") else {
+            panic!("expected chip text");
+        };
+        assert_eq!(last.content, " two ");
+        assert_eq!(last.style.fg, Some(Color::Black));
+        assert_eq!(last.style.bg, Some(Color::Cyan));
     }
 
     #[test]
