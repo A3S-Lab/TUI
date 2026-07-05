@@ -80,6 +80,7 @@ impl TextInput {
         if !self.focused {
             return None;
         }
+        self.clamp_cursor();
         match key.code {
             KeyCode::Char(c) => {
                 if let Some(limit) = self.char_limit {
@@ -164,6 +165,14 @@ impl TextInput {
         self.value.chars().collect()
     }
 
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(Self::char_len(&self.value))
+    }
+
+    fn clamp_cursor(&mut self) {
+        self.cursor = self.normalized_cursor();
+    }
+
     fn placeholder_cursor_parts(&self) -> (String, String) {
         let chars = self.placeholder.chars().collect::<Vec<_>>();
         let (start, end) = display_cell_char_span(&chars, 0);
@@ -189,7 +198,7 @@ impl TextInput {
         }
 
         let display_chars = self.display_chars();
-        let cursor = self.cursor.min(display_chars.len());
+        let cursor = self.normalized_cursor().min(display_chars.len());
         let (cursor_start, cursor_end) = display_cell_char_span(&display_chars, cursor);
 
         for (i, &ch) in display_chars.iter().enumerate() {
@@ -239,7 +248,7 @@ impl TextInput {
         }
 
         let display_chars = self.display_chars();
-        let cursor = self.cursor.min(display_chars.len());
+        let cursor = self.normalized_cursor().min(display_chars.len());
 
         let mut children = Vec::new();
         if !self.prefix.is_empty() {
@@ -517,6 +526,36 @@ mod tests {
 
         assert_eq!(input.value(), "x");
         assert_eq!(input.cursor, 0);
+    }
+
+    #[test]
+    fn editing_normalizes_stale_cursor() {
+        let mut input = TextInput::new();
+        input.set_value("ab");
+        input.cursor = usize::MAX;
+
+        input.handle_key(&key(KeyCode::Char('!')));
+
+        assert_eq!(input.value(), "ab!");
+        assert_eq!(input.cursor, 3);
+    }
+
+    #[test]
+    fn rendering_normalizes_stale_cursor() {
+        let mut input = TextInput::new();
+        input.set_value("ab");
+        input.cursor = usize::MAX;
+
+        assert!(input.view().ends_with("\x1b[7m \x1b[0m"));
+
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(cursor) = row.children.last().expect("expected cursor child") else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, " ");
+        assert!(cursor.style.reverse);
     }
 
     #[test]
