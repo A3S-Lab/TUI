@@ -295,7 +295,7 @@ impl Textarea {
     /// host places the real terminal cursor on this row).
     pub fn cursor_row(&self) -> usize {
         let (cursor_row, _) = self.normalized_cursor();
-        cursor_row.saturating_sub(self.normalized_offset())
+        cursor_row.saturating_sub(self.normalized_offset_for_cursor(cursor_row))
     }
 
     /// Render the cursor's line as plain (horizontally scrolled) text; the real
@@ -499,7 +499,8 @@ impl Textarea {
             return (0, 0);
         }
 
-        let start = self.normalized_offset();
+        let (cursor_row, _) = self.normalized_cursor();
+        let start = self.normalized_offset_for_cursor(cursor_row);
         let end = start.saturating_add(h).min(self.lines.len());
         (start, end)
     }
@@ -530,6 +531,22 @@ impl Textarea {
         }
 
         self.offset.min(self.lines.len().saturating_sub(h))
+    }
+
+    fn normalized_offset_for_cursor(&self, cursor_row: usize) -> usize {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        let max_start = self.lines.len().saturating_sub(h.min(self.lines.len()));
+        let mut start = self.normalized_offset();
+        if cursor_row < start {
+            start = cursor_row;
+        } else if cursor_row >= start.saturating_add(h) {
+            start = cursor_row.saturating_add(1).saturating_sub(h);
+        }
+        start.min(max_start)
     }
 }
 
@@ -613,13 +630,14 @@ impl Textarea {
         }
 
         let h = self.height as usize;
+        let (cursor_row, _) = self.normalized_cursor();
         let (start, end) = self.visible_range();
         let visible = &self.lines[start..end];
 
         let mut children: Vec<Element<Msg>> = Vec::new();
         for (i, line) in visible.iter().enumerate() {
             let row = start + i;
-            if row == self.cursor_row && self.focused {
+            if row == cursor_row && self.focused {
                 children.push(Element::Text(TextElement::new(
                     self.render_line_with_cursor(line),
                 )));
@@ -918,6 +936,30 @@ mod tests {
             panic!("expected textarea text line");
         };
         assert_eq!(last.content, "two");
+    }
+
+    #[test]
+    fn rendering_keeps_stale_cursor_visible() {
+        let mut ta = Textarea::new().with_height(2);
+        ta.set_value("one\ntwo\nthree\nfour");
+        ta.cursor_row = usize::MAX;
+        ta.cursor_col = usize::MAX;
+        ta.offset = 0;
+
+        assert_eq!(ta.cursor_row(), 1);
+        assert_eq!(ta.view(), "three\nfour");
+
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected textarea element box");
+        };
+        let Element::Text(first) = &box_el.children[0] else {
+            panic!("expected first visible textarea line");
+        };
+        let Element::Text(last) = &box_el.children[1] else {
+            panic!("expected last visible textarea line");
+        };
+        assert_eq!(first.content, "three");
+        assert_eq!(last.content, "four");
     }
 
     #[test]
