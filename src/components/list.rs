@@ -138,7 +138,18 @@ impl<T: std::fmt::Display> List<T> {
             return (0, 0);
         }
 
-        let start = self.offset.min(self.items.len());
+        let max_start = self
+            .items
+            .len()
+            .saturating_sub(self.height.min(self.items.len()));
+        let mut start = self.offset.min(max_start);
+        let cursor = self.normalized_cursor();
+        if cursor < start {
+            start = cursor;
+        } else if cursor >= start.saturating_add(self.height) {
+            start = cursor.saturating_add(1).saturating_sub(self.height);
+        }
+        start = start.min(max_start);
         let end = start.saturating_add(self.height).min(self.items.len());
         (start, end)
     }
@@ -264,6 +275,27 @@ mod tests {
 
         list.update(ListMsg::Up);
         assert_eq!(list.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_offset_is_normalized_for_rendering() {
+        let mut list = List::new(vec!["a", "b", "c", "d"], 2);
+        list.update(ListMsg::End);
+        list.offset = usize::MAX;
+
+        assert_eq!(
+            list.view(|item, selected| format!("{selected}:{item}")),
+            "false:c\ntrue:d"
+        );
+
+        let Element::Box(box_el) = list.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert_eq!(box_el.children.len(), 2);
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected list item");
+        };
+        assert_eq!(last_item.content, "▸ d");
     }
 
     #[test]
