@@ -1,3 +1,4 @@
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
@@ -292,6 +293,93 @@ impl DataTable {
         lines.join("\n")
     }
 
+    pub fn element<Msg>(&self, width: u16, height: usize) -> Element<Msg> {
+        let width = width as usize;
+        let mut children = Vec::new();
+        if width == 0 || height == 0 {
+            return data_table_column(children);
+        }
+
+        let cols = self.visible_columns_for_width(width);
+        if cols.is_empty() {
+            return data_table_column(children);
+        }
+
+        let widths = self.column_widths(&cols, width);
+        let gap = self.gap_for_width(width, cols.len());
+        let gap_text = " ".repeat(gap);
+        let header = cols
+            .iter()
+            .zip(widths.iter())
+            .map(|(idx, w)| {
+                let column = &self.columns[*idx];
+                format_cell(&column.header_label(), *w, column.align)
+            })
+            .collect::<Vec<_>>()
+            .join(&gap_text);
+        children.push(Element::Text(
+            TextElement::new(fit_visible(&header, width))
+                .fg(self.header_fg)
+                .bold(),
+        ));
+
+        if height == 1 {
+            return data_table_column(children);
+        }
+
+        let sep = widths
+            .iter()
+            .map(|w| "─".repeat(*w))
+            .collect::<Vec<_>>()
+            .join(&gap_text);
+        children.push(Element::Text(
+            TextElement::new(fit_visible(&sep, width)).fg(self.separator_fg),
+        ));
+
+        if height == 2 {
+            return data_table_column(children);
+        }
+
+        if self.rows.is_empty() {
+            let msg = self.empty.as_deref().unwrap_or("no rows");
+            children.push(Element::Text(
+                TextElement::new(fit_visible(msg, width))
+                    .fg(Color::BrightBlack)
+                    .italic(),
+            ));
+            return data_table_column(children);
+        }
+
+        let body_height = height.saturating_sub(2);
+        let start = self.visible_body_start(body_height);
+        let selected_row = self.normalized_selected();
+        for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
+            let selected = selected_row == Some(idx);
+            let raw = self.plain_row_line(row, &cols, &widths, &gap_text);
+            let mut text = TextElement::new(fit_visible(&raw, width));
+            if selected {
+                if let Some(fg) = row.selected_fg {
+                    text = text.fg(fg);
+                }
+                text = text.bg(row.selected_bg.or(row.fg).unwrap_or(Color::Blue));
+                text = text.bold();
+            } else {
+                if let Some(fg) = row.fg {
+                    text = text.fg(fg);
+                }
+                if let Some(bg) = row.bg {
+                    text = text.bg(bg);
+                }
+                if row.bold {
+                    text = text.bold();
+                }
+            }
+            children.push(Element::Text(text));
+        }
+
+        data_table_column(children)
+    }
+
     fn row_line(
         &self,
         row: &DataRow,
@@ -313,6 +401,18 @@ impl DataTable {
                 } else {
                     formatted
                 }
+            })
+            .collect::<Vec<_>>()
+            .join(gap)
+    }
+
+    fn plain_row_line(&self, row: &DataRow, cols: &[usize], widths: &[usize], gap: &str) -> String {
+        cols.iter()
+            .zip(widths.iter())
+            .map(|(col_idx, w)| {
+                let column = &self.columns[*col_idx];
+                let cell = row.cells.get(*col_idx).map_or("", String::as_str);
+                format_cell(cell, *w, column.align)
             })
             .collect::<Vec<_>>()
             .join(gap)
@@ -452,6 +552,14 @@ impl DataTable {
     }
 }
 
+fn data_table_column<Msg>(children: Vec<Element<Msg>>) -> Element<Msg> {
+    Element::Box(
+        BoxElement::new()
+            .direction(FlexDirection::Column)
+            .children(children),
+    )
+}
+
 fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
     match align {
         CellAlign::Left => fit_visible(value, width),
@@ -477,6 +585,85 @@ mod tests {
         assert!(plain.contains("CPU"));
         assert!(plain.contains("codex"));
         assert!(plain.contains("a3s"));
+    }
+
+    #[test]
+    fn element_zero_size_returns_empty_column() {
+        let table = DataTable::new(vec![DataColumn::new("Name")]).row(DataRow::new(vec!["codex"]));
+
+        let Element::Box(column) = table.element::<()>(20, 0) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+
+        let Element::Box(column) = table.element::<()>(0, 4) else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_renders_header_separator_and_bounded_rows() {
+        let table = DataTable::new(vec![DataColumn::new("Name"), DataColumn::new("CPU")])
+            .row(DataRow::new(vec!["codex", "12.4"]))
+            .row(DataRow::new(vec!["a3s", "1.0"]));
+
+        let Element::Box(column) = table.element::<()>(40, 3) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert_eq!(column.children.len(), 3);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("Name")));
+        assert!(column.children[1]
+            .text_content()
+            .is_some_and(|text| text.contains("─")));
+        assert!(column.children[2]
+            .text_content()
+            .is_some_and(|text| text.contains("codex")));
+        assert!(!column.children.iter().any(|child| child
+            .text_content()
+            .is_some_and(|text| text.contains("a3s"))));
+    }
+
+    #[test]
+    fn element_keeps_selected_row_visible_with_style() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]).selected(Color::White, Color::Red))
+            .selected(Some(usize::MAX))
+            .scroll(0);
+
+        let Element::Box(column) = table.element::<()>(12, 3) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 3);
+        let Element::Text(row) = &column.children[2] else {
+            panic!("expected row text");
+        };
+        assert!(row.content.contains("three"));
+        assert_eq!(row.style.fg, Some(Color::White));
+        assert_eq!(row.style.bg, Some(Color::Red));
+        assert!(row.style.bold);
+    }
+
+    #[test]
+    fn element_renders_empty_message() {
+        let table = DataTable::new(vec![DataColumn::new("Name")]).empty("nothing here");
+
+        let Element::Box(column) = table.element::<()>(24, 4) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 3);
+        let Element::Text(empty) = &column.children[2] else {
+            panic!("expected empty text");
+        };
+        assert!(empty.content.contains("nothing here"));
+        assert_eq!(empty.style.fg, Some(Color::BrightBlack));
+        assert!(empty.style.italic);
     }
 
     #[test]

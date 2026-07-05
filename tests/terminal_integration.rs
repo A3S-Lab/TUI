@@ -1,12 +1,13 @@
 use a3s_tui::components::{
-    highlight_selection, selected_text, ActivityBlock, Checklist, ChecklistItem, Chip, ChipStrip,
-    ChoicePrompt, ConnectorBlock, CursorLine, DetailPanel, DiffView, GutterBlock, HelpPanel,
-    HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem, MenuPanel, ModeLine,
-    OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar, SessionStatus,
-    SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow,
-    SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue,
-    TextInput, TextOverlay, TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView,
-    TreePicker, TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
+    highlight_selection, selected_text, ActivityBlock, CellAlign, Checklist, ChecklistItem, Chip,
+    ChipStrip, ChoicePrompt, ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable,
+    DetailPanel, DiffView, GutterBlock, HelpPanel, HelpSection, InputBorder, LevelSlider, LogView,
+    LogViewState, MenuItem, MenuPanel, ModeLine, OutputBlock, PreviewItem, PreviewPanel,
+    PromptLine, QueuedTask, Scrollbar, SessionStatus, SessionStatusChip, ShimmerText,
+    SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow, SubagentTracker, TabSegment,
+    TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue, TextInput, TextOverlay,
+    TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView, TreePicker, TreePickerItem,
+    WelcomeBanner, WrappedPrefixBlock,
 };
 use a3s_tui::element::{
     BorderStyle, BoxElement, Dimension, Element, FlexDirection, TextElement, TextWrap,
@@ -201,6 +202,29 @@ fn chip_strip_renders_colored_active_chip_through_layout_and_paint() {
     assert_eq!(grid.get(14, 0).fg, Some(Color::Black));
     assert_eq!(grid.get(14, 0).bg, Some(Color::Rgb(115, 218, 202)));
     assert!(grid.get(14, 0).bold);
+}
+
+#[test]
+fn data_table_renders_selected_row_through_layout_and_paint() {
+    let element: Element<()> = DataTable::new(vec![
+        DataColumn::new("Name").width(8),
+        DataColumn::new("CPU").width(5).align(CellAlign::Right),
+    ])
+    .row(DataRow::new(vec!["codex", "12.4"]))
+    .row(DataRow::new(vec!["a3s", "1.0"]).selected(Color::Black, Color::Cyan))
+    .selected(Some(1))
+    .element(24, 4);
+    let grid = render(&element, 24, 4);
+    let plain = plain(&grid);
+
+    assert!(plain.contains("Name"), "{plain:?}");
+    assert!(plain.contains("CPU"), "{plain:?}");
+    assert!(plain.contains("codex"), "{plain:?}");
+    assert!(plain.contains("a3s"), "{plain:?}");
+    assert_eq!(grid.get(0, 3).ch, 'a');
+    assert_eq!(grid.get(0, 3).fg, Some(Color::Black));
+    assert_eq!(grid.get(0, 3).bg, Some(Color::Cyan));
+    assert!(grid.get(0, 3).bold);
 }
 
 #[test]
