@@ -30,11 +30,11 @@ impl<T: std::fmt::Display> List<T> {
     }
 
     pub fn selected(&self) -> Option<&T> {
-        self.items.get(self.cursor)
+        self.items.get(self.normalized_cursor())
     }
 
     pub fn selected_index(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
 
     pub fn items(&self) -> &[T] {
@@ -43,17 +43,17 @@ impl<T: std::fmt::Display> List<T> {
 
     pub fn set_items(&mut self, items: Vec<T>) {
         self.items = items;
-        self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
         self.adjust_offset();
     }
 
     pub fn update(&mut self, msg: ListMsg) {
+        self.cursor = self.normalized_cursor();
         match msg {
             ListMsg::Up => {
                 self.cursor = self.cursor.saturating_sub(1);
             }
             ListMsg::Down => {
-                if self.cursor + 1 < self.items.len() {
+                if self.cursor.saturating_add(1) < self.items.len() {
                     self.cursor += 1;
                 }
             }
@@ -86,9 +86,10 @@ impl<T: std::fmt::Display> List<T> {
         F: Fn(&T, bool) -> String,
     {
         let (start, end) = self.visible_range();
+        let cursor = self.normalized_cursor();
         let mut lines = Vec::new();
         for i in start..end {
-            let selected = i == self.cursor;
+            let selected = i == cursor;
             lines.push(render_item(&self.items[i], selected));
         }
         lines.join("\n")
@@ -97,9 +98,10 @@ impl<T: std::fmt::Display> List<T> {
     /// Render as an Element tree. Each item is displayed with a cursor indicator.
     pub fn element<Msg>(&self) -> Element<Msg> {
         let (start, end) = self.visible_range();
+        let cursor = self.normalized_cursor();
         let children: Vec<Element<Msg>> = (start..end)
             .map(|i| {
-                let selected = i == self.cursor;
+                let selected = i == cursor;
                 let prefix = if selected { "▸ " } else { "  " };
                 let text = format!("{}{}", prefix, self.items[i]);
                 if selected {
@@ -118,6 +120,7 @@ impl<T: std::fmt::Display> List<T> {
     }
 
     fn adjust_offset(&mut self) {
+        self.cursor = self.normalized_cursor();
         if self.items.is_empty() || self.height == 0 {
             self.offset = 0;
             return;
@@ -138,6 +141,10 @@ impl<T: std::fmt::Display> List<T> {
         let start = self.offset.min(self.items.len());
         let end = start.saturating_add(self.height).min(self.items.len());
         (start, end)
+    }
+
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(self.items.len().saturating_sub(1))
     }
 }
 
@@ -230,6 +237,33 @@ mod tests {
 
         assert_eq!(list.selected_index(), 1);
         assert_eq!(list.selected(), Some(&"b"));
+    }
+
+    #[test]
+    fn stale_cursor_is_normalized_for_selection_rendering_and_navigation() {
+        let mut list = List::new(vec!["a", "b", "c"], 3);
+        list.cursor = usize::MAX;
+
+        assert_eq!(list.selected_index(), 2);
+        assert_eq!(list.selected(), Some(&"c"));
+        assert_eq!(
+            list.view(|item, selected| format!("{selected}:{item}")),
+            "false:a\nfalse:b\ntrue:c"
+        );
+
+        let Element::Box(box_el) = list.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected list item");
+        };
+        assert_eq!(last_item.content, "▸ c");
+
+        list.update(ListMsg::Down);
+        assert_eq!(list.selected_index(), 2);
+
+        list.update(ListMsg::Up);
+        assert_eq!(list.selected_index(), 1);
     }
 
     #[test]
