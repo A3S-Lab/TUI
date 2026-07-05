@@ -233,7 +233,7 @@ impl Textarea {
 
     pub fn view(&self) -> String {
         let h = self.height as usize;
-        if h == 0 {
+        if h == 0 || self.width == 0 {
             return String::new();
         }
 
@@ -572,7 +572,7 @@ impl Default for Textarea {
 
 impl Textarea {
     pub fn element<Msg>(&self) -> Element<Msg> {
-        if self.height == 0 {
+        if self.height == 0 || self.width == 0 {
             return Element::Box(BoxElement::new().direction(FlexDirection::Column));
         }
 
@@ -802,6 +802,19 @@ mod tests {
         ta.blur();
 
         assert_eq!(ta.view(), "");
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected empty textarea element box");
+        };
+        assert!(box_el.children.is_empty());
+    }
+
+    #[test]
+    fn zero_width_renders_empty() {
+        let mut ta = Textarea::new().with_width(0).with_height(2);
+        ta.set_value("abc");
+
+        assert_eq!(ta.view(), "");
+
         let Element::Box(box_el) = ta.element::<()>() else {
             panic!("expected empty textarea element box");
         };
