@@ -395,9 +395,12 @@ impl Textarea {
 
     fn delete_backward(&mut self) -> bool {
         if self.cursor_col > 0 {
-            self.cursor_col -= 1;
-            let off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
-            self.lines[self.cursor_row].remove(off);
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let (start, end) = previous_cursor_span(&chars, self.cursor_col);
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            self.cursor_col = start;
             true
         } else if self.cursor_row > 0 {
             let current_line = self.lines.remove(self.cursor_row);
@@ -413,8 +416,12 @@ impl Textarea {
 
     fn delete_forward(&mut self) -> bool {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
-            let off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
-            self.lines[self.cursor_row].remove(off);
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let (start, end) = cursor_span(&chars, self.cursor_col);
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            self.cursor_col = start;
             true
         } else if self.cursor_row + 1 < self.lines.len() {
             let next_line = self.lines.remove(self.cursor_row + 1);
@@ -427,7 +434,8 @@ impl Textarea {
 
     fn move_left(&mut self) {
         if self.cursor_col > 0 {
-            self.cursor_col -= 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = previous_cursor_span(&chars, self.cursor_col).0;
         } else if self.cursor_row > 0 {
             self.cursor_row -= 1;
             self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
@@ -437,7 +445,8 @@ impl Textarea {
 
     fn move_right(&mut self) {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
-            self.cursor_col += 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = cursor_span(&chars, self.cursor_col).1;
         } else if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
             self.cursor_col = 0;
@@ -545,6 +554,36 @@ fn clamp_lines_to_char_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
     } else {
         out
     }
+}
+
+fn line_chars(line: &str) -> Vec<char> {
+    line.chars().collect()
+}
+
+fn cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor >= chars.len() {
+        return (cursor, cursor);
+    }
+
+    let mut start = cursor;
+    while start > 0 && Textarea::char_width(chars[start]) == 0 {
+        start -= 1;
+    }
+
+    let mut end = start + 1;
+    while end < chars.len() && Textarea::char_width(chars[end]) == 0 {
+        end += 1;
+    }
+    (start, end)
+}
+
+fn previous_cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor == 0 || chars.is_empty() {
+        return (0, 0);
+    }
+
+    let start = cursor.saturating_sub(1).min(chars.len() - 1);
+    cursor_span(chars, start)
 }
 
 impl Default for Textarea {
@@ -696,6 +735,45 @@ mod tests {
             panic!("expected textarea text line");
         };
         assert_eq!(line.content, "x");
+    }
+
+    #[test]
+    fn cursor_movement_skips_zero_width_marks() {
+        let mut ta = Textarea::new().with_width(4).with_height(1);
+        ta.set_value("e\u{301}x");
+        ta.handle_key(&key(KeyCode::Home));
+
+        ta.handle_key(&key(KeyCode::Right));
+        assert_eq!(ta.cursor_col, 2);
+        assert_eq!(ta.cursor_display_col(), 1);
+
+        ta.handle_key(&key(KeyCode::Right));
+        assert_eq!(ta.cursor_col, 3);
+        assert_eq!(ta.cursor_display_col(), 2);
+
+        ta.handle_key(&key(KeyCode::Left));
+        assert_eq!(ta.cursor_col, 2);
+        ta.handle_key(&key(KeyCode::Left));
+        assert_eq!(ta.cursor_col, 0);
+    }
+
+    #[test]
+    fn edit_keys_remove_zero_width_span_with_base_glyph() {
+        let mut ta = Textarea::new();
+        ta.set_value("e\u{301}x");
+        ta.handle_key(&key(KeyCode::Home));
+        ta.handle_key(&key(KeyCode::Delete));
+
+        assert_eq!(ta.value(), "x");
+        assert_eq!(ta.cursor_col, 0);
+
+        ta.set_value("e\u{301}x");
+        ta.handle_key(&key(KeyCode::Home));
+        ta.handle_key(&key(KeyCode::Right));
+        ta.handle_key(&key(KeyCode::Backspace));
+
+        assert_eq!(ta.value(), "x");
+        assert_eq!(ta.cursor_col, 0);
     }
 
     #[test]
