@@ -136,7 +136,7 @@ Run with `cargo run --example counter_element`.
 | `MetricTrend` | Metric with trend visualization |
 | `ModeLine` | Current mode row with shortcut hints |
 | `MultiSelect` | Multi-selection list with checkboxes |
-| `OutputBlock` | Status-marked transcript/output block with tail preview |
+| `OutputBlock` | Status-marked transcript/output block with tail preview and styled detail support |
 | `PanelFrame` | Fixed-size titled panel frame with focus-aware borders |
 | `Paragraph` | Width-aware paragraph wrapping |
 | `PreviewPanel` | Selectable item list with a live preview section |

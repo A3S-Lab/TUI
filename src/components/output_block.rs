@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color, Style};
 
 const MAX_OUTPUT_BLOCK_BODY_LINES: usize = u16::MAX as usize;
 const MAX_OUTPUT_BLOCK_INDENT: usize = u16::MAX as usize;
@@ -22,7 +22,7 @@ pub enum OutputStatus {
 #[derive(Debug, Clone)]
 pub struct OutputBlock {
     title: String,
-    detail: Option<String>,
+    detail: Option<OutputDetail>,
     status: OutputStatus,
     lines: Vec<String>,
     max_body_lines: usize,
@@ -64,7 +64,12 @@ impl OutputBlock {
     }
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
+        self.detail = Some(OutputDetail::Plain(detail.into()));
+        self
+    }
+
+    pub fn styled_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(OutputDetail::Styled(detail.into()));
         self
     }
 
@@ -179,7 +184,7 @@ impl OutputBlock {
     }
 
     pub fn detail_value(&self) -> Option<&str> {
-        self.detail.as_deref()
+        self.detail.as_ref().map(OutputDetail::as_str)
     }
 
     pub fn lines_value(&self) -> &[String] {
@@ -249,12 +254,11 @@ impl OutputBlock {
             .render(&self.bullet);
         let title = Style::new().fg(self.title_color).bold().render(&self.title);
         let mut raw = format!("{prefix}{bullet} {title}");
-        if let Some(detail) = self.detail.as_deref().filter(|detail| !detail.is_empty()) {
+        if let Some(detail) = self.detail.as_ref().filter(|detail| !detail.is_empty()) {
             let used = visible_len(&raw);
             let available = width.saturating_sub(used.saturating_add(1));
-            let detail = truncate_visible(detail, available);
             raw.push(' ');
-            raw.push_str(&Style::new().fg(self.detail_color).render(&detail));
+            raw.push_str(&self.render_detail(detail, available));
         }
         raw
     }
@@ -307,13 +311,13 @@ impl OutputBlock {
     }
 
     fn plain_header(&self) -> String {
-        match self.detail.as_deref().filter(|detail| !detail.is_empty()) {
+        match self.detail.as_ref().filter(|detail| !detail.is_empty()) {
             Some(detail) => format!(
                 "{}{} {} {}",
                 " ".repeat(self.indent_for_element()),
                 self.bullet,
                 self.title,
-                detail
+                strip_ansi(detail.as_str())
             ),
             None => format!(
                 "{}{} {}",
@@ -394,6 +398,15 @@ impl OutputBlock {
             OutputStatus::Running => self.running_color,
         })
     }
+
+    fn render_detail(&self, detail: &OutputDetail, width: usize) -> String {
+        match detail {
+            OutputDetail::Plain(value) => Style::new()
+                .fg(self.detail_color)
+                .render(&truncate_visible(value, width)),
+            OutputDetail::Styled(value) => truncate_visible(value, width),
+        }
+    }
 }
 
 impl Default for OutputBlock {
@@ -407,6 +420,24 @@ struct BodyRow {
     text: String,
     omitted: bool,
     is_continuation: bool,
+}
+
+#[derive(Debug, Clone)]
+enum OutputDetail {
+    Plain(String),
+    Styled(String),
+}
+
+impl OutputDetail {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Plain(value) | Self::Styled(value) => value,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.as_str().is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -448,6 +479,25 @@ mod tests {
 
         assert!(rendered.contains("\x1b[31"));
         assert!(strip_ansi(&rendered).contains("failed"));
+    }
+
+    #[test]
+    fn preserves_styled_detail() {
+        let detail = format!(
+            "{} {}",
+            Style::new().fg(Color::Cyan).bold().render("cargo"),
+            Style::new().fg(Color::Yellow).render("test")
+        );
+        let rendered = OutputBlock::new("Ran")
+            .styled_detail(detail)
+            .line("ok")
+            .view(36);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("• Ran cargo test"));
+        assert!(rendered.contains("\x1b[1;36mcargo\x1b[0m"));
+        assert!(rendered.contains("\x1b[33mtest\x1b[0m"));
+        assert!(rendered.lines().all(|line| visible_len(line) == 36));
     }
 
     #[test]
