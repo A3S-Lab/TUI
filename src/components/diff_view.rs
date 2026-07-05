@@ -363,26 +363,38 @@ impl DiffView {
             ));
         }
         for line in self.lines.iter().take(self.max_lines) {
-            let mut text = TextElement::new(self.plain_line(line));
-            match line.kind {
-                DiffLineKind::Insert => {
-                    text = text.fg(self.insert_fg);
-                    if let Some(bg) = self.insert_bg {
-                        text = text.bg(bg);
-                    }
-                }
-                DiffLineKind::Delete => {
-                    text = text.fg(self.delete_fg);
-                    if let Some(bg) = self.delete_bg {
-                        text = text.bg(bg);
-                    }
-                }
-                DiffLineKind::Hunk => text = text.fg(self.hunk_color),
-                DiffLineKind::Metadata | DiffLineKind::Separator => text = text.fg(self.meta_color),
-                DiffLineKind::Context => text = text.fg(self.context_color),
-            }
-            children.push(Element::Text(text));
+            children.push(Element::Text(self.line_element(line)));
         }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if let Some(header) = self.header_plain() {
+            children.push(Element::Text(
+                TextElement::new(header).fg(self.header_color).bold(),
+            ));
+        }
+
+        let available = height.saturating_sub(children.len());
+        let limit = self.max_lines.min(available).min(self.lines.len());
+        for line in self.lines.iter().take(limit) {
+            children.push(Element::Text(self.line_element(line)));
+        }
+
+        if self.lines.len() > limit && children.len() < height {
+            children.push(Element::Text(self.truncation_notice_element()));
+        }
+        children.truncate(height);
 
         Element::Box(
             BoxElement::new()
@@ -491,6 +503,32 @@ impl DiffView {
             DiffLineKind::Separator => Style::new().fg(self.separator_color).render(content),
             DiffLineKind::Context => Style::new().fg(self.context_color).render(content),
         }
+    }
+
+    fn line_element(&self, line: &DiffLine) -> TextElement {
+        let mut text = TextElement::new(self.plain_line(line));
+        match line.kind {
+            DiffLineKind::Insert => {
+                text = text.fg(self.insert_fg);
+                if let Some(bg) = self.insert_bg {
+                    text = text.bg(bg);
+                }
+            }
+            DiffLineKind::Delete => {
+                text = text.fg(self.delete_fg);
+                if let Some(bg) = self.delete_bg {
+                    text = text.bg(bg);
+                }
+            }
+            DiffLineKind::Hunk => text = text.fg(self.hunk_color),
+            DiffLineKind::Metadata | DiffLineKind::Separator => text = text.fg(self.meta_color),
+            DiffLineKind::Context => text = text.fg(self.context_color),
+        }
+        text
+    }
+
+    fn truncation_notice_element(&self) -> TextElement {
+        TextElement::new("    … (diff truncated)").fg(self.separator_color)
     }
 
     fn header_plain(&self) -> Option<String> {
@@ -743,5 +781,63 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = DiffView::from_texts("x", "a\n", "b\n").element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows_after_header() {
+        let el: Element<()> = DiffView::new(vec![
+            DiffLine::new(DiffLineKind::Context, "one"),
+            DiffLine::new(DiffLineKind::Context, "two"),
+            DiffLine::new(DiffLineKind::Context, "three"),
+        ])
+        .path("src/lib.rs")
+        .element_with_height(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 2);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("Edited src/lib.rs")));
+        assert!(column.children[1]
+            .text_content()
+            .is_some_and(|text| text.contains("one")));
+        assert!(!column.children.iter().any(|child| child
+            .text_content()
+            .is_some_and(|text| text.contains("two"))));
+    }
+
+    #[test]
+    fn element_with_height_keeps_truncation_notice_when_space_remains() {
+        let el: Element<()> = DiffView::new(vec![
+            DiffLine::new(DiffLineKind::Insert, "one"),
+            DiffLine::new(DiffLineKind::Insert, "two"),
+            DiffLine::new(DiffLineKind::Insert, "three"),
+        ])
+        .max_lines(1)
+        .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 2);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("one")));
+        assert!(column.children[1]
+            .text_content()
+            .is_some_and(|text| text.contains("diff truncated")));
     }
 }
