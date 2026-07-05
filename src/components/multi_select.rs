@@ -40,6 +40,7 @@ impl MultiSelect {
     pub fn selected_indices(&self) -> Vec<usize> {
         self.checked
             .iter()
+            .take(self.items.len())
             .enumerate()
             .filter_map(|(i, &b)| if b { Some(i) } else { None })
             .collect()
@@ -67,6 +68,9 @@ impl MultiSelect {
     }
 
     pub fn is_checked(&self, index: usize) -> bool {
+        if index >= self.items.len() {
+            return false;
+        }
         self.checked.get(index).copied().unwrap_or(false)
     }
 
@@ -97,7 +101,7 @@ impl MultiSelect {
             }
             KeyCode::Char(c) if self.number_shortcuts => {
                 let idx = number_shortcut_index(c)?;
-                if idx < self.items.len() && idx < self.checked.len() {
+                if idx < self.items.len() {
                     self.cursor = idx;
                     self.toggle_index(idx)
                 } else {
@@ -110,6 +114,7 @@ impl MultiSelect {
     }
 
     fn toggle_index(&mut self, index: usize) -> Option<MultiSelectMsg> {
+        self.normalize_checked_len();
         let checked = self.checked.get_mut(index)?;
         *checked = !*checked;
         Some(MultiSelectMsg::Toggle(index))
@@ -121,6 +126,10 @@ impl MultiSelect {
 
     fn normalized_cursor(&self) -> usize {
         self.cursor.min(self.max_cursor())
+    }
+
+    fn normalize_checked_len(&mut self) {
+        self.checked.resize(self.items.len(), false);
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -145,7 +154,7 @@ impl MultiSelect {
             .take(height)
             .map(|(idx, item)| {
                 let cursor_marker = if idx == cursor { ">" } else { " " };
-                let check = if self.checked[idx] { "[x]" } else { "[ ]" };
+                let check = if self.is_checked(idx) { "[x]" } else { "[ ]" };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
                         Some(label) => {
@@ -174,7 +183,7 @@ impl MultiSelect {
             .enumerate()
             .map(|(i, item)| {
                 let cursor_marker = if i == cursor { "▸" } else { " " };
-                let check = if self.checked[i] { "[x]" } else { "[ ]" };
+                let check = if self.is_checked(i) { "[x]" } else { "[ ]" };
                 let text = if self.number_shortcuts {
                     match number_shortcut_label(i) {
                         Some(label) => format!("{cursor_marker} {label} {check} {item}"),
@@ -401,6 +410,44 @@ mod tests {
         ));
         assert_eq!(ms.cursor(), 1);
         assert_eq!(ms.selected_indices(), vec![1]);
+    }
+
+    #[test]
+    fn stale_extra_checked_state_is_ignored() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]);
+        ms.checked = vec![true, false, true];
+
+        assert_eq!(ms.selected_indices(), vec![0]);
+        assert!(!ms.is_checked(2));
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Enter)),
+            Some(MultiSelectMsg::Submit(selected)) if selected == vec![0]
+        ));
+    }
+
+    #[test]
+    fn stale_short_checked_state_is_extended_for_toggle() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]).with_number_shortcuts();
+        ms.checked = vec![true];
+        ms.cursor = 1;
+
+        let plain = crate::style::strip_ansi(&ms.view(20, 5));
+        assert!(plain.contains("> 2 [ ] b"));
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected multi-select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 [ ] b");
+
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Char('2'))),
+            Some(MultiSelectMsg::Toggle(1))
+        ));
+        assert_eq!(ms.checked(), &[true, true]);
+        assert_eq!(ms.selected_indices(), vec![0, 1]);
     }
 
     #[test]
