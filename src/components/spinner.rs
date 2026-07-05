@@ -37,7 +37,7 @@ impl Spinner {
     pub fn with_frames(mut self, frames: Vec<&'static str>) -> Self {
         if !frames.is_empty() {
             self.frames = frames;
-            self.current %= self.frames.len();
+            self.clamp_current();
         }
         self
     }
@@ -49,7 +49,12 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.active && !self.frames.is_empty() {
-            self.current = (self.current + 1) % self.frames.len();
+            let current = self.normalized_current();
+            self.current = if current + 1 == self.frames.len() {
+                0
+            } else {
+                current + 1
+            };
         }
     }
 
@@ -88,10 +93,22 @@ impl Spinner {
 
     fn current_frame(&self) -> &str {
         self.frames
-            .get(self.current)
+            .get(self.normalized_current())
             .or_else(|| self.frames.first())
             .copied()
             .unwrap_or("")
+    }
+
+    fn normalized_current(&self) -> usize {
+        if self.frames.is_empty() {
+            0
+        } else {
+            self.current % self.frames.len()
+        }
+    }
+
+    fn clamp_current(&mut self) {
+        self.current = self.normalized_current();
     }
 }
 
@@ -148,6 +165,31 @@ mod tests {
 
         assert_eq!(s.current, 0);
         assert_eq!(s.view(), "a ");
+    }
+
+    #[test]
+    fn current_frame_normalizes_stale_current_frame() {
+        let mut s = Spinner::new().with_frames(vec!["a", "b", "c"]);
+        s.current = usize::MAX;
+
+        assert_eq!(
+            s.view(),
+            format!("{} ", s.frames[usize::MAX % s.frames.len()])
+        );
+    }
+
+    #[test]
+    fn tick_normalizes_stale_current_frame() {
+        let mut s = Spinner::new().with_frames(vec!["a", "b", "c"]);
+        s.current = usize::MAX;
+
+        s.tick();
+
+        assert!(s.current < s.frames.len());
+        assert_eq!(
+            s.current,
+            (usize::MAX % s.frames.len() + 1) % s.frames.len()
+        );
     }
 
     #[test]
