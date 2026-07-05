@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, Color, Style};
 
 pub struct Progress {
     value: f64,
@@ -38,6 +38,16 @@ impl Progress {
         self
     }
 
+    pub fn filled_char(mut self, ch: char) -> Self {
+        self.filled_char = ch;
+        self
+    }
+
+    pub fn empty_char(mut self, ch: char) -> Self {
+        self.empty_char = ch;
+        self
+    }
+
     pub fn filled_color(mut self, color: Color) -> Self {
         self.filled_color = color;
         self
@@ -60,16 +70,18 @@ impl Progress {
         let filled_count = (value * bar_width as f64).round() as usize;
         let empty_count = bar_width.saturating_sub(filled_count);
 
-        let filled_str = self.filled_char.to_string().repeat(filled_count);
-        let empty_str = self.empty_char.to_string().repeat(empty_count);
+        let filled_str = repeat_visible_char(self.filled_char, filled_count);
+        let empty_str = repeat_visible_char(self.empty_char, empty_count);
 
         let mut children: Vec<Element<Msg>> = vec![
             Element::Text(TextElement::new(filled_str).fg(self.filled_color)),
             Element::Text(TextElement::new(empty_str).fg(self.empty_color)),
         ];
 
-        if self.show_percentage && self.width > 0 {
-            let pct = fit_visible(&format!(" {:3.0}%", value * 100.0), self.width as usize);
+        let width = self.width as usize;
+        if self.show_percentage && width > 0 {
+            let pct_width = width.saturating_sub(bar_width);
+            let pct = fit_visible(&format!(" {:3.0}%", value * 100.0), pct_width);
             children.push(Element::Text(TextElement::new(pct)));
         }
 
@@ -93,14 +105,17 @@ impl Progress {
 
         let filled = Style::new()
             .fg(self.filled_color)
-            .render(&self.filled_char.to_string().repeat(filled_count));
+            .render(&repeat_visible_char(self.filled_char, filled_count));
         let empty = Style::new()
             .fg(self.empty_color)
-            .render(&self.empty_char.to_string().repeat(empty_count));
+            .render(&repeat_visible_char(self.empty_char, empty_count));
 
         let rendered = if self.show_percentage {
-            let pct = format!("{:3.0}%", value * 100.0);
-            format!("{}{} {}", filled, empty, pct)
+            let pct = fit_visible(
+                &format!(" {:3.0}%", value * 100.0),
+                width.saturating_sub(bar_width),
+            );
+            format!("{}{}{}", filled, empty, pct)
         } else {
             format!("{}{}", filled, empty)
         };
@@ -133,6 +148,7 @@ impl Default for Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn default_value_is_zero() {
@@ -188,7 +204,50 @@ mod tests {
     fn narrow_width_does_not_overflow() {
         let p = Progress::new().value(0.5).width(3);
 
-        assert_eq!(crate::style::visible_len(&p.view()), 3);
+        assert_eq!(visible_len(&p.view()), 3);
+    }
+
+    #[test]
+    fn element_percentage_slot_fits_declared_width() {
+        let p = Progress::new().value(0.5).width(8);
+        let Element::Box(row) = p.element::<()>() else {
+            panic!("expected progress row");
+        };
+        let width = row
+            .children
+            .iter()
+            .map(|child| match child {
+                Element::Text(text) => visible_len(&text.content),
+                _ => 0,
+            })
+            .sum::<usize>();
+
+        assert_eq!(width, 8);
+    }
+
+    #[test]
+    fn custom_wide_glyphs_respect_display_width() {
+        let p = Progress::new()
+            .value(0.5)
+            .width(7)
+            .show_percentage(false)
+            .filled_char('界')
+            .empty_char('好');
+        let view = p.view();
+        let Element::Box(row) = p.element::<()>() else {
+            panic!("expected progress row");
+        };
+        let element_width = row
+            .children
+            .iter()
+            .map(|child| match child {
+                Element::Text(text) => visible_len(&text.content),
+                _ => 0,
+            })
+            .sum::<usize>();
+
+        assert_eq!(visible_len(&strip_ansi(&view)), 7);
+        assert_eq!(element_width, 7);
     }
 
     #[test]
