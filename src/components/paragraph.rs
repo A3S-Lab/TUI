@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{visible_len, wrap_words, Color};
+use crate::style::{center_visible, right_visible, visible_len, wrap_words, Color};
 
 const MAX_PARAGRAPH_INDENT: usize = u16::MAX as usize;
 const MAX_PARAGRAPH_WIDTH: usize = u16::MAX as usize;
@@ -106,12 +106,18 @@ impl Paragraph {
         match self.align {
             TextAlign::Left => line.to_string(),
             TextAlign::Center => {
-                let pad = available.saturating_sub(content_len) / 2;
-                format!("{}{}", " ".repeat(pad), content)
+                if available == 0 || content_len >= available {
+                    content.to_string()
+                } else {
+                    center_visible(content, available)
+                }
             }
             TextAlign::Right => {
-                let pad = available.saturating_sub(content_len);
-                format!("{}{}", " ".repeat(pad), content)
+                if available == 0 || content_len >= available {
+                    content.to_string()
+                } else {
+                    right_visible(content, available)
+                }
             }
         }
     }
@@ -128,6 +134,7 @@ impl Paragraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, Style};
 
     #[test]
     fn no_wrap_short_text() {
@@ -185,14 +192,42 @@ mod tests {
     fn center_alignment() {
         let p = Paragraph::new("hi").width(10).align(TextAlign::Center);
         let aligned = p.apply_align("hi");
-        assert!(aligned.starts_with("    "));
+        assert_eq!(visible_len(&aligned), 10);
+        assert_eq!(aligned, "    hi    ");
     }
 
     #[test]
     fn right_alignment() {
         let p = Paragraph::new("hi").width(10).align(TextAlign::Right);
         let aligned = p.apply_align("hi");
-        assert!(aligned.starts_with("        "));
+        assert_eq!(visible_len(&aligned), 10);
+        assert_eq!(aligned, "        hi");
+    }
+
+    #[test]
+    fn alignment_uses_display_width_for_styled_cjk() {
+        let styled = Style::new().fg(Color::Green).render("中");
+        let centered = Paragraph::new("")
+            .width(6)
+            .align(TextAlign::Center)
+            .apply_align("中");
+        let right = Paragraph::new("")
+            .width(6)
+            .align(TextAlign::Right)
+            .apply_align(&styled);
+
+        assert_eq!(centered, "  中  ");
+        assert_eq!(visible_len(&right), 6);
+        assert_eq!(strip_ansi(&right), "    中");
+    }
+
+    #[test]
+    fn alignment_preserves_content_when_width_is_zero() {
+        let centered = Paragraph::new("hello").width(0).align(TextAlign::Center);
+        let right = Paragraph::new("hello").width(0).align(TextAlign::Right);
+
+        assert_eq!(centered.apply_align("hello"), "hello");
+        assert_eq!(right.apply_align("hello"), "hello");
     }
 
     #[test]
