@@ -170,7 +170,7 @@ impl LogView {
     }
 
     pub fn scroll_value(&self) -> usize {
-        self.scroll
+        self.normalized_scroll()
     }
 
     pub fn state_value(&self) -> LogViewState {
@@ -227,7 +227,8 @@ impl LogView {
                             .italic(),
                     ));
                 } else {
-                    for line in self.lines.iter().skip(self.scroll) {
+                    let scroll = self.normalized_scroll();
+                    for line in self.lines.iter().skip(scroll) {
                         children.push(Element::Text(
                             TextElement::new(clean_log_line(line)).fg(self.text_color),
                         ));
@@ -279,7 +280,8 @@ impl LogView {
                 lines.push(self.render_muted(&self.empty_text, width));
             }
             LogViewState::Ready | LogViewState::Refreshing => {
-                for line in self.lines.iter().skip(self.scroll).take(body_height) {
+                let scroll = self.normalized_scroll();
+                for line in self.lines.iter().skip(scroll).take(body_height) {
                     let raw = fit_visible(clean_log_line(line), width);
                     lines.push(Style::new().fg(self.text_color).render(&raw));
                 }
@@ -325,8 +327,12 @@ impl LogView {
             .render(&fit_visible(&format!(" {text}"), width))
     }
 
+    fn normalized_scroll(&self) -> usize {
+        self.scroll.min(self.lines.len().saturating_sub(1))
+    }
+
     fn clamp_scroll(&mut self) {
-        self.scroll = self.scroll.min(self.lines.len().saturating_sub(1));
+        self.scroll = self.normalized_scroll();
     }
 }
 
@@ -400,6 +406,21 @@ mod tests {
         assert!(!plain.contains("one"));
         assert!(plain.contains("two"));
         assert_eq!(rendered.lines().count(), 4);
+    }
+
+    #[test]
+    fn normalizes_stale_scroll_when_rendering() {
+        let mut log = sample();
+        log.scroll = usize::MAX;
+
+        assert_eq!(log.scroll_value(), 2);
+
+        let rendered = log.view(24, 3);
+        let plain = strip_ansi(&rendered);
+
+        assert!(!plain.contains("one"));
+        assert!(!plain.contains("two"));
+        assert!(plain.contains("three"));
     }
 
     #[test]
