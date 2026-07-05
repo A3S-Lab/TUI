@@ -150,6 +150,10 @@ impl Scrollbar {
 
     /// Append this scrollbar as a one-column gutter to a rendered text view.
     pub fn append_to_view(&self, view: &str, inner_width: usize) -> String {
+        if view.is_empty() {
+            return String::new();
+        }
+
         let rows = view.split('\n').collect::<Vec<_>>();
         let bar = self.styled_view(rows.len());
         rows.into_iter()
@@ -326,6 +330,13 @@ mod tests {
         assert!(rows[0].starts_with("short   "));
         assert!(rows[1].starts_with("中文    "));
         assert!(rendered.contains("\x1b["));
+    }
+
+    #[test]
+    fn append_to_empty_view_stays_empty() {
+        let rendered = Scrollbar::new(20, 2, 3).append_to_view("", 8);
+
+        assert_eq!(rendered, "");
     }
 
     #[test]

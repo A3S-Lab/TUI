@@ -70,7 +70,7 @@ impl TextOverlay {
     }
 
     pub fn apply(&self, frame: &str) -> String {
-        if self.rows.is_empty() {
+        if frame.is_empty() || self.rows.is_empty() {
             return frame.to_string();
         }
 
@@ -169,6 +169,13 @@ mod tests {
         let rows: Vec<String> = Vec::new();
 
         assert_eq!(TextOverlay::new(rows).apply(&base), base);
+    }
+
+    #[test]
+    fn empty_frame_stays_empty() {
+        let rendered = TextOverlay::new(["menu"]).top().apply("");
+
+        assert_eq!(rendered, "");
     }
 
     #[test]
