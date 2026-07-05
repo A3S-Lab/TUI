@@ -138,7 +138,7 @@ Run with `cargo run --example counter_element`.
 | `MultiSelect` | Multi-selection list with checkboxes |
 | `OutputBlock` | Status-marked transcript/output block with tail preview and styled detail support |
 | `PanelFrame` | Fixed-size titled panel frame with focus-aware borders |
-| `Paragraph` | Width-aware paragraph wrapping |
+| `Paragraph` | Width-aware paragraph wrapping with string and Element rendering |
 | `PreviewPanel` | Selectable item list with a live preview section |
 | `Progress` | Progress bar |
 | `PromptLine` | Prompt-prefixed input text with aligned continuation rows |

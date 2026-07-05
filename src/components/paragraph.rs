@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{center_visible, right_visible, visible_len, wrap_words, Color};
+use crate::style::{center_visible, right_visible, visible_len, wrap_words, Color, Style};
 
 const MAX_PARAGRAPH_INDENT: usize = u16::MAX as usize;
 const MAX_PARAGRAPH_WIDTH: usize = u16::MAX as usize;
@@ -54,6 +54,17 @@ impl Paragraph {
     pub fn color(mut self, c: Color) -> Self {
         self.color = Some(c);
         self
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        self.wrap()
+            .into_iter()
+            .map(|line| self.apply_style(&self.apply_align(&line)))
+            .collect()
+    }
+
+    pub fn view(&self) -> String {
+        self.lines().join("\n")
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
@@ -119,6 +130,13 @@ impl Paragraph {
                     right_visible(content, available)
                 }
             }
+        }
+    }
+
+    fn apply_style(&self, line: &str) -> String {
+        match self.color {
+            Some(color) => Style::new().fg(color).render(line),
+            None => line.to_string(),
         }
     }
 
@@ -237,6 +255,29 @@ mod tests {
 
         assert!(lines.iter().all(|line| visible_len(line) <= 8));
         assert_eq!(lines.concat(), "中文测试内容");
+    }
+
+    #[test]
+    fn lines_apply_alignment_and_color_for_string_rendering() {
+        let lines = Paragraph::new("hi")
+            .width(6)
+            .align(TextAlign::Right)
+            .color(Color::Green)
+            .lines();
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(strip_ansi(&lines[0]), "    hi");
+        assert_eq!(visible_len(&lines[0]), 6);
+        assert!(lines[0].contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn view_joins_wrapped_lines() {
+        let rendered = Paragraph::new("alpha beta gamma").width(8).view();
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains('\n'));
+        assert!(plain.lines().all(|line| visible_len(line) <= 8));
     }
 
     #[test]
