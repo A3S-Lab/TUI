@@ -32,7 +32,9 @@ impl FocusManager {
             if self.focusable.is_empty() {
                 self.current = None;
             } else if let Some(cur) = self.current {
-                if cur >= self.focusable.len() {
+                if pos < cur {
+                    self.current = Some(cur - 1);
+                } else if cur >= self.focusable.len() {
                     self.current = Some(self.focusable.len() - 1);
                 }
             }
@@ -140,6 +142,20 @@ mod tests {
         assert_eq!(fm.current(), Some(3));
         fm.unregister(3);
         assert_eq!(fm.current(), Some(2));
+    }
+
+    #[test]
+    fn unregister_before_current_preserves_focused_id() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.focus(2);
+
+        fm.unregister(1);
+
+        assert_eq!(fm.current(), Some(2));
+        assert!(fm.is_focused(2));
     }
 
     #[test]
