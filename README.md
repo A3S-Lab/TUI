@@ -123,7 +123,7 @@ Run with `cargo run --example counter_element`.
 | `DataTable` | Responsive, scrollable data table with line and Element rendering |
 | `DetailPanel` | Compact selected-row details with metadata and actions |
 | `DiffView` | Unified diff renderer for edits and tool output |
-| `Divider` | Horizontal/vertical separators |
+| `Divider` | Element and line-rendered separators |
 | `GutterBlock` | Transcript/message block with marker gutter and optional bubble background |
 | `HelpPanel` | Grouped shortcut and command help |
 | `InputBorder` | Input-area border line with context, effort, and ribbon variants |

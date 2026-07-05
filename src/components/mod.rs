@@ -78,7 +78,7 @@ pub use cursor_line::CursorLine;
 pub use data_table::{CellAlign, DataColumn, DataRow, DataTable};
 pub use detail_panel::{DetailPanel, DetailRow, DetailRowKind};
 pub use diff_view::{DiffLine, DiffLineKind, DiffView};
-pub use divider::{divider, divider_with};
+pub use divider::{divider, divider_line, divider_line_with, divider_with};
 pub use gutter_block::GutterBlock;
 pub use help_panel::{HelpPanel, HelpRow, HelpSection};
 pub use input_border::InputBorder;
