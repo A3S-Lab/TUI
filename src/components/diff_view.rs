@@ -1,6 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{
-    fit_visible, next_display_cell_boundary, pad_visible, truncate_visible, Color, Style,
+    fit_visible, next_display_cell_boundary, pad_visible, truncate_visible, visible_len, Color,
+    Style,
 };
 use similar::{ChangeTag, TextDiff};
 
@@ -312,6 +313,11 @@ impl DiffView {
         self
     }
 
+    pub fn separator_color(mut self, color: Color) -> Self {
+        self.separator_color = color;
+        self
+    }
+
     pub fn insert_color(mut self, color: Color) -> Self {
         self.insert_fg = color;
         self
@@ -405,13 +411,8 @@ impl DiffView {
 
     fn render_lines(&self, width: usize, height: usize) -> Vec<String> {
         let mut lines = Vec::new();
-        if let Some(header) = self.header_plain() {
-            lines.push(
-                Style::new()
-                    .fg(self.header_color)
-                    .bold()
-                    .render(&fit_visible(&header, width)),
-            );
+        if let Some(header) = self.header_for_width(width) {
+            lines.push(Style::new().fg(self.header_color).bold().render(&header));
         }
 
         let number_width = self.number_width();
@@ -535,6 +536,25 @@ impl DiffView {
         self.path
             .as_deref()
             .map(|path| format!("  • Edited {path} (+{} -{})", self.added, self.deleted))
+    }
+
+    fn header_for_width(&self, width: usize) -> Option<String> {
+        let path = self.path.as_deref()?;
+        let prefix = "  • Edited ";
+        let counts = format!("(+{} -{})", self.added, self.deleted);
+        let header = format!("{prefix}{path} {counts}");
+        if visible_len(&header) <= width {
+            return Some(fit_visible(&header, width));
+        }
+
+        let reserved = visible_len(prefix) + 1 + visible_len(&counts);
+        if reserved >= width {
+            return Some(fit_visible(&header, width));
+        }
+
+        let path_width = width - reserved;
+        let path = truncate_visible(path, path_width);
+        Some(fit_visible(&format!("{prefix}{path} {counts}"), width))
     }
 
     fn plain_line(&self, line: &DiffLine) -> String {
@@ -680,6 +700,22 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 56, "{line:?}");
         }
+    }
+
+    #[test]
+    fn header_keeps_counts_when_path_is_truncated() {
+        let diff = DiffView::from_texts(
+            "src/tui/a/very/long/path/that/should/not/drop-counts.rs",
+            "old();\n",
+            "new();\n",
+        );
+        let rendered = diff.view(40, 4);
+        let plain = strip_ansi(&rendered);
+        let header = plain.lines().next().expect("diff header");
+
+        assert!(header.contains("Edited src/tui"), "{header}");
+        assert!(header.contains("(+1 -1)"), "{header}");
+        assert_eq!(visible_len(header), 40, "{header}");
     }
 
     #[test]
