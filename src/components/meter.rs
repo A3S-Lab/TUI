@@ -1,4 +1,4 @@
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{repeat_visible_char, truncate_visible, visible_len, Color, Style};
 
 const MAX_METER_WIDTH: usize = u16::MAX as usize;
 
@@ -91,10 +91,10 @@ impl Meter {
             "{}{}",
             Style::new()
                 .fg(self.fg)
-                .render(&self.fill.to_string().repeat(filled)),
+                .render(&repeat_visible_char(self.fill, filled)),
             Style::new()
                 .fg(self.empty_fg)
-                .render(&self.empty.to_string().repeat(empty))
+                .render(&repeat_visible_char(self.empty, empty))
         );
 
         format!("{prefix}{bar}")
@@ -147,6 +147,32 @@ mod tests {
 
         assert_eq!(visible_len(&line), 12);
         assert!(!line.contains('░'));
+    }
+
+    #[test]
+    fn custom_wide_glyphs_fill_bar_by_display_width() {
+        let line = Meter::new(50.0)
+            .label("CPU")
+            .width(16)
+            .glyphs('界', '·')
+            .view();
+        let plain = strip_ansi(&line);
+
+        assert_eq!(visible_len(&line), 16);
+        assert_eq!(visible_len(&plain), 16);
+        assert!(plain.contains("界 "));
+        assert!(plain.ends_with("··"));
+    }
+
+    #[test]
+    fn custom_zero_width_glyphs_fall_back_to_spaces() {
+        let line = Meter::new(50.0)
+            .width(12)
+            .glyphs('\u{301}', '\u{301}')
+            .plain();
+
+        assert_eq!(visible_len(&line), 12);
+        assert!(line.ends_with("     "));
     }
 
     #[test]
