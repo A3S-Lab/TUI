@@ -135,10 +135,8 @@ impl Timeline {
     }
 
     pub fn selected_item(mut self, selected_item: usize) -> Self {
-        self.selected_item = self
-            .item_count()
-            .checked_sub(1)
-            .map(|max| selected_item.min(max));
+        self.selected_item = Some(selected_item);
+        self.clamp_selection();
         self
     }
 
@@ -205,7 +203,7 @@ impl Timeline {
     }
 
     pub fn selected_item_value(&self) -> Option<usize> {
-        self.selected_item
+        self.normalized_selected_item()
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -436,7 +434,7 @@ impl Timeline {
     }
 
     fn selected_row_index(&self) -> Option<usize> {
-        let selected = self.selected_item?;
+        let selected = self.normalized_selected_item()?;
         let mut item_index = 0usize;
         for (row_index, row) in self.rows.iter().enumerate() {
             if matches!(row, TimelineRow::Item(_)) {
@@ -450,11 +448,15 @@ impl Timeline {
     }
 
     fn clamp_selection(&mut self) {
-        self.selected_item = self.selected_item.and_then(|selected| {
+        self.selected_item = self.normalized_selected_item();
+    }
+
+    fn normalized_selected_item(&self) -> Option<usize> {
+        self.selected_item.and_then(|selected| {
             self.item_count()
                 .checked_sub(1)
                 .map(|max| selected.min(max))
-        });
+        })
     }
 
     fn item_count(&self) -> usize {
@@ -558,6 +560,30 @@ mod tests {
         assert!(plain.contains("yesterday"));
         assert!(plain.contains("patched terminal"));
         assert!(!plain.contains("workspace uses"));
+    }
+
+    #[test]
+    fn stale_selected_item_is_normalized_for_rendering_and_scroll() {
+        let mut timeline = sample_timeline().scroll(0);
+        timeline.selected_item = Some(usize::MAX);
+
+        assert_eq!(timeline.selected_item_value(), Some(2));
+
+        let rendered = timeline.view(40, 2);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("yesterday"), "{plain:?}");
+        assert!(plain.contains("patched terminal"), "{plain:?}");
+        assert!(!plain.contains("workspace uses"), "{plain:?}");
+
+        let Element::Box(column) = timeline.element::<()>(40, 2) else {
+            panic!("expected column element");
+        };
+        let Element::Text(selected) = &column.children[1] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(selected.style.fg, Some(Color::Black));
+        assert_eq!(selected.style.bg, Some(Color::Green));
     }
 
     #[test]
