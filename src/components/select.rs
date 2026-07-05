@@ -44,16 +44,16 @@ impl Select {
         self.focused = false;
     }
     pub fn selected_index(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
     pub fn selected_value(&self) -> &str {
         self.selected_value_opt().unwrap_or("")
     }
     pub fn selected_value_opt(&self) -> Option<&str> {
-        self.items.get(self.cursor).map(String::as_str)
+        self.items.get(self.normalized_cursor()).map(String::as_str)
     }
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
 
     /// Set the vertical offset for mouse click calculations.
@@ -71,7 +71,10 @@ impl Select {
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.cursor = self.cursor.saturating_add(1).min(self.max_cursor());
+                self.cursor = self
+                    .normalized_cursor()
+                    .saturating_add(1)
+                    .min(self.max_cursor());
                 None
             }
             KeyCode::Enter => self.selected_msg(),
@@ -116,10 +119,11 @@ impl Select {
             return String::new();
         }
 
+        let cursor = self.normalized_cursor();
         let start = if self.items.len() <= height {
             0
         } else {
-            self.cursor
+            cursor
                 .saturating_sub(height - 1)
                 .min(self.items.len() - height)
         };
@@ -130,7 +134,7 @@ impl Select {
             .skip(start)
             .take(height)
             .map(|(idx, item)| {
-                let prefix = if idx == self.cursor { ">" } else { " " };
+                let prefix = if idx == cursor { ">" } else { " " };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
                         Some(label) => fit_visible(&format!("{prefix} {label} {item}"), width),
@@ -139,7 +143,7 @@ impl Select {
                 } else {
                     fit_visible(&format!("{prefix} {item}"), width)
                 };
-                if idx == self.cursor && self.focused {
+                if idx == cursor && self.focused {
                     Style::new().fg(Color::Cyan).bold().render(&raw)
                 } else {
                     raw
@@ -150,12 +154,13 @@ impl Select {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        let cursor = self.normalized_cursor();
         let children: Vec<Element<Msg>> = self
             .items
             .iter()
             .enumerate()
             .map(|(i, item)| {
-                let prefix = if i == self.cursor { "▸ " } else { "  " };
+                let prefix = if i == cursor { "▸ " } else { "  " };
                 let text = if self.number_shortcuts {
                     match number_shortcut_label(i) {
                         Some(label) => format!("{prefix}{label} {item}"),
@@ -164,7 +169,7 @@ impl Select {
                 } else {
                     format!("{}{}", prefix, item)
                 };
-                if i == self.cursor && self.focused {
+                if i == cursor && self.focused {
                     Element::Text(TextElement::new(text).bold().fg(Color::Cyan))
                 } else {
                     Element::Text(TextElement::new(text))
@@ -180,14 +185,19 @@ impl Select {
     }
 
     fn selected_msg(&self) -> Option<SelectMsg> {
+        let cursor = self.normalized_cursor();
         self.items
-            .get(self.cursor)
+            .get(cursor)
             .cloned()
-            .map(|item| SelectMsg::Selected(self.cursor, item))
+            .map(|item| SelectMsg::Selected(cursor, item))
     }
 
     fn max_cursor(&self) -> usize {
         self.items.len().saturating_sub(1)
+    }
+
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(self.max_cursor())
     }
 }
 
@@ -272,6 +282,36 @@ mod tests {
         assert_eq!(select.selected_index(), 1);
 
         select.cursor = usize::MAX;
+        select.handle_key(&key(KeyCode::Up));
+        assert_eq!(select.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_cursor_is_normalized_for_selection_rendering_and_enter() {
+        let mut select = Select::new(vec!["a", "b"]).with_number_shortcuts();
+        select.cursor = usize::MAX;
+
+        assert_eq!(select.selected_index(), 1);
+        assert_eq!(select.cursor(), 1);
+        assert_eq!(select.selected_value(), "b");
+        assert_eq!(select.selected_value_opt(), Some("b"));
+        assert!(matches!(
+            select.handle_key(&key(KeyCode::Enter)),
+            Some(SelectMsg::Selected(1, value)) if value == "b"
+        ));
+
+        let plain = crate::style::strip_ansi(&select.view(20, 5));
+        assert!(plain.contains("> 2 b"));
+        assert!(!plain.contains("> 1 a"));
+
+        let Element::Box(box_el) = select.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 b");
+
         select.handle_key(&key(KeyCode::Up));
         assert_eq!(select.selected_index(), 1);
     }
