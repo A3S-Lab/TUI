@@ -280,7 +280,7 @@ impl LogView {
                 lines.push(self.render_muted(&self.empty_text, width));
             }
             LogViewState::Ready | LogViewState::Refreshing => {
-                let scroll = self.normalized_scroll();
+                let scroll = self.normalized_scroll_for_body_height(body_height);
                 for line in self.lines.iter().skip(scroll).take(body_height) {
                     let raw = fit_visible(clean_log_line(line), width);
                     lines.push(Style::new().fg(self.text_color).render(&raw));
@@ -329,6 +329,18 @@ impl LogView {
 
     fn normalized_scroll(&self) -> usize {
         self.scroll.min(self.lines.len().saturating_sub(1))
+    }
+
+    fn normalized_scroll_for_body_height(&self, body_height: usize) -> usize {
+        if body_height == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        self.scroll.min(
+            self.lines
+                .len()
+                .saturating_sub(body_height.min(self.lines.len())),
+        )
     }
 
     fn clamp_scroll(&mut self) {
@@ -415,11 +427,11 @@ mod tests {
 
         assert_eq!(log.scroll_value(), 2);
 
-        let rendered = log.view(24, 3);
+        let rendered = log.view(24, 4);
         let plain = strip_ansi(&rendered);
 
         assert!(!plain.contains("one"));
-        assert!(!plain.contains("two"));
+        assert!(plain.contains("two"));
         assert!(plain.contains("three"));
     }
 
