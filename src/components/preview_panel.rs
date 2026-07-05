@@ -408,16 +408,7 @@ impl PreviewPanel {
 
         let selected = self.normalized_selected();
         for index in self.element_item_range() {
-            let item = &self.items[index];
-            let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == selected {
-                text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
-            } else if item.disabled {
-                text = text.fg(self.disabled_color);
-            } else {
-                text = text.fg(item.color.unwrap_or(self.text_color));
-            }
-            children.push(Element::Text(text));
+            children.push(Element::Text(self.item_text_element(index, selected)));
         }
 
         if let Some(title) = self
@@ -425,18 +416,71 @@ impl PreviewPanel {
             .as_deref()
             .filter(|title| !title.is_empty())
         {
-            children.push(Element::Text(
-                TextElement::new(format!("── {title} ──")).fg(self.divider_color),
-            ));
+            children.push(Element::Text(self.preview_divider_element(title)));
         }
         for line in &self.preview_lines {
-            children.push(Element::Text(
-                TextElement::new(strip_ansi(line)).fg(self.preview_color),
-            ));
+            children.push(Element::Text(self.preview_line_element(line)));
         }
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if let Some(subtitle) = self
+            .subtitle
+            .as_deref()
+            .filter(|subtitle| !subtitle.is_empty())
+        {
+            children.push(Element::Text(
+                TextElement::new(subtitle).fg(self.subtitle_color),
+            ));
+        }
+
+        let visible_items = self.visible_item_count_for_height(height);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        let selected = self.normalized_selected();
+        for index in start..end {
+            children.push(Element::Text(self.item_text_element(index, selected)));
+        }
+
+        if let Some(title) = self
+            .preview_title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .filter(|_| children.len() < height)
+        {
+            children.push(Element::Text(self.preview_divider_element(title)));
+        }
+
+        let preview_slots = height.saturating_sub(children.len() + self.footer_rows());
+        for line in self.preview_lines.iter().take(preview_slots) {
+            children.push(Element::Text(self.preview_line_element(line)));
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
         }
 
         Element::Box(
@@ -504,6 +548,27 @@ impl PreviewPanel {
         }
 
         lines
+    }
+
+    fn item_text_element(&self, index: usize, selected: usize) -> TextElement {
+        let item = &self.items[index];
+        let mut text = TextElement::new(self.plain_item_line(index, None));
+        if index == selected {
+            text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
+        } else if item.disabled {
+            text = text.fg(self.disabled_color);
+        } else {
+            text = text.fg(item.color.unwrap_or(self.text_color));
+        }
+        text
+    }
+
+    fn preview_divider_element(&self, title: &str) -> TextElement {
+        TextElement::new(format!("── {title} ──")).fg(self.divider_color)
+    }
+
+    fn preview_line_element(&self, line: &str) -> TextElement {
+        TextElement::new(strip_ansi(line)).fg(self.preview_color)
     }
 
     fn render_item(&self, index: usize, width: usize) -> String {
@@ -949,5 +1014,61 @@ mod tests {
         assert!(text.contains("entry-3"));
         assert!(!text.contains("entry-0"));
         assert!(!text.contains("entry-4"));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_items_and_preview_budget() {
+        let el: Element<()> = sample().selected(2).element_with_height(6);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 6);
+        assert!(text.contains("Theme"), "{text:?}");
+        assert!(text.contains("Quiet Light"), "{text:?}");
+        assert!(text.contains("syntax preview"), "{text:?}");
+        assert!(text.contains("// syntax preview"), "{text:?}");
+        assert!(text.contains("↑/↓ preview"), "{text:?}");
+        assert!(!text.contains("fn compute"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = PreviewPanel::without_title()
+            .without_preview_title()
+            .item(PreviewItem::new("only"))
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], "  ▸ only");
+        assert_eq!(rows[1], "");
+        assert_eq!(rows[2], "");
     }
 }
