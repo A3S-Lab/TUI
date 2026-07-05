@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{fit_visible, Color, Style};
 
 /// A breadcrumb navigation component.
 ///
@@ -39,6 +39,19 @@ impl Breadcrumb {
         self
     }
 
+    pub fn separator_color(mut self, color: Color) -> Self {
+        self.separator_color = color;
+        self
+    }
+
+    pub fn view(&self, width: u16) -> String {
+        let width = width as usize;
+        if width == 0 {
+            return String::new();
+        }
+        fit_visible(&self.render_raw(), width)
+    }
+
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut children: Vec<Element<Msg>> = Vec::new();
         let last_idx = self.items.len().saturating_sub(1);
@@ -65,6 +78,31 @@ impl Breadcrumb {
                 .direction(FlexDirection::Row)
                 .children(children),
         )
+    }
+
+    fn render_raw(&self) -> String {
+        let mut out = String::new();
+        let last_idx = self.items.len().saturating_sub(1);
+        for (i, item) in self.items.iter().enumerate() {
+            let is_last = i == last_idx;
+            let mut style = Style::new().fg(if is_last {
+                self.active_color
+            } else {
+                self.inactive_color
+            });
+            if is_last {
+                style = style.bold();
+            }
+            out.push_str(&style.render(item));
+            if !is_last {
+                out.push_str(
+                    &Style::new()
+                        .fg(self.separator_color)
+                        .render(&self.separator),
+                );
+            }
+        }
+        out
     }
 }
 
@@ -106,5 +144,20 @@ mod tests {
             },
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn view_renders_and_fits_styled_breadcrumbs() {
+        let rendered = Breadcrumb::new(vec!["workspace", "src", "main.rs"])
+            .separator(" · ")
+            .active_color(Color::Cyan)
+            .inactive_color(Color::BrightBlack)
+            .separator_color(Color::BrightBlack)
+            .view(48);
+
+        assert_eq!(crate::style::visible_len(&rendered), 48);
+        assert!(crate::style::strip_ansi(&rendered).contains("workspace"));
+        assert!(crate::style::strip_ansi(&rendered).contains("main.rs"));
+        assert!(rendered.contains("\x1b["));
     }
 }
