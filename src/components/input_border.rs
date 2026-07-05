@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
 
 const MAX_INPUT_BORDER_MARGIN: usize = u16::MAX as usize;
 const MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH: usize = u16::MAX as usize;
@@ -141,13 +141,7 @@ impl InputBorder {
         }
 
         if let Some(rainbow) = &self.rainbow {
-            segments.extend((0..inner_width).map(|index| {
-                BorderSegment::styled(
-                    self.rule.to_string(),
-                    rainbow.palette[(index + rainbow.offset) % rainbow.palette.len()],
-                    true,
-                )
-            }));
+            segments.extend(self.rainbow_rule_segments(rainbow, inner_width));
             return segments;
         }
 
@@ -156,7 +150,7 @@ impl InputBorder {
         let suffix_rule_width = self.suffix_rule_width_for_width(inner_width);
         if context.is_empty() && label.is_empty() {
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(inner_width),
+                repeat_visible_char(self.rule, inner_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -179,7 +173,7 @@ impl InputBorder {
 
         if prefix_rule_width > 0 {
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(prefix_rule_width),
+                repeat_visible_char(self.rule, prefix_rule_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -206,7 +200,7 @@ impl InputBorder {
         if suffix_rule_width > 0 {
             segments.push(BorderSegment::plain(" "));
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(suffix_rule_width),
+                repeat_visible_char(self.rule, suffix_rule_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -221,6 +215,28 @@ impl InputBorder {
         } else {
             segments
         }
+    }
+
+    fn rainbow_rule_segments(&self, rainbow: &RainbowRule, width: usize) -> Vec<BorderSegment> {
+        let rule_width = visible_len(&self.rule.to_string());
+        if rule_width == 0 {
+            return vec![BorderSegment::plain(" ".repeat(width))];
+        }
+
+        let rule_count = width / rule_width;
+        let remainder = width % rule_width;
+        let mut segments = Vec::with_capacity(rule_count + usize::from(remainder > 0));
+        for index in 0..rule_count {
+            segments.push(BorderSegment::styled(
+                self.rule.to_string(),
+                rainbow.palette[(index + rainbow.offset) % rainbow.palette.len()],
+                true,
+            ));
+        }
+        if remainder > 0 {
+            segments.push(BorderSegment::plain(" ".repeat(remainder)));
+        }
+        segments
     }
 
     fn margin_for_width(&self, width: usize) -> usize {
@@ -329,6 +345,22 @@ mod tests {
     }
 
     #[test]
+    fn custom_wide_rule_glyph_respects_display_width() {
+        let plain_rule = InputBorder::new().margin(1).rule('界').view(5);
+        let labeled_rule = InputBorder::new()
+            .margin(0)
+            .rule('界')
+            .context("ctx")
+            .suffix_rule_width(3)
+            .view(10);
+
+        assert_eq!(visible_len(&plain_rule), 5);
+        assert_eq!(strip_ansi(&plain_rule), " 界界");
+        assert_eq!(visible_len(&labeled_rule), 10);
+        assert!(strip_ansi(&labeled_rule).starts_with("界 ctx"));
+    }
+
+    #[test]
     fn rainbow_rule_uses_palette_offset_and_ignores_labels() {
         let rendered = InputBorder::new()
             .margin(1)
@@ -340,6 +372,19 @@ mod tests {
 
         assert_eq!(plain, " ────");
         assert!(rendered.starts_with(" \x1b[1;32m─\x1b[0m\x1b[1;31m─"));
+    }
+
+    #[test]
+    fn rainbow_wide_rule_glyph_respects_display_width() {
+        let rendered = InputBorder::new()
+            .margin(1)
+            .rule('界')
+            .rainbow(vec![Color::Red, Color::Green], 0)
+            .view(6);
+
+        assert_eq!(visible_len(&rendered), 6);
+        assert_eq!(strip_ansi(&rendered), " 界界 ");
+        assert!(rendered.starts_with(" \x1b[1;31m界\x1b[0m\x1b[1;32m界"));
     }
 
     #[test]

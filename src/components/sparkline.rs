@@ -1,4 +1,4 @@
-use crate::style::{visible_len, Color, Style};
+use crate::style::{repeat_visible_char, visible_len, Color, Style};
 
 const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const MAX_SPARKLINE_WIDTH: usize = u16::MAX as usize;
@@ -63,7 +63,7 @@ impl Sparkline {
             return String::new();
         }
         if self.values.is_empty() {
-            return self.empty.to_string().repeat(self.width);
+            return repeat_visible_char(self.empty, self.width);
         }
 
         let values = self.window_values();
@@ -84,7 +84,11 @@ impl Sparkline {
 
         let len = visible_len(&out);
         if len < self.width {
-            out = format!("{}{}", self.empty.to_string().repeat(self.width - len), out);
+            out = format!(
+                "{}{}",
+                repeat_visible_char(self.empty, self.width - len),
+                out
+            );
         }
         out
     }
@@ -108,6 +112,20 @@ mod tests {
         let line = Sparkline::new(Vec::<f64>::new()).width(4).plain();
 
         assert_eq!(line, "····");
+    }
+
+    #[test]
+    fn custom_wide_empty_glyph_respects_display_width() {
+        let empty = Sparkline::new(Vec::<f64>::new())
+            .width(3)
+            .empty('界')
+            .plain();
+        let padded = Sparkline::new([1.0]).width(4).empty('界').plain();
+
+        assert_eq!(visible_len(&empty), 3);
+        assert_eq!(empty, "界 ");
+        assert_eq!(visible_len(&padded), 4);
+        assert_eq!(padded, "界 █");
     }
 
     #[test]

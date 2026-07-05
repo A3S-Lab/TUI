@@ -626,6 +626,24 @@ pub fn pad_visible(s: &str, width: usize) -> String {
     }
 }
 
+/// Repeat a character until the output fills `width` display columns.
+///
+/// If the character is zero-width, or if a wide character would straddle the
+/// final column, spaces are used for the remaining columns.
+pub fn repeat_visible_char(ch: char, width: usize) -> String {
+    let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    if width == 0 {
+        return String::new();
+    }
+    if char_width == 0 {
+        return " ".repeat(width);
+    }
+
+    let count = width / char_width;
+    let remainder = width % char_width;
+    format!("{}{}", ch.to_string().repeat(count), " ".repeat(remainder))
+}
+
 /// Truncate a string to `width` display columns, then pad it to exactly `width`.
 pub fn fit_visible(s: &str, width: usize) -> String {
     pad_visible(&truncate_visible(s, width), width)
@@ -982,6 +1000,14 @@ mod tests {
 
         assert_eq!(visible_len(&padded), 6);
         assert!(padded.starts_with("\x1b[36m"));
+    }
+
+    #[test]
+    fn repeats_visible_char_to_display_width() {
+        assert_eq!(repeat_visible_char('·', 4), "····");
+        assert_eq!(repeat_visible_char('界', 3), "界 ");
+        assert_eq!(repeat_visible_char('\u{301}', 3), "   ");
+        assert_eq!(visible_len(&repeat_visible_char('界', 5)), 5);
     }
 
     #[test]
