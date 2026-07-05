@@ -128,7 +128,7 @@ Run with `cargo run --example counter_element`.
 | `HelpPanel` | Grouped shortcut and command help |
 | `InputBorder` | Input-area border line with context, effort, and ribbon variants |
 | `InlineAction` | Inline action pill with optional muted detail text |
-| `KeyValue` | Labeled metadata rows |
+| `KeyValue` | Labeled metadata rows with string and Element rendering |
 | `LevelSlider` | Discrete level slider with tick labels and selected marker |
 | `List` | Scrollable list with selection |
 | `LogView` | Scrollable log/output panel with loading and empty states |
