@@ -127,6 +127,7 @@ Run with `cargo run --example counter_element`.
 | `GutterBlock` | Transcript/message block with marker gutter and optional bubble background |
 | `HelpPanel` | Grouped shortcut and command help |
 | `InputBorder` | Input-area border line with context, effort, and ribbon variants |
+| `InlineAction` | Inline action pill with optional muted detail text |
 | `KeyValue` | Labeled metadata rows |
 | `LevelSlider` | Discrete level slider with tick labels and selected marker |
 | `List` | Scrollable list with selection |
