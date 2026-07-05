@@ -94,7 +94,7 @@ impl Modal {
     }
 
     pub fn confirm(&self) -> usize {
-        self.selected.min(self.options.len().saturating_sub(1))
+        self.normalized_selected()
     }
 
     pub fn view(&self, screen_width: u16, screen_height: u16) -> String {
@@ -122,9 +122,10 @@ impl Modal {
             inner_lines.push(String::new());
         }
 
+        let selected = self.normalized_selected();
         for (i, opt) in self.options.iter().enumerate() {
-            let prefix = if i == self.selected { "▸ " } else { "  " };
-            let styled = if i == self.selected {
+            let prefix = if i == selected { "▸ " } else { "  " };
+            let styled = if i == selected {
                 Style::new()
                     .bold()
                     .fg(self.selected_color)
@@ -190,6 +191,10 @@ impl Modal {
     fn clamp_selected(&mut self) {
         self.selected = self.selected.min(self.options.len().saturating_sub(1));
     }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.options.len().saturating_sub(1))
+    }
 }
 
 impl Default for Modal {
@@ -216,10 +221,11 @@ impl Modal {
             children.push(Element::Text(TextElement::new("")));
         }
 
+        let selected = self.normalized_selected();
         for (i, opt) in self.options.iter().enumerate() {
-            let prefix = if i == self.selected { "▸ " } else { "  " };
+            let prefix = if i == selected { "▸ " } else { "  " };
             let text = format!("{}{}", prefix, opt);
-            if i == self.selected {
+            if i == selected {
                 children.push(Element::Text(
                     TextElement::new(text).bold().fg(self.selected_color),
                 ));
@@ -305,6 +311,26 @@ mod tests {
         modal.selected = usize::MAX;
         modal.update(ModalMsg::Prev);
         assert_eq!(modal.confirm(), 1);
+    }
+
+    #[test]
+    fn rendering_normalizes_stale_selection() {
+        let mut modal = Modal::new().options(vec!["A", "B"]);
+        modal.selected = usize::MAX;
+
+        let rendered = modal.view(30, 6);
+
+        assert!(rendered.contains("▸ B"));
+        assert!(!rendered.contains("▸ A"));
+
+        let Element::Box(box_el) = modal.element::<()>() else {
+            panic!("expected Box");
+        };
+        let Element::Text(last_option) = box_el.children.last().expect("expected last option")
+        else {
+            panic!("expected option text");
+        };
+        assert_eq!(last_option.content, "▸ B");
     }
 
     #[test]
