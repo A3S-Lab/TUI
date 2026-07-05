@@ -262,11 +262,7 @@ impl DataTable {
         }
 
         let body_height = height.saturating_sub(2);
-        let start = self.scroll.min(
-            self.rows
-                .len()
-                .saturating_sub(body_height.min(self.rows.len())),
-        );
+        let start = self.visible_body_start(body_height);
         let selected_row = self.normalized_selected();
         for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
             let selected = selected_row == Some(idx);
@@ -426,6 +422,27 @@ impl DataTable {
     fn gap_total_for_width(&self, width: usize, column_count: usize) -> usize {
         self.gap_for_width(width, column_count)
             .saturating_mul(column_count.saturating_sub(1))
+    }
+
+    fn visible_body_start(&self, body_height: usize) -> usize {
+        if body_height == 0 || self.rows.is_empty() {
+            return 0;
+        }
+
+        let max_start = self
+            .rows
+            .len()
+            .saturating_sub(body_height.min(self.rows.len()));
+        let mut start = self.scroll.min(max_start);
+        if let Some(selected) = self.normalized_selected() {
+            if selected < start {
+                start = selected;
+            } else if selected >= start.saturating_add(body_height) {
+                start = selected.saturating_add(1).saturating_sub(body_height);
+            }
+        }
+
+        start.min(max_start)
     }
 
     fn normalized_selected(&self) -> Option<usize> {
@@ -651,13 +668,34 @@ mod tests {
     fn stale_selected_row_is_clamped_during_rendering() {
         let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
             .row(DataRow::new(vec!["one"]))
-            .row(DataRow::new(vec!["two"]).selected(Color::White, Color::Red))
-            .selected(Some(usize::MAX));
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]).selected(Color::White, Color::Red))
+            .selected(Some(usize::MAX))
+            .scroll(0);
 
         let rendered = table.view(12, 4);
+        let plain = strip_ansi(&rendered);
 
         assert!(rendered.contains("\x1b[1;37;41m"));
-        assert!(strip_ansi(&rendered).contains("two"));
+        assert!(!plain.contains("one"));
+        assert!(plain.contains("three"));
+    }
+
+    #[test]
+    fn selected_row_before_scroll_is_kept_visible() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]).selected(Color::White, Color::Blue))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .selected(Some(0))
+            .scroll(usize::MAX);
+
+        let rendered = table.view(12, 4);
+        let plain = strip_ansi(&rendered);
+
+        assert!(rendered.contains("\x1b[1;37;44m"));
+        assert!(plain.contains("one"));
+        assert!(!plain.contains("three"));
     }
 
     #[test]
