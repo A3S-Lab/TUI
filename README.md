@@ -17,7 +17,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Declarative UI** — describe what you want, not how to draw it
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
-- **Rich Components** — 57 ready-to-use components (tables, modals, help panels, text editors, etc.)
+- **Rich Components** — 59 ready-to-use components (tables, modals, help panels, text editors, etc.)
 
 ---
 
@@ -144,6 +144,7 @@ Run with `cargo run --example counter_element`.
 | `Scrollbar` | Scrollbar indicator |
 | `Select` | Single-selection dropdown |
 | `SessionStatus` | Agent/session footer row with context and live chips |
+| `SectionHeader` | Width-safe panel heading with metadata and divider rows |
 | `ShimmerText` | Animated gliding highlight for activity text |
 | `SideNotePanel` | Compact side-channel question and answer panel |
 | `Sparkline` | Inline trend chart |
@@ -230,7 +231,7 @@ See `examples/chat.rs` for a complete chat UI with:
 
 Run `cargo bench --bench rendering` to measure hot rendering paths:
 - display-width helpers with ANSI and CJK text
-- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PromptLine`, `Scrollbar`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
+- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
 - mixed markdown rendering with task lists and code blocks
 
 ### Integration Tests
@@ -354,7 +355,7 @@ ElementProgramBuilder::new(model)
 | Rendering | Incremental | Full redraw | Incremental |
 | Async | Native (Tokio) | Manual | Callbacks |
 | Markdown | Built-in | External | External |
-| Components | 58 built-in | DIY | 10+ built-in |
+| Components | 59 built-in | DIY | 10+ built-in |
 
 ---
 
@@ -362,7 +363,7 @@ ElementProgramBuilder::new(model)
 
 - [x] TEA architecture
 - [x] Element tree + Flexbox layout
-- [x] 58 core components
+- [x] 59 core components
 - [x] Markdown rendering
 - [x] Streaming content
 - [x] Keymap system

@@ -3,10 +3,11 @@ use a3s_tui::components::{
     ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable, DetailPanel, DiffView, GutterBlock,
     HelpPanel, HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem, MenuPanel,
     ModeLine, OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar,
-    SessionStatus, SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane,
-    StatusBar, SubagentRow, SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel,
-    TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection, Timeline, TimelineItem,
-    ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
+    SectionHeader, SessionStatus, SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel,
+    SplitPane, StatusBar, SubagentRow, SubagentTracker, TabSegment, TabbedMenuItem,
+    TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection, Timeline,
+    TimelineItem, ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner,
+    WrappedPrefixBlock,
 };
 use a3s_tui::markdown::Markdown;
 use a3s_tui::style::{fit_visible, truncate_visible, wrap_words_compact, Color, Style};
@@ -126,6 +127,11 @@ fn bench_components(c: &mut Criterion) {
     let details = sample_detail_panel();
     c.bench_function("components/detail_panel_view", |b| {
         b.iter(|| details.view(black_box(100), black_box(12)))
+    });
+
+    let section_header = sample_section_header();
+    c.bench_function("components/section_header_view", |b| {
+        b.iter(|| section_header.view(black_box(100), black_box(4)))
     });
 
     let timeline = sample_timeline();
@@ -494,6 +500,12 @@ fn sample_detail_panel() -> DetailPanel {
         )
         .action("o focus · / filter · ! risk · g kind · K terminate")
         .fill_height(true)
+}
+
+fn sample_section_header() -> SectionHeader {
+    SectionHeader::new("agent view codex · pid 4242")
+        .metadata("ppid 42 · elapsed 00:03:42 · children 7 · subtree cpu 94.1% mem 21.4%")
+        .metadata("cwd /Users/roylin/code/a3s/crates/tui · 状态 healthy")
 }
 
 fn sample_timeline() -> Timeline {
