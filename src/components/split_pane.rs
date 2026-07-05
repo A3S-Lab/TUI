@@ -173,7 +173,7 @@ impl SplitPane {
 
         let mut left = BoxElement::new()
             .direction(FlexDirection::Column)
-            .width(Dimension::Percent(self.left_ratio * 100.0));
+            .width(self.left_dimension_for_element());
         if let Some(title) = self.left_title.as_deref().filter(|title| !title.is_empty()) {
             left = left.child(Element::Text(
                 TextElement::new(title).fg(self.pane_title_color).bold(),
@@ -330,6 +330,12 @@ impl SplitPane {
 
         (left, right, separator)
     }
+
+    fn left_dimension_for_element(&self) -> Dimension {
+        self.left_width
+            .map(|width| Dimension::Points(width.clamp(1, MAX_SPLIT_PANE_LEFT_WIDTH) as f32))
+            .unwrap_or_else(|| Dimension::Percent(self.left_ratio * 100.0))
+    }
 }
 
 impl Default for SplitPane {
@@ -442,5 +448,25 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_uses_fixed_left_width_when_configured() {
+        let el: Element<()> = SplitPane::new(vec!["left"], vec!["right"])
+            .left_ratio(0.9)
+            .left_width(12)
+            .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row body");
+        };
+        let Element::Box(left) = &row.children[0] else {
+            panic!("expected left pane");
+        };
+
+        assert_eq!(left.style.width, Dimension::Points(12.0));
     }
 }
