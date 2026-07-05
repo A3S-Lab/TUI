@@ -64,7 +64,7 @@ impl SubagentTracker {
     }
 
     pub fn max_running_rows(mut self, max_running_rows: usize) -> Self {
-        self.max_running_rows = max_running_rows.min(MAX_SUBAGENT_RUNNING_ROWS);
+        self.max_running_rows = max_running_rows.clamp(1, MAX_SUBAGENT_RUNNING_ROWS);
         self
     }
 
@@ -673,6 +673,26 @@ mod tests {
         assert_eq!(tracker.max_running_rows, MAX_SUBAGENT_RUNNING_ROWS);
         assert_eq!(tracker.running_rows().len(), 2);
         assert!(view.lines().all(|line| visible_len(line) == 40));
+    }
+
+    #[test]
+    fn zero_running_row_limit_keeps_one_row_visible() {
+        let tracker = SubagentTracker::new("many")
+            .max_running_rows(0)
+            .row(SubagentRow::new("one", "first"))
+            .row(SubagentRow::new("two", "second"));
+        let view = tracker.view(40);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(tracker.max_running_rows, 1);
+        assert_eq!(tracker.running_rows().len(), 1);
+        assert!(plain.contains("one  first"));
+        assert!(!plain.contains("two  second"));
+
+        let Element::Box(column) = tracker.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 2);
     }
 
     #[test]
