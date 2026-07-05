@@ -1,5 +1,5 @@
 use crate::element::{BorderStyle, BoxElement, Element, TextElement};
-use crate::style::Color;
+use crate::style::{Color, Style};
 
 pub struct Badge {
     label: String,
@@ -19,6 +19,13 @@ impl Badge {
         self
     }
 
+    pub fn view(&self) -> String {
+        Style::new()
+            .fg(self.color)
+            .bold()
+            .render(&format!("[{}]", self.label))
+    }
+
     pub fn element<Msg>(&self) -> Element<Msg> {
         Element::Box(
             BoxElement::new()
@@ -34,6 +41,7 @@ impl Badge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::strip_ansi;
 
     #[test]
     fn badge_default_color() {
@@ -55,5 +63,13 @@ mod tests {
             Element::Box(b) => assert_eq!(b.children.len(), 1),
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn badge_view_renders_colored_label() {
+        let rendered = Badge::new("sem").color(Color::Green).view();
+
+        assert_eq!(strip_ansi(&rendered), "[sem]");
+        assert!(rendered.contains("\x1b[1;32m[sem]\x1b[0m"));
     }
 }
