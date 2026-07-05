@@ -108,11 +108,11 @@ impl ToastManager {
 
     /// Number of currently visible toasts.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len().min(self.max_visible)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
     }
 
     /// Clear all toasts.
@@ -216,5 +216,33 @@ mod tests {
             panic!("expected column");
         };
         assert_eq!(column.children.len(), 2);
+    }
+
+    #[test]
+    fn len_counts_visible_toasts() {
+        let mut tm = ToastManager::new().with_max_visible(1);
+        tm.push(ToastKind::Info, "one");
+        tm.push(ToastKind::Info, "two");
+
+        assert_eq!(tm.len(), 1);
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 1);
+    }
+
+    #[test]
+    fn zero_visible_toasts_is_empty_for_rendering() {
+        let mut tm = ToastManager::new().with_max_visible(0);
+        tm.push(ToastKind::Info, "hidden");
+
+        assert_eq!(tm.len(), 0);
+        assert!(tm.is_empty());
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
     }
 }
