@@ -52,9 +52,10 @@ pub struct ChipStrip {
 
 impl ChipStrip {
     pub fn new(chips: Vec<Chip>) -> Self {
+        let active = (!chips.is_empty()).then_some(0);
         Self {
             chips,
-            active: Some(0),
+            active,
             margin: 2,
             gap: 1,
             active_fg: Color::Black,
@@ -270,6 +271,7 @@ mod tests {
     fn empty_strip_renders_no_text() {
         let strip = ChipStrip::new(Vec::new());
 
+        assert_eq!(strip.active_value(), None);
         assert_eq!(strip.view(80), "");
         assert!(matches!(strip.element::<()>(), Element::Box(_)));
     }
