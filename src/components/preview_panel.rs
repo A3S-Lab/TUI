@@ -280,37 +280,40 @@ impl PreviewPanel {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn selected_item(&self) -> Option<&PreviewItem> {
-        self.items.get(self.selected)
+        self.items.get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<PreviewPanelMsg> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < self.items.len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.items.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::PageUp => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = self.selected.saturating_sub(step);
+                self.selected = self.normalized_selected().saturating_sub(step);
                 self.keep_selected_visible(step);
                 None
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
                 self.selected = self
-                    .selected
+                    .normalized_selected()
                     .saturating_add(step)
                     .min(self.items.len().saturating_sub(1));
                 self.keep_selected_visible(step);
@@ -327,10 +330,12 @@ impl PreviewPanel {
                 None
             }
             KeyCode::Enter => {
-                if self.items.is_empty() || self.items[self.selected].disabled {
+                let selected = self.normalized_selected();
+                let item = self.items.get(selected)?;
+                if item.disabled {
                     None
                 } else {
-                    Some(PreviewPanelMsg::Selected(self.selected))
+                    Some(PreviewPanelMsg::Selected(selected))
                 }
             }
             KeyCode::Esc => Some(PreviewPanelMsg::Cancelled),
@@ -401,9 +406,10 @@ impl PreviewPanel {
             ));
         }
 
+        let selected = self.normalized_selected();
         for (index, item) in self.items.iter().enumerate() {
             let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == self.selected {
+            if index == selected {
                 text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
             } else if item.disabled {
                 text = text.fg(self.disabled_color);
@@ -502,7 +508,7 @@ impl PreviewPanel {
     fn render_item(&self, index: usize, width: usize) -> String {
         let raw = fit_visible(&self.plain_item_line(index, Some(width)), width);
         let item = &self.items[index];
-        if index == self.selected {
+        if index == self.normalized_selected() {
             Style::new()
                 .fg(self.selected_fg)
                 .bg(self.selected_bg)
@@ -520,7 +526,7 @@ impl PreviewPanel {
         let Some(item) = self.items.get(index) else {
             return String::new();
         };
-        let marker = if index == self.selected {
+        let marker = if index == self.normalized_selected() {
             self.marker.as_str()
         } else {
             " "
@@ -571,10 +577,11 @@ impl PreviewPanel {
         }
         let max_start = self.items.len().saturating_sub(visible_items);
         let mut start = self.scroll.min(max_start);
-        if self.selected < start {
-            start = self.selected;
-        } else if self.selected >= start + visible_items {
-            start = self.selected + 1 - visible_items;
+        let selected = self.normalized_selected();
+        if selected < start {
+            start = selected;
+        } else if selected >= start + visible_items {
+            start = selected + 1 - visible_items;
         }
         start.min(max_start)
     }
@@ -610,7 +617,11 @@ impl PreviewPanel {
     }
 
     fn clamp_selection(&mut self) {
-        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.selected = self.normalized_selected();
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.items.len().saturating_sub(1))
     }
 
     fn indent_for_width(&self, width: usize) -> usize {
@@ -787,6 +798,51 @@ mod tests {
         assert_eq!(panel.handle_key(&page_down), None);
 
         assert_eq!(panel.selected_index(), panel.items_value().len() - 1);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_rendering_and_input() {
+        let mut panel = PreviewPanel::new("Theme")
+            .max_items(1)
+            .item(PreviewItem::new("one"))
+            .item(PreviewItem::new("two"))
+            .preview_line("sample");
+        panel.selected = usize::MAX;
+
+        assert_eq!(panel.selected_index(), 1);
+        assert_eq!(panel.selected_item().map(PreviewItem::label), Some("two"));
+
+        let enter = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&enter), Some(PreviewPanelMsg::Selected(1)));
+
+        let plain = strip_ansi(&panel.view(24, 5));
+        assert!(plain.contains("▸ two"));
+        assert!(!plain.contains("▸ one"));
+
+        let Element::Box(box_el) = panel.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = &box_el.children[2] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(last_item.content, "  ▸ two");
+
+        let down = KeyEvent {
+            code: KeyCode::Down,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&down), None);
+        assert_eq!(panel.selected_index(), 1);
+
+        let up = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&up), None);
+        assert_eq!(panel.selected_index(), 0);
     }
 
     #[test]
