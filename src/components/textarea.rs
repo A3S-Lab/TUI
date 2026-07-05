@@ -137,6 +137,7 @@ impl Textarea {
         if !self.focused {
             return None;
         }
+        self.clamp_cursor();
 
         let result = match (key.code, key.modifiers) {
             (KeyCode::Enter, KeyModifiers::NONE) if self.submit_on_enter => {
@@ -241,13 +242,14 @@ impl Textarea {
             return format!("\x1b[2m{}\x1b[0m", self.placeholder);
         }
 
+        let (cursor_row, _) = self.normalized_cursor();
         let (start, end) = self.visible_range();
         let visible = &self.lines[start..end];
 
         let mut result = Vec::new();
         for (i, line) in visible.iter().enumerate() {
             let row = start + i;
-            if row == self.cursor_row && self.focused {
+            if row == cursor_row && self.focused {
                 result.push(self.render_line_with_cursor(line));
             } else {
                 result.push(line.clone());
@@ -275,14 +277,10 @@ impl Textarea {
 
     /// Absolute display column of the insertion point within its line.
     fn cursor_display_col_abs(&self) -> usize {
+        let (cursor_row, cursor_col) = self.normalized_cursor();
         self.lines
-            .get(self.cursor_row)
-            .map(|line| {
-                line.chars()
-                    .take(self.cursor_col)
-                    .map(Self::char_width)
-                    .sum()
-            })
+            .get(cursor_row)
+            .map(|line| line.chars().take(cursor_col).map(Self::char_width).sum())
             .unwrap_or(0)
     }
 
@@ -296,7 +294,8 @@ impl Textarea {
     /// The cursor's row within the visible window (for multi-line input — the
     /// host places the real terminal cursor on this row).
     pub fn cursor_row(&self) -> usize {
-        self.cursor_row.saturating_sub(self.offset)
+        let (cursor_row, _) = self.normalized_cursor();
+        cursor_row.saturating_sub(self.normalized_offset())
     }
 
     /// Render the cursor's line as plain (horizontally scrolled) text; the real
@@ -356,6 +355,7 @@ impl Textarea {
     /// Insert a (possibly multi-line) string at the cursor — used for paste, so
     /// newlines become real line breaks instead of submitting the message.
     pub fn insert_str(&mut self, text: &str) {
+        self.clamp_cursor();
         for ch in text.chars() {
             match ch {
                 '\r' => {} // drop CR so CRLF pastes don't double-break
@@ -479,6 +479,7 @@ impl Textarea {
     }
 
     fn ensure_visible(&mut self) {
+        self.clamp_cursor();
         let h = self.height as usize;
         if h == 0 {
             self.offset = 0;
@@ -498,10 +499,37 @@ impl Textarea {
             return (0, 0);
         }
 
-        let max_offset = self.lines.len().saturating_sub(h);
-        let start = self.offset.min(max_offset);
+        let start = self.normalized_offset();
         let end = start.saturating_add(h).min(self.lines.len());
         (start, end)
+    }
+
+    fn normalized_cursor(&self) -> (usize, usize) {
+        let cursor_row = self.cursor_row.min(self.lines.len().saturating_sub(1));
+        let cursor_col = self
+            .lines
+            .get(cursor_row)
+            .map(|line| self.cursor_col.min(Self::char_len(line)))
+            .unwrap_or(0);
+        (cursor_row, cursor_col)
+    }
+
+    fn clamp_cursor(&mut self) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        let (cursor_row, cursor_col) = self.normalized_cursor();
+        self.cursor_row = cursor_row;
+        self.cursor_col = cursor_col;
+    }
+
+    fn normalized_offset(&self) -> usize {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        self.offset.min(self.lines.len().saturating_sub(h))
     }
 }
 
@@ -842,6 +870,54 @@ mod tests {
             panic!("expected first textarea line");
         };
         assert_eq!(first.content, "short");
+    }
+
+    #[test]
+    fn editing_normalizes_stale_cursor() {
+        let mut ta = Textarea::new();
+        ta.set_value("one\ntwo");
+        ta.cursor_row = usize::MAX;
+        ta.cursor_col = usize::MAX;
+
+        ta.handle_key(&key(KeyCode::Char('!')));
+
+        assert_eq!(ta.value(), "one\ntwo!");
+        assert_eq!(ta.cursor_row, 1);
+        assert_eq!(ta.cursor_col, 4);
+    }
+
+    #[test]
+    fn insert_str_normalizes_stale_cursor() {
+        let mut ta = Textarea::new();
+        ta.set_value("one\ntwo");
+        ta.cursor_row = usize::MAX;
+        ta.cursor_col = usize::MAX;
+
+        ta.insert_str("!");
+
+        assert_eq!(ta.value(), "one\ntwo!");
+        assert_eq!(ta.cursor_row, 1);
+        assert_eq!(ta.cursor_col, 4);
+    }
+
+    #[test]
+    fn rendering_normalizes_stale_cursor() {
+        let mut ta = Textarea::new().with_height(2);
+        ta.set_value("one\ntwo");
+        ta.cursor_row = usize::MAX;
+        ta.cursor_col = usize::MAX;
+
+        assert_eq!(ta.cursor_row(), 1);
+        assert_eq!(ta.cursor_display_col(), 3);
+        assert_eq!(ta.view(), "one\ntwo");
+
+        let Element::Box(box_el) = ta.element::<()>() else {
+            panic!("expected textarea element box");
+        };
+        let Element::Text(last) = &box_el.children[1] else {
+            panic!("expected textarea text line");
+        };
+        assert_eq!(last.content, "two");
     }
 
     #[test]
