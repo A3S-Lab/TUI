@@ -95,9 +95,12 @@ impl TextInput {
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
-                    self.cursor -= 1;
-                    let offset = Self::byte_off(&self.value, self.cursor);
-                    self.value.remove(offset);
+                    let chars = self.value_chars();
+                    let (start, end) = previous_cursor_span(&chars, self.cursor);
+                    let start_offset = Self::byte_off(&self.value, start);
+                    let end_offset = Self::byte_off(&self.value, end);
+                    self.value.replace_range(start_offset..end_offset, "");
+                    self.cursor = start;
                     Some(TextInputMsg::Changed(self.value.clone()))
                 } else {
                     None
@@ -105,19 +108,25 @@ impl TextInput {
             }
             KeyCode::Delete => {
                 if self.cursor < Self::char_len(&self.value) {
-                    let offset = Self::byte_off(&self.value, self.cursor);
-                    self.value.remove(offset);
+                    let chars = self.value_chars();
+                    let (start, end) = cursor_span(&chars, self.cursor);
+                    let start_offset = Self::byte_off(&self.value, start);
+                    let end_offset = Self::byte_off(&self.value, end);
+                    self.value.replace_range(start_offset..end_offset, "");
+                    self.cursor = start;
                     Some(TextInputMsg::Changed(self.value.clone()))
                 } else {
                     None
                 }
             }
             KeyCode::Left => {
-                self.cursor = self.cursor.saturating_sub(1);
+                let chars = self.value_chars();
+                self.cursor = previous_cursor_span(&chars, self.cursor).0;
                 None
             }
             KeyCode::Right => {
-                self.cursor = (self.cursor + 1).min(Self::char_len(&self.value));
+                let chars = self.value_chars();
+                self.cursor = cursor_span(&chars, self.cursor).1;
                 None
             }
             KeyCode::Home => {
@@ -148,8 +157,12 @@ impl TextInput {
         if let Some(mask) = self.mask_char {
             vec![mask; Self::char_len(&self.value)]
         } else {
-            self.value.chars().collect()
+            self.value_chars()
         }
+    }
+
+    fn value_chars(&self) -> Vec<char> {
+        self.value.chars().collect()
     }
 
     pub fn view(&self) -> String {
@@ -162,13 +175,15 @@ impl TextInput {
 
         let display_chars = self.display_chars();
         let cursor = self.cursor.min(display_chars.len());
-        let cursor_end = cursor_span_end(&display_chars, cursor);
+        let (cursor_start, cursor_end) = cursor_span(&display_chars, cursor);
 
         for (i, &ch) in display_chars.iter().enumerate() {
-            if self.focused && i == cursor && cursor < display_chars.len() {
-                let cursor_text = display_chars[cursor..cursor_end].iter().collect::<String>();
+            if self.focused && i == cursor_start && cursor_start < display_chars.len() {
+                let cursor_text = display_chars[cursor_start..cursor_end]
+                    .iter()
+                    .collect::<String>();
                 out.push_str(&format!("\x1b[7m{}\x1b[0m", cursor_text));
-            } else if !(self.focused && i > cursor && i < cursor_end) {
+            } else if !(self.focused && i > cursor_start && i < cursor_end) {
                 out.push(ch);
             }
         }
@@ -192,15 +207,17 @@ impl TextInput {
             children.push(Element::Text(TextElement::new(self.prefix.clone())));
         }
 
-        let before = display_chars.iter().take(cursor).collect::<String>();
+        let (cursor_start, cursor_end) = cursor_span(&display_chars, cursor);
+        let before = display_chars.iter().take(cursor_start).collect::<String>();
         if !before.is_empty() {
             children.push(Element::Text(TextElement::new(before)));
         }
 
         if self.focused {
-            let cursor_end = cursor_span_end(&display_chars, cursor);
-            let cursor_text = if cursor < display_chars.len() {
-                display_chars[cursor..cursor_end].iter().collect::<String>()
+            let cursor_text = if cursor_start < display_chars.len() {
+                display_chars[cursor_start..cursor_end]
+                    .iter()
+                    .collect::<String>()
             } else {
                 " ".to_string()
             };
@@ -224,16 +241,30 @@ impl TextInput {
     }
 }
 
-fn cursor_span_end(chars: &[char], cursor: usize) -> usize {
+fn cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
     if cursor >= chars.len() {
-        return cursor;
+        return (cursor, cursor);
     }
 
-    let mut end = cursor + 1;
+    let mut start = cursor;
+    while start > 0 && UnicodeWidthChar::width(chars[start]).unwrap_or(0) == 0 {
+        start -= 1;
+    }
+
+    let mut end = start + 1;
     while end < chars.len() && UnicodeWidthChar::width(chars[end]).unwrap_or(0) == 0 {
         end += 1;
     }
-    end
+    (start, end)
+}
+
+fn previous_cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor == 0 || chars.is_empty() {
+        return (0, 0);
+    }
+
+    let start = cursor.saturating_sub(1).min(chars.len() - 1);
+    cursor_span(chars, start)
 }
 
 impl Default for TextInput {
@@ -392,6 +423,64 @@ mod tests {
         };
         assert_eq!(cursor.content, "e\u{301}");
         assert!(cursor.style.reverse);
+    }
+
+    #[test]
+    fn cursor_inside_zero_width_span_styles_base_glyph() {
+        let mut input = TextInput::new();
+        input.set_value("e\u{301}x");
+        input.cursor = 1;
+
+        assert_eq!(input.cursor, 1);
+        assert_eq!(crate::style::strip_ansi(&input.view()), "e\u{301}x");
+        assert!(input.view().contains("\x1b[7me\u{301}\x1b[0mx"));
+
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(cursor) = &row.children[0] else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, "e\u{301}");
+        assert!(cursor.style.reverse);
+    }
+
+    #[test]
+    fn cursor_movement_skips_zero_width_marks() {
+        let mut input = TextInput::new();
+        input.set_value("e\u{301}x");
+        input.handle_key(&key(KeyCode::Home));
+
+        input.handle_key(&key(KeyCode::Right));
+        assert_eq!(input.cursor, 2);
+        assert!(input.view().contains("e\u{301}\x1b[7mx\x1b[0m"));
+
+        input.handle_key(&key(KeyCode::Right));
+        assert_eq!(input.cursor, 3);
+
+        input.handle_key(&key(KeyCode::Left));
+        assert_eq!(input.cursor, 2);
+        input.handle_key(&key(KeyCode::Left));
+        assert_eq!(input.cursor, 0);
+    }
+
+    #[test]
+    fn edit_keys_remove_zero_width_span_with_base_glyph() {
+        let mut input = TextInput::new();
+        input.set_value("e\u{301}x");
+        input.handle_key(&key(KeyCode::Home));
+        input.handle_key(&key(KeyCode::Delete));
+
+        assert_eq!(input.value(), "x");
+        assert_eq!(input.cursor, 0);
+
+        input.set_value("e\u{301}x");
+        input.handle_key(&key(KeyCode::Home));
+        input.handle_key(&key(KeyCode::Right));
+        input.handle_key(&key(KeyCode::Backspace));
+
+        assert_eq!(input.value(), "x");
+        assert_eq!(input.cursor, 0);
     }
 
     #[test]
