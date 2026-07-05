@@ -237,7 +237,7 @@ impl ToolLogView {
             ));
         } else {
             let rows = self.plain_rows();
-            let scroll = self.normalized_scroll_for_len(rows.len());
+            let scroll = self.normalized_scroll_for_window(rows.len(), height);
             let visible = rows.into_iter().skip(scroll).take(height);
             for row in visible {
                 children.push(row.element(
@@ -281,7 +281,7 @@ impl ToolLogView {
 
         let available = height.saturating_sub(lines.len());
         let rows = self.plain_rows();
-        let scroll = self.normalized_scroll_for_len(rows.len());
+        let scroll = self.normalized_scroll_for_window(rows.len(), available);
         for row in rows.into_iter().skip(scroll).take(available) {
             lines.push(row.render(
                 width,
@@ -334,6 +334,15 @@ impl ToolLogView {
 
     fn normalized_scroll_for_len(&self, row_count: usize) -> usize {
         self.scroll.min(row_count.saturating_sub(1))
+    }
+
+    fn normalized_scroll_for_window(&self, row_count: usize, window_height: usize) -> usize {
+        if row_count == 0 || window_height == 0 {
+            return 0;
+        }
+
+        self.scroll
+            .min(row_count.saturating_sub(window_height.min(row_count)))
     }
 
     fn clamp_scroll(&mut self) {
@@ -523,11 +532,12 @@ mod tests {
     }
 
     #[test]
-    fn scroll_past_rows_clamps_to_last_row() {
+    fn scroll_past_rows_clamps_to_visible_tail_window() {
         let rendered = sample().scroll(usize::MAX).view(40, 3);
         let plain = strip_ansi(&rendered);
 
         assert!(plain.contains("#2 · bash · exit 2"));
+        assert_eq!(rendered.lines().count(), 3);
     }
 
     #[test]
@@ -554,6 +564,7 @@ mod tests {
 
         assert!(plain.contains("#2 · bash · exit 2"));
         assert!(!plain.contains("#1 · read"));
+        assert_eq!(rendered.lines().count(), 3);
     }
 
     #[test]
@@ -566,6 +577,10 @@ mod tests {
 
         assert!(text.contains("#2 · bash · exit 2"));
         assert!(!text.contains("#1 · read"));
+        match element {
+            Element::Box(column) => assert_eq!(column.children.len(), 3),
+            _ => panic!("expected Box"),
+        }
     }
 
     #[test]
