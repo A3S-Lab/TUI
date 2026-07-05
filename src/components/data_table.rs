@@ -267,8 +267,9 @@ impl DataTable {
                 .len()
                 .saturating_sub(body_height.min(self.rows.len())),
         );
+        let selected_row = self.normalized_selected();
         for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
-            let selected = self.selected == Some(idx);
+            let selected = selected_row == Some(idx);
             let raw = self.row_line(row, &cols, &widths, selected, &gap_text);
             let line = fit_visible(&raw, width);
             let mut style = Style::new();
@@ -425,6 +426,12 @@ impl DataTable {
     fn gap_total_for_width(&self, width: usize, column_count: usize) -> usize {
         self.gap_for_width(width, column_count)
             .saturating_mul(column_count.saturating_sub(1))
+    }
+
+    fn normalized_selected(&self) -> Option<usize> {
+        self.selected
+            .map(|selected| selected.min(self.rows.len().saturating_sub(1)))
+            .filter(|_| !self.rows.is_empty())
     }
 }
 
@@ -638,6 +645,19 @@ mod tests {
         let rendered = table.view(16, 4);
 
         assert!(!rendered.contains("\x1b[31m"));
+    }
+
+    #[test]
+    fn stale_selected_row_is_clamped_during_rendering() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]).selected(Color::White, Color::Red))
+            .selected(Some(usize::MAX));
+
+        let rendered = table.view(12, 4);
+
+        assert!(rendered.contains("\x1b[1;37;41m"));
+        assert!(strip_ansi(&rendered).contains("two"));
     }
 
     #[test]
