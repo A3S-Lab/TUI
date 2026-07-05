@@ -668,6 +668,32 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
     Some((end, width))
 }
 
+pub(crate) fn display_cell_char_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor >= chars.len() {
+        return (cursor, cursor);
+    }
+
+    let mut start = cursor;
+    while start > 0 && UnicodeWidthChar::width(chars[start]).unwrap_or(0) == 0 {
+        start -= 1;
+    }
+
+    let mut end = start + 1;
+    while end < chars.len() && UnicodeWidthChar::width(chars[end]).unwrap_or(0) == 0 {
+        end += 1;
+    }
+    (start, end)
+}
+
+pub(crate) fn previous_display_cell_char_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor == 0 || chars.is_empty() {
+        return (0, 0);
+    }
+
+    let start = cursor.saturating_sub(1).min(chars.len() - 1);
+    display_cell_char_span(chars, start)
+}
+
 fn starts_ansi_csi_at(value: &str, index: usize) -> bool {
     value
         .get(index..)
@@ -1038,6 +1064,25 @@ mod tests {
     fn slices_visible_columns_keep_zero_width_marks_with_base_glyph() {
         assert_eq!(slice_visible_cols("e\u{301}x", 0, 1), "e\u{301}");
         assert_eq!(slice_visible_cols("e\u{301}x", 1, 2), "x");
+    }
+
+    #[test]
+    fn display_cell_char_span_keeps_zero_width_marks_with_base_glyph() {
+        let chars = "e\u{301}x".chars().collect::<Vec<_>>();
+
+        assert_eq!(display_cell_char_span(&chars, 0), (0, 2));
+        assert_eq!(display_cell_char_span(&chars, 1), (0, 2));
+        assert_eq!(display_cell_char_span(&chars, 2), (2, 3));
+        assert_eq!(display_cell_char_span(&chars, 3), (3, 3));
+    }
+
+    #[test]
+    fn previous_display_cell_char_span_keeps_zero_width_marks_with_base_glyph() {
+        let chars = "e\u{301}x".chars().collect::<Vec<_>>();
+
+        assert_eq!(previous_display_cell_char_span(&chars, 0), (0, 0));
+        assert_eq!(previous_display_cell_char_span(&chars, 2), (0, 2));
+        assert_eq!(previous_display_cell_char_span(&chars, 3), (2, 3));
     }
 
     #[test]

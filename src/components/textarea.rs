@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
-use crate::style::{next_display_cell_boundary, Color};
+use crate::style::{
+    display_cell_char_span, next_display_cell_boundary, previous_display_cell_char_span, Color,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub struct Textarea {
@@ -396,7 +398,7 @@ impl Textarea {
     fn delete_backward(&mut self) -> bool {
         if self.cursor_col > 0 {
             let chars = line_chars(&self.lines[self.cursor_row]);
-            let (start, end) = previous_cursor_span(&chars, self.cursor_col);
+            let (start, end) = previous_display_cell_char_span(&chars, self.cursor_col);
             let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
             let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
             self.lines[self.cursor_row].replace_range(start_off..end_off, "");
@@ -417,7 +419,7 @@ impl Textarea {
     fn delete_forward(&mut self) -> bool {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
             let chars = line_chars(&self.lines[self.cursor_row]);
-            let (start, end) = cursor_span(&chars, self.cursor_col);
+            let (start, end) = display_cell_char_span(&chars, self.cursor_col);
             let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
             let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
             self.lines[self.cursor_row].replace_range(start_off..end_off, "");
@@ -435,7 +437,7 @@ impl Textarea {
     fn move_left(&mut self) {
         if self.cursor_col > 0 {
             let chars = line_chars(&self.lines[self.cursor_row]);
-            self.cursor_col = previous_cursor_span(&chars, self.cursor_col).0;
+            self.cursor_col = previous_display_cell_char_span(&chars, self.cursor_col).0;
         } else if self.cursor_row > 0 {
             self.cursor_row -= 1;
             self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
@@ -446,7 +448,7 @@ impl Textarea {
     fn move_right(&mut self) {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
             let chars = line_chars(&self.lines[self.cursor_row]);
-            self.cursor_col = cursor_span(&chars, self.cursor_col).1;
+            self.cursor_col = display_cell_char_span(&chars, self.cursor_col).1;
         } else if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
             self.cursor_col = 0;
@@ -558,32 +560,6 @@ fn clamp_lines_to_char_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
 
 fn line_chars(line: &str) -> Vec<char> {
     line.chars().collect()
-}
-
-fn cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
-    if cursor >= chars.len() {
-        return (cursor, cursor);
-    }
-
-    let mut start = cursor;
-    while start > 0 && Textarea::char_width(chars[start]) == 0 {
-        start -= 1;
-    }
-
-    let mut end = start + 1;
-    while end < chars.len() && Textarea::char_width(chars[end]) == 0 {
-        end += 1;
-    }
-    (start, end)
-}
-
-fn previous_cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
-    if cursor == 0 || chars.is_empty() {
-        return (0, 0);
-    }
-
-    let start = cursor.saturating_sub(1).min(chars.len() - 1);
-    cursor_span(chars, start)
 }
 
 impl Default for Textarea {

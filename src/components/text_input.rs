@@ -1,8 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
-use crate::style::Color;
+use crate::style::{display_cell_char_span, previous_display_cell_char_span, Color};
 use crossterm::event::KeyCode;
-use unicode_width::UnicodeWidthChar;
 
 pub struct TextInput {
     value: String,
@@ -96,7 +95,7 @@ impl TextInput {
             KeyCode::Backspace => {
                 if self.cursor > 0 {
                     let chars = self.value_chars();
-                    let (start, end) = previous_cursor_span(&chars, self.cursor);
+                    let (start, end) = previous_display_cell_char_span(&chars, self.cursor);
                     let start_offset = Self::byte_off(&self.value, start);
                     let end_offset = Self::byte_off(&self.value, end);
                     self.value.replace_range(start_offset..end_offset, "");
@@ -109,7 +108,7 @@ impl TextInput {
             KeyCode::Delete => {
                 if self.cursor < Self::char_len(&self.value) {
                     let chars = self.value_chars();
-                    let (start, end) = cursor_span(&chars, self.cursor);
+                    let (start, end) = display_cell_char_span(&chars, self.cursor);
                     let start_offset = Self::byte_off(&self.value, start);
                     let end_offset = Self::byte_off(&self.value, end);
                     self.value.replace_range(start_offset..end_offset, "");
@@ -121,12 +120,12 @@ impl TextInput {
             }
             KeyCode::Left => {
                 let chars = self.value_chars();
-                self.cursor = previous_cursor_span(&chars, self.cursor).0;
+                self.cursor = previous_display_cell_char_span(&chars, self.cursor).0;
                 None
             }
             KeyCode::Right => {
                 let chars = self.value_chars();
-                self.cursor = cursor_span(&chars, self.cursor).1;
+                self.cursor = display_cell_char_span(&chars, self.cursor).1;
                 None
             }
             KeyCode::Home => {
@@ -175,7 +174,7 @@ impl TextInput {
 
         let display_chars = self.display_chars();
         let cursor = self.cursor.min(display_chars.len());
-        let (cursor_start, cursor_end) = cursor_span(&display_chars, cursor);
+        let (cursor_start, cursor_end) = display_cell_char_span(&display_chars, cursor);
 
         for (i, &ch) in display_chars.iter().enumerate() {
             if self.focused && i == cursor_start && cursor_start < display_chars.len() {
@@ -207,7 +206,7 @@ impl TextInput {
             children.push(Element::Text(TextElement::new(self.prefix.clone())));
         }
 
-        let (cursor_start, cursor_end) = cursor_span(&display_chars, cursor);
+        let (cursor_start, cursor_end) = display_cell_char_span(&display_chars, cursor);
         let before = display_chars.iter().take(cursor_start).collect::<String>();
         if !before.is_empty() {
             children.push(Element::Text(TextElement::new(before)));
@@ -239,32 +238,6 @@ impl TextInput {
                 .children(children),
         )
     }
-}
-
-fn cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
-    if cursor >= chars.len() {
-        return (cursor, cursor);
-    }
-
-    let mut start = cursor;
-    while start > 0 && UnicodeWidthChar::width(chars[start]).unwrap_or(0) == 0 {
-        start -= 1;
-    }
-
-    let mut end = start + 1;
-    while end < chars.len() && UnicodeWidthChar::width(chars[end]).unwrap_or(0) == 0 {
-        end += 1;
-    }
-    (start, end)
-}
-
-fn previous_cursor_span(chars: &[char], cursor: usize) -> (usize, usize) {
-    if cursor == 0 || chars.is_empty() {
-        return (0, 0);
-    }
-
-    let start = cursor.saturating_sub(1).min(chars.len() - 1);
-    cursor_span(chars, start)
 }
 
 impl Default for TextInput {
