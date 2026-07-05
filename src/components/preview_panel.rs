@@ -345,6 +345,21 @@ impl PreviewPanel {
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<PreviewPanelMsg> {
         match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                self.selected = self.normalized_selected().saturating_sub(1);
+                self.keep_selected_visible(1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                let selected = self.normalized_selected();
+                self.selected = selected
+                    .saturating_add(1)
+                    .min(self.items.len().saturating_sub(1));
+                self.keep_selected_visible(1);
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let item_row = local_row.checked_sub(self.item_start_row())?;
@@ -854,6 +869,49 @@ mod tests {
 
         let msg = panel.handle_mouse(&MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 1);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_preview_item() {
+        let mut panel = sample();
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 2,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 2);
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 0,
+                row: 2,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 1);
+    }
+
+    #[test]
+    fn mouse_wheel_above_offset_is_ignored() {
+        let mut panel = sample();
+        panel.set_y_offset(4);
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
             column: 0,
             row: 3,
             modifiers: crossterm::event::KeyModifiers::NONE,

@@ -140,7 +140,7 @@ Run with `cargo run --example counter_element`.
 | `OutputBlock` | Status-marked transcript/output block with tail preview and styled detail support |
 | `PanelFrame` | Fixed-size titled panel frame with focus-aware borders |
 | `Paragraph` | Width-aware paragraph wrapping with string and Element rendering |
-| `PreviewPanel` | Selectable item list with a live preview section |
+| `PreviewPanel` | Selectable item list with live preview plus click and wheel handling |
 | `Progress` | Progress bar |
 | `PromptLine` | Prompt-prefixed input text with aligned continuation rows |
 | `Scrollbar` | Scrollbar indicator with offset, percent, and append-to-view rendering |
