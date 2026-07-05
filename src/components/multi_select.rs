@@ -139,19 +139,13 @@ impl MultiSelect {
         }
 
         let cursor = self.normalized_cursor();
-        let start = if self.items.len() <= height {
-            0
-        } else {
-            cursor
-                .saturating_sub(height - 1)
-                .min(self.items.len() - height)
-        };
+        let range = self.visible_range(height);
 
         self.items
             .iter()
             .enumerate()
-            .skip(start)
-            .take(height)
+            .skip(range.start)
+            .take(range.len())
             .map(|(idx, item)| {
                 let cursor_marker = if idx == cursor { ">" } else { " " };
                 let check = if self.is_checked(idx) { "[x]" } else { "[ ]" };
@@ -176,11 +170,18 @@ impl MultiSelect {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(self.items.len())
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
         let cursor = self.normalized_cursor();
+        let range = self.visible_range(height);
         let children: Vec<Element<Msg>> = self
             .items
             .iter()
             .enumerate()
+            .skip(range.start)
+            .take(range.len())
             .map(|(i, item)| {
                 let cursor_marker = if i == cursor { "▸" } else { " " };
                 let check = if self.is_checked(i) { "[x]" } else { "[ ]" };
@@ -205,6 +206,23 @@ impl MultiSelect {
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+
+    fn visible_range(&self, height: usize) -> std::ops::Range<usize> {
+        if height == 0 || self.items.is_empty() {
+            return 0..0;
+        }
+
+        let cursor = self.normalized_cursor();
+        let visible = height.min(self.items.len());
+        let start = if self.items.len() <= visible {
+            0
+        } else {
+            cursor
+                .saturating_sub(visible - 1)
+                .min(self.items.len() - visible)
+        };
+        start..start.saturating_add(visible).min(self.items.len())
     }
 }
 
@@ -360,6 +378,32 @@ mod tests {
 
         assert!(!plain.contains("one"));
         assert!(plain.contains("> [ ] four"));
+    }
+
+    #[test]
+    fn element_with_height_scrolls_to_cursor() {
+        let mut ms = MultiSelect::new(vec!["one", "two", "three", "four"])
+            .with_checked(vec![false, true, false, true])
+            .with_number_shortcuts();
+        ms.handle_key(&key(KeyCode::Down));
+        ms.handle_key(&key(KeyCode::Down));
+        ms.handle_key(&key(KeyCode::Down));
+
+        let Element::Box(column) = ms.element_with_height::<()>(2) else {
+            panic!("expected box element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("  3 [ ] three"));
+        assert!(text.contains("▸ 4 [x] four"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("two"));
     }
 
     #[test]
