@@ -603,20 +603,24 @@ impl TabbedMenuPanel {
     }
 
     fn move_tab_left(&mut self) -> Option<TabbedMenuPanelMsg> {
-        if self.active_tab == 0 {
+        let active = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        if active == 0 {
+            self.active_tab = active;
             return None;
         }
-        self.active_tab -= 1;
+        self.active_tab = active - 1;
         self.selected = 0;
         self.scroll = 0;
         Some(TabbedMenuPanelMsg::TabChanged(self.active_tab))
     }
 
     fn move_tab_right(&mut self) -> Option<TabbedMenuPanelMsg> {
-        if self.active_tab + 1 >= self.tabs.len() {
+        let active = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        if active.saturating_add(1) >= self.tabs.len() {
+            self.active_tab = active;
             return None;
         }
-        self.active_tab += 1;
+        self.active_tab = active + 1;
         self.selected = 0;
         self.scroll = 0;
         Some(TabbedMenuPanelMsg::TabChanged(self.active_tab))
@@ -895,6 +899,22 @@ mod tests {
             panel.handle_key(&key(KeyCode::Esc)),
             Some(TabbedMenuPanelMsg::Cancelled)
         );
+    }
+
+    #[test]
+    fn stale_active_tab_index_is_clamped_during_navigation() {
+        let mut panel = sample();
+        panel.active_tab = usize::MAX;
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Right)), None);
+        assert_eq!(panel.active_tab_value(), 1);
+
+        assert_eq!(
+            panel.handle_key(&key(KeyCode::Left)),
+            Some(TabbedMenuPanelMsg::TabChanged(0))
+        );
+        assert_eq!(panel.active_tab_value(), 0);
+        assert_eq!(panel.selected_index(), 0);
     }
 
     #[test]
