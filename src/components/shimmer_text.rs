@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, TextElement};
-use crate::style::{strip_ansi, visible_len, Color, Style};
+use crate::style::{next_display_cell_boundary, strip_ansi, visible_len, Color, Style};
 
 const MAX_CYCLE_GAP: usize = isize::MAX as usize - 1;
 
@@ -78,20 +78,20 @@ impl ShimmerText {
     }
 
     pub fn view(&self) -> String {
-        self.styled_chars()
+        self.styled_glyphs()
             .into_iter()
             .map(|glyph| {
                 let mut style = Style::new().fg(glyph.color);
                 if glyph.bold {
                     style = style.bold();
                 }
-                style.render(&glyph.ch.to_string())
+                style.render(&glyph.text)
             })
             .collect()
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let glyphs = self.styled_chars();
+        let glyphs = self.styled_glyphs();
         if glyphs.is_empty() {
             return Element::Text(TextElement::new(""));
         }
@@ -101,7 +101,7 @@ impl ShimmerText {
                 glyphs
                     .into_iter()
                     .map(|glyph| {
-                        let mut text = TextElement::new(glyph.ch.to_string()).fg(glyph.color);
+                        let mut text = TextElement::new(glyph.text).fg(glyph.color);
                         if glyph.bold {
                             text = text.bold();
                         }
@@ -120,26 +120,27 @@ impl ShimmerText {
         visible_len(&self.plain())
     }
 
-    fn styled_chars(&self) -> Vec<ShimmerGlyph> {
-        let chars: Vec<char> = self.plain().chars().collect();
-        if chars.is_empty() {
+    fn styled_glyphs(&self) -> Vec<ShimmerGlyph> {
+        let plain = self.plain();
+        let glyphs = display_glyphs(&plain);
+        if glyphs.is_empty() {
             return Vec::new();
         }
 
-        let span = chars
+        let span = glyphs
             .len()
             .saturating_add(self.cycle_gap)
             .min(MAX_CYCLE_GAP);
         let head = ((self.phase / self.speed_divisor) % span) as isize;
 
-        chars
+        glyphs
             .into_iter()
             .enumerate()
-            .map(|(idx, ch)| {
+            .map(|(idx, text)| {
                 let distance = (head - idx as isize).abs() as f32;
                 let intensity = (1.0 - distance / self.spread).clamp(0.0, 1.0);
                 ShimmerGlyph {
-                    ch,
+                    text,
                     color: mix_color(self.base_color, self.highlight_color, intensity),
                     bold: intensity > self.bold_threshold,
                 }
@@ -148,11 +149,21 @@ impl ShimmerText {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ShimmerGlyph {
-    ch: char,
+    text: String,
     color: Color,
     bold: bool,
+}
+
+fn display_glyphs(value: &str) -> Vec<String> {
+    let mut index = 0;
+    let mut glyphs = Vec::new();
+    while let Some((end, _)) = next_display_cell_boundary(value, index) {
+        glyphs.push(value[index..end].to_string());
+        index = end;
+    }
+    glyphs
 }
 
 fn mix_color(base: Color, highlight: Color, intensity: f32) -> Color {
@@ -223,6 +234,43 @@ mod tests {
 
         assert_eq!(shimmer.visible_width(), 6);
         assert_eq!(strip_ansi(&shimmer.view()), "工作中");
+    }
+
+    #[test]
+    fn groups_combining_marks_with_base_glyph() {
+        let shimmer = ShimmerText::new("e\u{301}x")
+            .phase(0)
+            .speed_divisor(1)
+            .colors(Color::Rgb(0, 0, 0), Color::Rgb(100, 0, 0));
+        let rendered = shimmer.view();
+        let highlighted = Style::new()
+            .fg(Color::Rgb(100, 0, 0))
+            .bold()
+            .render("e\u{301}");
+
+        assert_eq!(strip_ansi(&rendered), "e\u{301}x");
+        assert_eq!(shimmer.visible_width(), 2);
+        assert!(rendered.contains(&highlighted), "{rendered:?}");
+
+        let element: Element<()> = shimmer.element();
+        match element {
+            Element::Box(row) => {
+                assert_eq!(row.children.len(), 2);
+                match &row.children[0] {
+                    Element::Text(text) => {
+                        assert_eq!(text.content, "e\u{301}");
+                        assert_eq!(text.style.fg, Some(Color::Rgb(100, 0, 0)));
+                        assert!(text.style.bold);
+                    }
+                    _ => panic!("expected text element"),
+                }
+                match &row.children[1] {
+                    Element::Text(text) => assert_eq!(text.content, "x"),
+                    _ => panic!("expected text element"),
+                }
+            }
+            _ => panic!("expected row element"),
+        }
     }
 
     #[test]
