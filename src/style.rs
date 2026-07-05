@@ -582,6 +582,10 @@ impl Style {
     }
 
     fn apply_text_style(&self, text: &str) -> String {
+        if text.is_empty() {
+            return String::new();
+        }
+
         let mut codes = Vec::new();
         if self.bold {
             codes.push("1".to_string());
@@ -1279,6 +1283,13 @@ mod tests {
             vec!["\x1b[44m \x1b[0m", "\x1b[44mx\x1b[0m", "\x1b[44m \x1b[0m"]
         );
         assert!(lines.iter().all(|line| visible_len(line) == 1));
+    }
+
+    #[test]
+    fn render_empty_styled_text_stays_empty() {
+        let out = Style::new().fg(Color::Red).bold().render("");
+
+        assert_eq!(out, "");
     }
 
     #[test]
