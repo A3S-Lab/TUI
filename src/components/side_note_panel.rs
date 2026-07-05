@@ -145,34 +145,27 @@ impl SideNotePanel {
 
     pub fn element<Msg>(&self, width: u16) -> Element<Msg> {
         let width = width as usize;
-        let mut children = Vec::new();
-        children.push(Element::Text(
-            TextElement::new(self.indented_for_width(&self.title, width))
-                .fg(self.title_color)
-                .bold(),
-        ));
+        let children = self.element_children(width);
 
-        if let Some(question) = self.question.as_deref() {
-            for row in self.wrap_prefixed("Q: ", question, width) {
-                children.push(Element::Text(
-                    TextElement::new(row).fg(self.question_color).bold(),
-                ));
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, width: u16, height: usize) -> Element<Msg> {
+        let width = width as usize;
+        if width == 0 || height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        let mut children = self.element_children(width);
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
             }
-        }
-
-        let body = self.answer.as_deref().unwrap_or(&self.loading_text);
-        for row in self
-            .wrap_prefixed("", body, width)
-            .into_iter()
-            .take(self.max_body_lines)
-        {
-            children.push(Element::Text(TextElement::new(row).fg(self.answer_color)));
-        }
-
-        if let Some(footer) = self.footer.as_deref() {
-            children.push(Element::Text(
-                TextElement::new(self.indented_for_width(footer, width)).fg(self.muted_color),
-            ));
         }
 
         Element::Box(
@@ -224,6 +217,40 @@ impl SideNotePanel {
         }
 
         lines
+    }
+
+    fn element_children<Msg>(&self, width: usize) -> Vec<Element<Msg>> {
+        let mut children = Vec::new();
+        children.push(Element::Text(
+            TextElement::new(self.indented_for_width(&self.title, width))
+                .fg(self.title_color)
+                .bold(),
+        ));
+
+        if let Some(question) = self.question.as_deref() {
+            for row in self.wrap_prefixed("Q: ", question, width) {
+                children.push(Element::Text(
+                    TextElement::new(row).fg(self.question_color).bold(),
+                ));
+            }
+        }
+
+        let body = self.answer.as_deref().unwrap_or(&self.loading_text);
+        for row in self
+            .wrap_prefixed("", body, width)
+            .into_iter()
+            .take(self.max_body_lines)
+        {
+            children.push(Element::Text(TextElement::new(row).fg(self.answer_color)));
+        }
+
+        if let Some(footer) = self.footer.as_deref() {
+            children.push(Element::Text(
+                TextElement::new(self.indented_for_width(footer, width)).fg(self.muted_color),
+            ));
+        }
+
+        children
     }
 
     fn wrap_prefixed(&self, prefix: &str, text: &str, width: usize) -> Vec<String> {
@@ -422,5 +449,64 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(48, 0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let el: Element<()> = SideNotePanel::new("note")
+            .question("why")
+            .answer("one\ntwo\nthree")
+            .footer("done")
+            .element_with_height(24, 3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 3);
+        assert!(text.contains("note"), "{text:?}");
+        assert!(text.contains("Q: why"), "{text:?}");
+        assert!(text.contains("one"), "{text:?}");
+        assert!(!text.contains("two"), "{text:?}");
+        assert!(!text.contains("done"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = SideNotePanel::new("note")
+            .answer("ok")
+            .fill_height(true)
+            .element_with_height(20, 4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], "  note");
+        assert_eq!(rows[1], "  ok");
+        assert_eq!(rows[2], "");
+        assert_eq!(rows[3], "");
     }
 }
