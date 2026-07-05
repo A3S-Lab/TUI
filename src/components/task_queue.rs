@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
 
 const MAX_TASK_QUEUE_MARGIN: usize = u16::MAX as usize;
 const MAX_TASK_QUEUE_QUEUED_ROWS: usize = u16::MAX as usize;
@@ -193,10 +193,7 @@ impl TaskQueue {
             self.title.trim(),
             self.completed
         );
-        let fill = self
-            .divider
-            .to_string()
-            .repeat(width.saturating_sub(visible_len(&prefix)));
+        let fill = repeat_visible_char(self.divider, width.saturating_sub(visible_len(&prefix)));
         Style::new()
             .fg(self.header_color)
             .render(&fit_visible(&format!("{prefix}{fill}"), width))
@@ -380,6 +377,20 @@ mod tests {
         for row in plain.lines() {
             assert_eq!(visible_len(row), 24, "{row:?}");
         }
+    }
+
+    #[test]
+    fn wide_divider_fills_header_by_display_width() {
+        let view = TaskQueue::new()
+            .divider('界')
+            .queued(QueuedTask::new("first"))
+            .view(48);
+        let plain = strip_ansi(&view);
+        let header = plain.lines().next().unwrap();
+
+        assert_eq!(visible_len(header), 48);
+        assert!(header.starts_with("  界 tasks"));
+        assert!(header.matches('界').count() > 1);
     }
 
     #[test]
