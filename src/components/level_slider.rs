@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, truncate_visible, visible_len, Color, Style};
 
 const MAX_LEVEL_SLIDER_MARGIN: usize = u16::MAX as usize;
 
@@ -329,23 +329,13 @@ impl LevelSlider {
 
     fn track_element<Msg>(&self, width: usize) -> Element<Msg> {
         let track_width = self.track_width(width);
-        let selected = self.selected_index();
-        let selected_pos = self.position_for(selected, track_width);
-        let separator_pos = self.separator_position(track_width);
         let mut children = vec![Element::Text(TextElement::new(
             " ".repeat(self.margin_for_width(width)),
         ))];
 
-        for index in 0..track_width {
-            let (ch, color, bold) = if index == selected_pos {
-                (self.marker, self.selected_level_color(), true)
-            } else if Some(index) == separator_pos {
-                (self.separator_char, self.muted_color, false)
-            } else {
-                (self.track_char, self.track_color, false)
-            };
-            let mut text = TextElement::new(ch.to_string()).fg(color);
-            if bold {
+        for segment in self.track_segments(track_width) {
+            let mut text = TextElement::new(segment.text).fg(segment.color);
+            if segment.bold {
                 text = text.bold();
             }
             children.push(Element::Text(text));
@@ -359,26 +349,92 @@ impl LevelSlider {
     }
 
     fn track_line(&self, track_width: usize) -> String {
-        let selected_pos = self.position_for(self.selected_index(), track_width);
-        let separator_pos = self.separator_position(track_width);
-        (0..track_width)
-            .map(|index| {
-                if index == selected_pos {
-                    Style::new()
-                        .fg(self.selected_level_color())
-                        .bold()
-                        .render(&self.marker.to_string())
-                } else if Some(index) == separator_pos {
-                    Style::new()
-                        .fg(self.muted_color)
-                        .render(&self.separator_char.to_string())
-                } else {
-                    Style::new()
-                        .fg(self.track_color)
-                        .render(&self.track_char.to_string())
+        self.track_segments(track_width)
+            .into_iter()
+            .map(|segment| {
+                let mut style = Style::new().fg(segment.color);
+                if segment.bold {
+                    style = style.bold();
                 }
+                style.render(&segment.text)
             })
             .collect()
+    }
+
+    fn track_segments(&self, track_width: usize) -> Vec<TrackSegment> {
+        let selected_pos = feature_position(
+            self.position_for(self.selected_index(), track_width),
+            self.marker,
+            track_width,
+        );
+        let separator_pos = self
+            .separator_position(track_width)
+            .map(|position| feature_position(position, self.separator_char, track_width));
+        let selected_width =
+            glyph_slot_width(self.marker, track_width.saturating_sub(selected_pos));
+        let mut features = Vec::new();
+
+        if let Some(separator_pos) = separator_pos {
+            let separator_width = glyph_slot_width(
+                self.separator_char,
+                track_width.saturating_sub(separator_pos),
+            );
+            let selected_end = selected_pos.saturating_add(selected_width);
+            let separator_end = separator_pos.saturating_add(separator_width);
+            let overlaps_selected = separator_pos < selected_end && selected_pos < separator_end;
+            if !overlaps_selected {
+                features.push(TrackFeature {
+                    position: separator_pos,
+                    ch: self.separator_char,
+                    color: self.muted_color,
+                    bold: false,
+                });
+            }
+        }
+        features.push(TrackFeature {
+            position: selected_pos,
+            ch: self.marker,
+            color: self.selected_level_color(),
+            bold: true,
+        });
+        features.sort_by_key(|feature| feature.position);
+
+        let mut segments = Vec::new();
+        let mut used = 0usize;
+        for feature in features {
+            if feature.position >= track_width {
+                continue;
+            }
+            if feature.position < used {
+                continue;
+            }
+            if used < feature.position {
+                segments.push(TrackSegment {
+                    text: repeat_visible_char(self.track_char, feature.position - used),
+                    color: self.track_color,
+                    bold: false,
+                });
+                used = feature.position;
+            }
+
+            let width = glyph_slot_width(feature.ch, track_width - used);
+            segments.push(TrackSegment {
+                text: repeat_visible_char(feature.ch, width),
+                color: feature.color,
+                bold: feature.bold,
+            });
+            used += width;
+        }
+
+        if used < track_width {
+            segments.push(TrackSegment {
+                text: repeat_visible_char(self.track_char, track_width - used),
+                color: self.track_color,
+                bold: false,
+            });
+        }
+
+        segments
     }
 
     fn labels_line(&self, track_width: usize) -> String {
@@ -488,6 +544,42 @@ impl LevelSlider {
     }
 }
 
+#[derive(Debug, Clone)]
+struct TrackFeature {
+    position: usize,
+    ch: char,
+    color: Color,
+    bold: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TrackSegment {
+    text: String,
+    color: Color,
+    bold: bool,
+}
+
+fn glyph_slot_width(ch: char, remaining: usize) -> usize {
+    if remaining == 0 {
+        return 0;
+    }
+
+    glyph_display_width(ch).min(remaining)
+}
+
+fn glyph_display_width(ch: char) -> usize {
+    visible_len(&ch.to_string()).max(1)
+}
+
+fn feature_position(position: usize, ch: char, track_width: usize) -> usize {
+    if track_width == 0 {
+        return 0;
+    }
+
+    let width = glyph_display_width(ch).min(track_width);
+    position.min(track_width - width)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,6 +684,64 @@ mod tests {
         for row in strip_ansi(&rendered).lines() {
             assert_eq!(visible_len(row), 24, "{row:?}");
         }
+    }
+
+    #[test]
+    fn custom_wide_track_glyphs_fit_requested_width() {
+        let rendered = LevelSlider::from_labels(vec!["low", "mid", "high"])
+            .track_char('界')
+            .separator_char('中')
+            .marker('好')
+            .separator_after(0)
+            .selected(1)
+            .view(18);
+        let plain = strip_ansi(&rendered);
+        let track = plain.lines().next().unwrap();
+
+        assert_eq!(visible_len(track), 18);
+        assert!(track.contains('界'));
+        assert!(track.contains('中'));
+        assert!(track.contains('好'));
+        for row in plain.lines() {
+            assert_eq!(visible_len(row), 18, "{row:?}");
+        }
+    }
+
+    #[test]
+    fn element_track_glyphs_use_display_width() {
+        let element: Element<()> = LevelSlider::from_labels(vec!["a", "b", "c"])
+            .track_char('界')
+            .separator_char('\u{301}')
+            .marker('好')
+            .separator_after(0)
+            .selected(2)
+            .element(18);
+
+        let Element::Box(column) = element else {
+            panic!("expected column");
+        };
+        let Element::Box(track) = &column.children[0] else {
+            panic!("expected track row");
+        };
+        let row_width = track
+            .children
+            .iter()
+            .map(|child| match child {
+                Element::Text(text) => visible_len(&text.content),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let row_text = track
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                Element::Text(text) => Some(text.content.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(row_width, 18);
+        assert!(row_text.contains('好'));
     }
 
     #[test]
