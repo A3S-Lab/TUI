@@ -378,6 +378,15 @@ impl TabbedMenuPanel {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+                if self.should_show_tabs() && local_row == self.tab_row() {
+                    let tab = self.tab_index_at_column(mouse.column)?;
+                    if tab != self.normalized_active_tab() {
+                        self.active_tab = tab;
+                        self.selected = 0;
+                        self.scroll = 0;
+                    }
+                    return Some(TabbedMenuPanelMsg::TabChanged(tab));
+                }
                 let item_row = local_row.checked_sub(self.item_start_row())?;
                 let item_count = self.visible_item_count_for_height(usize::MAX);
                 if item_row >= item_count {
@@ -784,6 +793,24 @@ impl TabbedMenuPanel {
             + usize::from(self.hint.as_ref().is_some_and(|hint| !hint.is_empty()))
     }
 
+    fn tab_row(&self) -> usize {
+        usize::from(self.title.as_ref().is_some_and(|title| !title.is_empty()))
+    }
+
+    fn tab_index_at_column(&self, column: u16) -> Option<usize> {
+        let click_x = usize::from(column);
+        let mut x = self.indent_for_element();
+        let gap = self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP);
+        for (index, tab) in self.tabs.iter().enumerate() {
+            let tab_width = visible_len(tab.label()) + 2;
+            if click_x >= x && click_x < x.saturating_add(tab_width) {
+                return Some(index);
+            }
+            x = x.saturating_add(tab_width).saturating_add(gap);
+        }
+        None
+    }
+
     fn should_show_tabs(&self) -> bool {
         self.tabs.len() > 1 || (self.show_tabs_when_single && !self.tabs.is_empty())
     }
@@ -1098,6 +1125,37 @@ mod tests {
 
         assert_eq!(msg, None);
         assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_click_on_tab_switches_active_tab() {
+        let mut panel = sample();
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, Some(TabbedMenuPanelMsg::TabChanged(0)));
+        assert_eq!(panel.active_tab_value(), 0);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_click_between_tabs_is_ignored() {
+        let mut panel = sample();
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.active_tab_value(), 1);
     }
 
     #[test]

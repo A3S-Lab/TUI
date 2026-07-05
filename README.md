@@ -156,7 +156,7 @@ Run with `cargo run --example counter_element`.
 | `SubagentTracker` | Parallel subagent/background work tracker |
 | `Table` | Data table with headers |
 | `Tabs` | Tab navigation with metadata and per-tab accents |
-| `TabbedMenuPanel` | Colored tab strip with a scroll-aware selected list |
+| `TabbedMenuPanel` | Colored tab strip with mouse switching and a scroll-aware selected list |
 | `TaskQueue` | Pinned running and queued task panel |
 | `TextInput` | Single-line text input |
 | `TextOverlay` | Compose transient overlay rows into a rendered text frame |
