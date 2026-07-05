@@ -18,6 +18,7 @@ const MAX_ACTIVITY_BLOCK_WIDTH: usize = u16::MAX as usize;
 pub struct ActivityBlock {
     label: String,
     detail: Option<String>,
+    detail_styled: bool,
     lines: Vec<String>,
     max_output_lines: usize,
     margin: usize,
@@ -39,6 +40,7 @@ impl ActivityBlock {
         Self {
             label: label.into(),
             detail: None,
+            detail_styled: false,
             lines: Vec::new(),
             max_output_lines: 12,
             margin: 2,
@@ -60,6 +62,16 @@ impl ActivityBlock {
         let detail = detail.into();
         if !detail.is_empty() {
             self.detail = Some(detail);
+            self.detail_styled = false;
+        }
+        self
+    }
+
+    pub fn styled_detail(mut self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        if !detail.is_empty() {
+            self.detail = Some(detail);
+            self.detail_styled = true;
         }
         self
     }
@@ -214,11 +226,12 @@ impl ActivityBlock {
         if let Some(detail) = self.detail.as_deref() {
             out.push(' ');
             let detail_width = self.detail_width(&out);
-            out.push_str(
-                &Style::new()
-                    .fg(self.detail_color)
-                    .render(&truncate_visible(detail, detail_width)),
-            );
+            let detail = truncate_visible(detail, detail_width);
+            if self.detail_styled {
+                out.push_str(&detail);
+            } else {
+                out.push_str(&Style::new().fg(self.detail_color).render(&detail));
+            }
         }
         if self.show_ellipsis {
             out.push('…');
@@ -255,9 +268,12 @@ impl ActivityBlock {
 
         if let Some(detail) = self.detail.as_deref() {
             children.push(Element::Text(TextElement::new(" ")));
-            children.push(Element::Text(
-                TextElement::new(detail).fg(self.detail_color),
-            ));
+            let text = if self.detail_styled {
+                TextElement::new(detail)
+            } else {
+                TextElement::new(detail).fg(self.detail_color)
+            };
+            children.push(Element::Text(text));
         }
         if self.show_ellipsis {
             children.push(Element::Text(TextElement::new("…")));
@@ -403,6 +419,28 @@ mod tests {
 
         assert!(rendered.lines().all(|line| visible_len(line) == 20));
         assert!(strip_ansi(&rendered).contains('…'));
+    }
+
+    #[test]
+    fn styled_detail_preserves_ansi_and_fits_width() {
+        let detail = Style::new()
+            .fg(Color::Cyan)
+            .render("cargo test -- --nocapture");
+        let rendered = ActivityBlock::new("Running")
+            .styled_detail(detail)
+            .width(24)
+            .view();
+
+        assert!(rendered.contains("\x1b[36mcargo"));
+        assert_eq!(visible_len(rendered.lines().next().unwrap()), 24);
+        assert!(strip_ansi(&rendered).starts_with("  • Running cargo"));
+    }
+
+    #[test]
+    fn plain_detail_uses_detail_color() {
+        let rendered = ActivityBlock::new("Running").detail("plain").view();
+
+        assert!(rendered.contains("\x1b[90mplain\x1b[0m"));
     }
 
     #[test]

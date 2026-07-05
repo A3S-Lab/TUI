@@ -110,7 +110,7 @@ Run with `cargo run --example counter_element`.
 
 | Component | Description |
 |-----------|-------------|
-| `ActivityBlock` | In-flight activity line with optional live output tail |
+| `ActivityBlock` | In-flight activity line with styled detail and optional live output tail |
 | `Alert` | Colored alerts (Success/Info/Warning/Error) with string and Element rendering |
 | `Badge` | Inline status badges with string and Element rendering |
 | `Breadcrumb` | Hierarchical path navigation |
