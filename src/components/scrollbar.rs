@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{pad_visible, Color, Style};
+use crate::style::{pad_visible, repeat_visible_char, Color, Style};
 
 /// A vertical scrollbar indicator.
 ///
@@ -93,13 +93,9 @@ impl Scrollbar {
         let children: Vec<Element<Msg>> = (0..height)
             .map(|i| {
                 if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
-                    Element::Text(
-                        TextElement::new(self.thumb_char.to_string()).fg(self.thumb_color),
-                    )
+                    Element::Text(TextElement::new(self.thumb_cell()).fg(self.thumb_color))
                 } else {
-                    Element::Text(
-                        TextElement::new(self.track_char.to_string()).fg(self.track_color),
-                    )
+                    Element::Text(TextElement::new(self.track_cell()).fg(self.track_color))
                 }
             })
             .collect();
@@ -122,9 +118,9 @@ impl Scrollbar {
         (0..height)
             .map(|i| {
                 if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
-                    self.thumb_char
+                    self.thumb_cell()
                 } else {
-                    self.track_char
+                    self.track_cell()
                 }
             })
             .collect()
@@ -143,13 +139,9 @@ impl Scrollbar {
         (0..height)
             .map(|i| {
                 if i >= thumb_pos && i < thumb_pos.saturating_add(thumb_size) {
-                    Style::new()
-                        .fg(self.thumb_color)
-                        .render(&self.thumb_char.to_string())
+                    Style::new().fg(self.thumb_color).render(&self.thumb_cell())
                 } else {
-                    Style::new()
-                        .fg(self.track_color)
-                        .render(&self.track_char.to_string())
+                    Style::new().fg(self.track_color).render(&self.track_cell())
                 }
             })
             .collect::<Vec<_>>()
@@ -165,6 +157,14 @@ impl Scrollbar {
             .map(|(row, bar)| format!("{}{}", pad_visible(row, inner_width), bar))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn track_cell(&self) -> String {
+        repeat_visible_char(self.track_char, 1)
+    }
+
+    fn thumb_cell(&self) -> String {
+        repeat_visible_char(self.thumb_char, 1)
     }
 }
 
@@ -193,6 +193,7 @@ fn rounded_ratio_to_usize(numerator: u128, denominator: u128) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, visible_len};
 
     #[test]
     fn full_content_visible_fills_track() {
@@ -261,6 +262,39 @@ mod tests {
     }
 
     #[test]
+    fn custom_wide_glyphs_render_one_column_cells() {
+        let sb = Scrollbar::new(20, 5, 8).track_char('界').thumb_char('好');
+        let view = sb.view(5);
+        let styled = sb.styled_view(5);
+
+        assert_eq!(visible_len(&view), 5);
+        assert_eq!(view, "     ");
+        for row in strip_ansi(&styled).lines() {
+            assert_eq!(visible_len(row), 1, "{row:?}");
+        }
+    }
+
+    #[test]
+    fn element_glyphs_render_one_column_cells() {
+        let element: Element<()> = Scrollbar::new(20, 5, 8)
+            .track_char('界')
+            .thumb_char('\u{301}')
+            .element(5);
+
+        let Element::Box(column) = element else {
+            panic!("expected column");
+        };
+
+        for child in column.children {
+            let Element::Text(text) = child else {
+                panic!("expected text cell");
+            };
+            assert_eq!(visible_len(&text.content), 1);
+            assert_eq!(text.content, " ");
+        }
+    }
+
+    #[test]
     fn hide_when_not_overflowing_renders_blank_gutter() {
         let sb = Scrollbar::new(3, 5, 0).hide_when_not_overflowing(true);
 
@@ -285,12 +319,25 @@ mod tests {
         let rendered = Scrollbar::new(20, 2, 3)
             .thumb_color(Color::Cyan)
             .append_to_view(view, 8);
-        let plain = crate::style::strip_ansi(&rendered);
+        let plain = strip_ansi(&rendered);
         let rows = plain.lines().collect::<Vec<_>>();
 
         assert_eq!(rows.len(), 2);
         assert!(rows[0].starts_with("short   "));
         assert!(rows[1].starts_with("中文    "));
         assert!(rendered.contains("\x1b["));
+    }
+
+    #[test]
+    fn append_to_view_keeps_wide_custom_glyph_gutter_to_one_column() {
+        let rendered = Scrollbar::new(20, 2, 1)
+            .track_char('界')
+            .thumb_char('好')
+            .append_to_view("short\n中文", 8);
+        let plain = strip_ansi(&rendered);
+
+        for row in plain.lines() {
+            assert_eq!(visible_len(row), 9, "{row:?}");
+        }
     }
 }
