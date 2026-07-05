@@ -21,6 +21,7 @@ pub struct ConnectorBlock {
     connector: String,
     connector_indent: usize,
     connector_gap: usize,
+    repeat_connector: bool,
     text_color: Color,
     omitted_color: Color,
     connector_color: Color,
@@ -36,6 +37,7 @@ impl ConnectorBlock {
             connector: "⎿".to_string(),
             connector_indent: 2,
             connector_gap: 2,
+            repeat_connector: false,
             text_color: Color::BrightBlack,
             omitted_color: Color::BrightBlack,
             connector_color: Color::BrightBlack,
@@ -122,6 +124,11 @@ impl ConnectorBlock {
         self
     }
 
+    pub fn repeat_connector(mut self, repeat: bool) -> Self {
+        self.repeat_connector = repeat;
+        self
+    }
+
     pub fn text_color(mut self, color: Color) -> Self {
         self.text_color = color;
         self
@@ -152,7 +159,7 @@ impl ConnectorBlock {
             .into_iter()
             .enumerate()
             .map(|(index, row)| {
-                let prefix = if index == 0 {
+                let prefix = if index == 0 || self.repeat_connector {
                     self.render_first_prefix(width)
                 } else {
                     self.continuation_prefix(width)
@@ -204,7 +211,7 @@ impl ConnectorBlock {
 
     fn row_element<Msg>(&self, index: usize, row: ConnectorRow) -> Element<Msg> {
         let mut children = Vec::new();
-        if index == 0 {
+        if index == 0 || self.repeat_connector {
             children.push(Element::Text(TextElement::new(
                 self.first_prefix_margin_for_element(),
             )));
@@ -407,6 +414,26 @@ mod tests {
         assert!(!plain.contains("one"));
         assert!(plain.contains("three"));
         assert!(plain.contains("four"));
+    }
+
+    #[test]
+    fn can_repeat_connector_for_live_output_rows() {
+        let rendered = ConnectorBlock::text("one\ntwo\nthree\nfour")
+            .connector("│")
+            .connector_gap(1)
+            .repeat_connector(true)
+            .max_rows(2)
+            .view(32);
+        let plain = strip_ansi(&rendered);
+        let rows = plain.lines().collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].starts_with("    │ … +2 earlier lines"), "{plain}");
+        assert!(rows[1].starts_with("    │ three"), "{plain}");
+        assert!(rows[2].starts_with("    │ four"), "{plain}");
+        for row in rows {
+            assert_eq!(visible_len(row), 32);
+        }
     }
 
     #[test]
