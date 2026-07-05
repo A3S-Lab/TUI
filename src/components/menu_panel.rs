@@ -398,20 +398,58 @@ impl MenuPanel {
 
         let selected = self.normalized_selected();
         for index in self.element_item_range() {
-            let item = &self.items[index];
-            let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == selected {
-                text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
-            } else if item.disabled {
-                text = text.fg(self.disabled_color);
-            } else {
-                text = text.fg(self.item_color(item));
-            }
-            children.push(Element::Text(text));
+            children.push(Element::Text(self.item_text_element(index, selected)));
         }
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if let Some(subtitle) = self
+            .subtitle
+            .as_deref()
+            .filter(|subtitle| !subtitle.is_empty())
+        {
+            children.push(Element::Text(
+                TextElement::new(subtitle).fg(self.subtitle_color),
+            ));
+        }
+
+        let visible_items = self.visible_item_count_for_height(height);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        let selected = self.normalized_selected();
+        for index in start..end {
+            children.push(Element::Text(self.item_text_element(index, selected)));
+        }
+
+        if self.show_scroll && self.items.len() > visible_items && visible_items > 0 {
+            children.push(Element::Text(self.scroll_footer_element(start, end)));
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
         }
 
         Element::Box(
@@ -464,6 +502,33 @@ impl MenuPanel {
         }
 
         lines
+    }
+
+    fn item_text_element(&self, index: usize, selected: usize) -> TextElement {
+        let item = &self.items[index];
+        let mut text = TextElement::new(self.plain_item_line(index, None));
+        if index == selected {
+            text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
+        } else if item.disabled {
+            text = text.fg(self.disabled_color);
+        } else {
+            text = text.fg(self.item_color(item));
+        }
+        text
+    }
+
+    fn scroll_footer_element(&self, start: usize, end: usize) -> TextElement {
+        let up = if start > 0 { "↑" } else { " " };
+        let down = if end < self.items.len() { "↓" } else { " " };
+        TextElement::new(format!(
+            "{}{up}{down} {}/{}",
+            " ".repeat(self.indent_for_element()),
+            self.normalized_selected()
+                .saturating_add(1)
+                .min(self.items.len()),
+            self.items.len()
+        ))
+        .fg(self.muted_color)
     }
 
     fn render_item(&self, index: usize, width: usize) -> String {
@@ -976,5 +1041,58 @@ mod tests {
         assert!(text.contains("/top"));
         assert!(!text.contains("/model"));
         assert!(!text.contains("/quit"));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample_panel().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_items_and_keeps_scroll_footer() {
+        let el: Element<()> = sample_panel().selected(3).scroll(1).element_with_height(5);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 5);
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("Commands"));
+        assert!(text.contains("Enter run"));
+        assert!(text.contains("/top"));
+        assert!(text.contains("↑↓ 4/5"));
+        assert!(text.contains("type to filter"));
+        assert!(!text.contains("/model"));
+        assert!(!text.contains("/theme"));
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = MenuPanel::without_title()
+            .item(MenuItem::new("one"))
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 3);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("one")));
+        assert_eq!(column.children[1].text_content(), Some(""));
+        assert_eq!(column.children[2].text_content(), Some(""));
     }
 }
