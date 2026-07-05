@@ -17,7 +17,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Declarative UI** — describe what you want, not how to draw it
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
-- **Rich Components** — 59 ready-to-use components (tables, modals, help panels, text editors, etc.)
+- **Rich Components** — 60 ready-to-use components (tables, modals, help panels, text editors, etc.)
 
 ---
 
@@ -137,6 +137,7 @@ Run with `cargo run --example counter_element`.
 | `ModeLine` | Current mode row with shortcut hints |
 | `MultiSelect` | Multi-selection list with checkboxes |
 | `OutputBlock` | Status-marked transcript/output block with tail preview |
+| `PanelFrame` | Fixed-size titled panel frame with focus-aware borders |
 | `Paragraph` | Width-aware paragraph wrapping |
 | `PreviewPanel` | Selectable item list with a live preview section |
 | `Progress` | Progress bar |
@@ -231,7 +232,7 @@ See `examples/chat.rs` for a complete chat UI with:
 
 Run `cargo bench --bench rendering` to measure hot rendering paths:
 - display-width helpers with ANSI and CJK text
-- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
+- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PanelFrame`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
 - mixed markdown rendering with task lists and code blocks
 
 ### Integration Tests
