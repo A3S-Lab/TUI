@@ -75,7 +75,7 @@ impl MultiSelect {
     }
 
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<MultiSelectMsg> {
@@ -91,7 +91,10 @@ impl MultiSelect {
                 self.cursor = self.cursor.saturating_add(1).min(self.max_cursor());
                 None
             }
-            KeyCode::Char(' ') => self.toggle_index(self.cursor),
+            KeyCode::Char(' ') => {
+                self.cursor = self.normalized_cursor();
+                self.toggle_index(self.cursor)
+            }
             KeyCode::Char(c) if self.number_shortcuts => {
                 let idx = number_shortcut_index(c)?;
                 if idx < self.items.len() && idx < self.checked.len() {
@@ -116,16 +119,21 @@ impl MultiSelect {
         self.items.len().saturating_sub(1)
     }
 
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(self.max_cursor())
+    }
+
     pub fn view(&self, width: u16, height: usize) -> String {
         let width = width as usize;
         if width == 0 || height == 0 {
             return String::new();
         }
 
+        let cursor = self.normalized_cursor();
         let start = if self.items.len() <= height {
             0
         } else {
-            self.cursor
+            cursor
                 .saturating_sub(height - 1)
                 .min(self.items.len() - height)
         };
@@ -136,19 +144,19 @@ impl MultiSelect {
             .skip(start)
             .take(height)
             .map(|(idx, item)| {
-                let cursor = if idx == self.cursor { ">" } else { " " };
+                let cursor_marker = if idx == cursor { ">" } else { " " };
                 let check = if self.checked[idx] { "[x]" } else { "[ ]" };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
                         Some(label) => {
-                            fit_visible(&format!("{cursor} {label} {check} {item}"), width)
+                            fit_visible(&format!("{cursor_marker} {label} {check} {item}"), width)
                         }
-                        None => fit_visible(&format!("{cursor}   {check} {item}"), width),
+                        None => fit_visible(&format!("{cursor_marker}   {check} {item}"), width),
                     }
                 } else {
-                    fit_visible(&format!("{cursor} {check} {item}"), width)
+                    fit_visible(&format!("{cursor_marker} {check} {item}"), width)
                 };
-                if idx == self.cursor && self.focused {
+                if idx == cursor && self.focused {
                     Style::new().fg(Color::Cyan).bold().render(&raw)
                 } else {
                     raw
@@ -159,12 +167,13 @@ impl MultiSelect {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        let cursor = self.normalized_cursor();
         let children: Vec<Element<Msg>> = self
             .items
             .iter()
             .enumerate()
             .map(|(i, item)| {
-                let cursor_marker = if i == self.cursor { "▸" } else { " " };
+                let cursor_marker = if i == cursor { "▸" } else { " " };
                 let check = if self.checked[i] { "[x]" } else { "[ ]" };
                 let text = if self.number_shortcuts {
                     match number_shortcut_label(i) {
@@ -174,7 +183,7 @@ impl MultiSelect {
                 } else {
                     format!("{} {} {}", cursor_marker, check, item)
                 };
-                if i == self.cursor && self.focused {
+                if i == cursor && self.focused {
                     Element::Text(TextElement::new(text).bold().fg(Color::Cyan))
                 } else {
                     Element::Text(TextElement::new(text))
@@ -365,6 +374,33 @@ mod tests {
         ms.cursor = usize::MAX;
         ms.handle_key(&key(KeyCode::Up));
         assert_eq!(ms.cursor(), 1);
+    }
+
+    #[test]
+    fn stale_cursor_is_normalized_for_rendering_and_toggle() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]).with_number_shortcuts();
+        ms.cursor = usize::MAX;
+
+        assert_eq!(ms.cursor(), 1);
+
+        let plain = crate::style::strip_ansi(&ms.view(20, 5));
+        assert!(plain.contains("> 2 [ ] b"));
+        assert!(!plain.contains("> 1 [ ] a"));
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected multi-select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 [ ] b");
+
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Char(' '))),
+            Some(MultiSelectMsg::Toggle(1))
+        ));
+        assert_eq!(ms.cursor(), 1);
+        assert_eq!(ms.selected_indices(), vec![1]);
     }
 
     #[test]
