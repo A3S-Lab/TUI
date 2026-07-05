@@ -485,15 +485,10 @@ impl Style {
         if text_width >= target_width {
             return text.to_string();
         }
-        let gap = target_width - text_width;
         match self.align {
-            Align::Left => format!("{}{}", text, " ".repeat(gap)),
-            Align::Right => format!("{}{}", " ".repeat(gap), text),
-            Align::Center => {
-                let left = gap / 2;
-                let right = gap - left;
-                format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
-            }
+            Align::Left => pad_visible(text, target_width),
+            Align::Right => right_visible(text, target_width),
+            Align::Center => center_visible(text, target_width),
         }
     }
 
@@ -1086,6 +1081,19 @@ mod tests {
 
         assert_eq!(visible_len(&right), 6);
         assert!(strip_ansi(&right).starts_with("    中"));
+    }
+
+    #[test]
+    fn render_aligns_text_by_visible_width() {
+        let styled = Style::new().fg(Color::Red).render("中");
+        let right = Style::new().width(6).align(Align::Right).render(&styled);
+        let center = Style::new().width(7).align(Align::Center).render("中");
+
+        assert_eq!(visible_len(&right), 6);
+        assert_eq!(strip_ansi(&right), "    中");
+        assert!(right.ends_with("\x1b[0m"));
+        assert_eq!(visible_len(&center), 7);
+        assert_eq!(center, "  中   ");
     }
 
     #[test]
