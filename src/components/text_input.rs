@@ -164,11 +164,27 @@ impl TextInput {
         self.value.chars().collect()
     }
 
+    fn placeholder_cursor_parts(&self) -> (String, String) {
+        let chars = self.placeholder.chars().collect::<Vec<_>>();
+        let (start, end) = display_cell_char_span(&chars, 0);
+        let cursor = chars[start..end].iter().collect::<String>();
+        let after = chars[end..].iter().collect::<String>();
+        (cursor, after)
+    }
+
     pub fn view(&self) -> String {
         let mut out = self.prefix.clone();
 
         if self.value.is_empty() && !self.placeholder.is_empty() {
-            out.push_str(&format!("\x1b[2m{}\x1b[0m", self.placeholder));
+            if self.focused {
+                let (cursor, after) = self.placeholder_cursor_parts();
+                out.push_str(&format!("\x1b[2;7m{cursor}\x1b[0m"));
+                if !after.is_empty() {
+                    out.push_str(&format!("\x1b[2m{after}\x1b[0m"));
+                }
+            } else {
+                out.push_str(&format!("\x1b[2m{}\x1b[0m", self.placeholder));
+            }
             return out;
         }
 
@@ -194,8 +210,32 @@ impl TextInput {
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         if self.value.is_empty() && !self.placeholder.is_empty() {
-            let text = format!("{}{}", self.prefix, self.placeholder);
-            return Element::Text(TextElement::new(text).dim().fg(Color::BrightBlack));
+            if !self.focused {
+                let text = format!("{}{}", self.prefix, self.placeholder);
+                return Element::Text(TextElement::new(text).dim().fg(Color::BrightBlack));
+            }
+
+            let mut children = Vec::new();
+            if !self.prefix.is_empty() {
+                children.push(Element::Text(TextElement::new(self.prefix.clone())));
+            }
+            let (cursor, after) = self.placeholder_cursor_parts();
+            children.push(Element::Text(
+                TextElement::new(cursor)
+                    .dim()
+                    .fg(Color::BrightBlack)
+                    .reverse(),
+            ));
+            if !after.is_empty() {
+                children.push(Element::Text(
+                    TextElement::new(after).dim().fg(Color::BrightBlack),
+                ));
+            }
+            return Element::Box(
+                BoxElement::new()
+                    .direction(FlexDirection::Row)
+                    .children(children),
+            );
         }
 
         let display_chars = self.display_chars();
@@ -377,6 +417,29 @@ mod tests {
         assert_eq!(cursor.content, "b");
         assert!(cursor.style.reverse);
         assert!(!cursor.content.contains('\x1b'));
+    }
+
+    #[test]
+    fn focused_placeholder_keeps_cursor_visible() {
+        let input = TextInput::new()
+            .with_prefix("> ")
+            .with_placeholder("command");
+
+        let view = input.view();
+
+        assert_eq!(crate::style::strip_ansi(&view), "> command");
+        assert!(view.contains("\x1b[2;7mc\x1b[0m"));
+
+        let Element::Box(row) = input.element::<()>() else {
+            panic!("expected row element");
+        };
+        assert_eq!(row.children.len(), 3);
+        let Element::Text(cursor) = &row.children[1] else {
+            panic!("expected cursor text");
+        };
+        assert_eq!(cursor.content, "c");
+        assert!(cursor.style.reverse);
+        assert!(cursor.style.dim);
     }
 
     #[test]
