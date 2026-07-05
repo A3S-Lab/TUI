@@ -158,6 +158,20 @@ fn paint_element<Msg>(
                 match text_el.wrap {
                     TextWrap::Wrap => {
                         if max_w == 0 {
+                            if !paint_line.is_empty() && visible_len(paint_line) == 0 {
+                                if !paint_text_row(
+                                    grid,
+                                    node,
+                                    painted_rows,
+                                    grid_h,
+                                    clip,
+                                    paint_line,
+                                    &style,
+                                ) {
+                                    break;
+                                }
+                                painted_rows += 1;
+                            }
                             continue;
                         }
 
@@ -283,6 +297,10 @@ fn clip_visible_cols(text: &str, from: usize, width: usize) -> Option<(usize, St
         let cell = &text[index..cell_end];
         index = cell_end;
         if cw == 0 {
+            if col >= from && col < end {
+                start_col.get_or_insert(col);
+                out.push_str(cell);
+            }
             continue;
         }
         let next_col = col.saturating_add(cw);
@@ -405,6 +423,24 @@ mod tests {
         assert!(grid.get(0, 0).bold);
         assert!(grid.get(0, 0).reverse);
         assert_eq!(grid.get(0, 0).fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn paint_adjacent_zero_width_text_segment_attaches_to_previous_cell() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Text(TextElement::new("e").wrap(TextWrap::NoWrap)))
+                .child(Element::Text(
+                    TextElement::new("\u{0301}").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 2, 1);
+
+        assert_eq!(grid.get(0, 0).ch, 'e');
+        assert_eq!(grid.get(0, 0).combining, "\u{0301}");
+        assert_eq!(grid.render_to_string(), "e\u{0301} ");
     }
 
     #[test]
@@ -630,6 +666,19 @@ mod tests {
             Some((1, "e\u{0301}".into()))
         );
         assert_eq!(clip_visible_cols("e\u{0301}x", 1, 1), Some((1, "x".into())));
+    }
+
+    #[test]
+    fn clip_visible_cols_preserves_leading_zero_width_marks() {
+        assert_eq!(
+            clip_visible_cols("\u{0301}x", 0, 1),
+            Some((0, "\u{0301}x".into()))
+        );
+        assert_eq!(
+            clip_visible_cols("\u{0301}", 0, 1),
+            Some((0, "\u{0301}".into()))
+        );
+        assert_eq!(clip_visible_cols("\u{0301}x", 1, 1), None);
     }
 
     #[test]

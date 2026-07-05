@@ -275,7 +275,9 @@ impl Grid {
         for ch in text.chars() {
             let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
             if width == 0 {
-                if let Some(base_col) = last_base_col {
+                if let Some(base_col) =
+                    last_base_col.or_else(|| self.leading_combining_base_col(row, col))
+                {
                     self.cells[row][base_col].combining.push(ch);
                 }
                 continue;
@@ -293,6 +295,20 @@ impl Grid {
             last_base_col = Some(col);
             col += width;
         }
+    }
+
+    fn leading_combining_base_col(&self, row: usize, col: usize) -> Option<usize> {
+        if col == 0 || col >= self.width as usize {
+            return None;
+        }
+
+        let (start, _) = self.wide_span_bounds_at(row, col - 1);
+        let cell = self.cells.get(row)?.get(start)?;
+        if cell.ch == ' ' || cell.ch == WIDE_CONTINUATION {
+            return None;
+        }
+
+        Some(start)
     }
 
     fn clear_wide_span_at(&mut self, row: usize, col: usize) {
@@ -512,6 +528,33 @@ mod tests {
         assert_eq!(grid.get(1, 0).combining, "\u{0301}");
         assert_eq!(grid.render_to_string(), "ab\u{0301}");
         assert_eq!(crate::style::visible_len(&grid.render_to_string()), 2);
+    }
+
+    #[test]
+    fn grid_write_str_attaches_leading_zero_width_mark_to_previous_cell() {
+        let mut grid = Grid::new(2, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "a", &style);
+        grid.write_str(1, 0, "\u{0301}", &style);
+
+        assert_eq!(grid.get(0, 0).ch, 'a');
+        assert_eq!(grid.get(0, 0).combining, "\u{0301}");
+        assert_eq!(grid.render_to_string(), "a\u{0301} ");
+    }
+
+    #[test]
+    fn grid_write_str_attaches_leading_zero_width_mark_to_previous_wide_cell() {
+        let mut grid = Grid::new(3, 1);
+        let style = CellStyle::default();
+
+        grid.write_str(0, 0, "界", &style);
+        grid.write_str(2, 0, "\u{0301}", &style);
+
+        assert_eq!(grid.get(0, 0).ch, '界');
+        assert_eq!(grid.get(0, 0).combining, "\u{0301}");
+        assert_eq!(grid.get(1, 0).ch, WIDE_CONTINUATION);
+        assert_eq!(crate::style::visible_len(&grid.render_to_string()), 3);
     }
 
     #[test]
