@@ -225,18 +225,13 @@ impl Viewport {
     pub fn view(&self) -> String {
         let h = self.height as usize;
         let (offset, end) = self.visible_range();
-        let visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
+        let mut visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
 
-        let mut result = visible.join("\n");
-
-        let visible_count = end - offset;
-        if visible_count < h {
-            for _ in 0..(h - visible_count) {
-                result.push('\n');
-            }
+        while visible.len() < h {
+            visible.push("");
         }
 
-        result
+        visible.join("\n")
     }
 
     /// Return plain text selected from the currently visible rows.
@@ -482,6 +477,14 @@ mod tests {
         let view = vp.view();
         assert!(view.contains("line1"));
         assert!(view.contains("line3"));
+    }
+
+    #[test]
+    fn empty_view_has_exact_height_rows() {
+        let vp = Viewport::new(80, 3);
+        let view = vp.view();
+
+        assert_eq!(view.split('\n').collect::<Vec<_>>(), vec!["", "", ""]);
     }
 
     #[test]
