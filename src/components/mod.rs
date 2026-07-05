@@ -121,7 +121,7 @@ pub use text_input::TextInput;
 pub use text_overlay::{TextOverlay, TextOverlayPosition};
 pub use textarea::Textarea;
 pub use timeline::{Timeline, TimelineItem, TimelineRow};
-pub use toast::{ToastKind, ToastManager};
+pub use toast::{Toast, ToastKind, ToastManager};
 pub use tool_log_view::{ToolLogRecord, ToolLogStatus, ToolLogView};
 pub use tool_status_line::ToolStatusLine;
 pub use tree::{Tree, TreeNode};

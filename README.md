@@ -164,7 +164,7 @@ Run with `cargo run --example counter_element`.
 | `Timeline` | Sectioned timeline with colored nodes and selected-row highlighting |
 | `ToolLogView` | Completed tool/command history with args and indented output |
 | `ToolStatusLine` | Single-line tool status with marker, detail, and suffix |
-| `ToastManager` | Transient notifications |
+| `Toast` / `ToastManager` | Transient notifications with string and Element rendering |
 | `Tree` | Expandable tree view |
 | `TreePicker` | Selectable, scroll-aware file and hierarchy picker |
 | `Modal` | Overlay dialog |
