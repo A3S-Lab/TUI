@@ -256,11 +256,15 @@ impl ChoicePrompt {
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
+        self.lines(width, height).join("\n")
+    }
+
+    /// Render bounded prompt rows without joining them into a single string.
+    pub fn lines(&self, width: u16, height: usize) -> Vec<String> {
         let width = width as usize;
         if width == 0 || height == 0 {
-            return String::new();
+            return Vec::new();
         }
-
         let mut lines = self.render_lines(width);
         lines.truncate(height);
         if self.fill_height {
@@ -272,8 +276,7 @@ impl ChoicePrompt {
         lines
             .into_iter()
             .map(|line| fit_visible(&line, width))
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect()
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
@@ -663,6 +666,26 @@ mod tests {
             assert_eq!(visible_len(line), 18, "{line:?}");
         }
         assert!(strip_ansi(&rendered).contains("允许执行命"));
+    }
+
+    #[test]
+    fn lines_return_bounded_rows_without_joining() {
+        let lines = ChoicePrompt::approval("Allow a very long command label?")
+            .selected(1)
+            .lines(20, 5);
+        let plain = lines
+            .iter()
+            .map(|line| strip_ansi(line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 5);
+        assert!(plain[0].contains("Allow"), "{plain:?}");
+        assert!(plain[2].contains("2. Yes"), "{plain:?}");
+        assert!(
+            lines.iter().all(|line| visible_len(line) == 20),
+            "{plain:?}"
+        );
+        assert!(lines[2].contains("\x1b["), "selected row should be styled");
     }
 
     #[test]
