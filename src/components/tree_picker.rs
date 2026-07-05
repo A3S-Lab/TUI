@@ -313,37 +313,40 @@ impl TreePicker {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn selected_item(&self) -> Option<&TreePickerItem> {
-        self.items.get(self.selected)
+        self.items.get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TreePickerMsg> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < self.items.len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.items.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::PageUp => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = self.selected.saturating_sub(step);
+                self.selected = self.normalized_selected().saturating_sub(step);
                 self.keep_selected_visible(step);
                 None
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
                 self.selected = self
-                    .selected
+                    .normalized_selected()
                     .saturating_add(step)
                     .min(self.items.len().saturating_sub(1));
                 self.keep_selected_visible(step);
@@ -426,9 +429,10 @@ impl TreePicker {
             ));
         }
 
+        let selected = self.normalized_selected();
         for (index, item) in self.items.iter().enumerate() {
             let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == self.selected {
+            if index == selected {
                 text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
             } else if item.disabled {
                 text = text.fg(self.disabled_color);
@@ -497,7 +501,7 @@ impl TreePicker {
     fn render_item(&self, index: usize, width: usize) -> String {
         let raw = fit_visible(&self.plain_item_line(index, Some(width)), width);
         let item = &self.items[index];
-        if index == self.selected {
+        if index == self.normalized_selected() {
             Style::new()
                 .fg(self.selected_fg)
                 .bg(self.selected_bg)
@@ -541,7 +545,9 @@ impl TreePicker {
             &format!(
                 "{}{up}{down} {}/{}",
                 " ".repeat(self.indent_for_width(width)),
-                self.selected.saturating_add(1).min(self.items.len()),
+                self.normalized_selected()
+                    .saturating_add(1)
+                    .min(self.items.len()),
                 self.items.len()
             ),
             width,
@@ -569,10 +575,11 @@ impl TreePicker {
         }
         let max_start = self.items.len().saturating_sub(visible_items);
         let mut start = self.scroll.min(max_start);
-        if self.selected < start {
-            start = self.selected;
-        } else if self.selected >= start + visible_items {
-            start = self.selected + 1 - visible_items;
+        let selected = self.normalized_selected();
+        if selected < start {
+            start = selected;
+        } else if selected >= start + visible_items {
+            start = selected + 1 - visible_items;
         }
         start.min(max_start)
     }
@@ -583,14 +590,15 @@ impl TreePicker {
     }
 
     fn activate_selected(&self) -> Option<TreePickerMsg> {
-        let item = self.items.get(self.selected)?;
+        let selected = self.normalized_selected();
+        let item = self.items.get(selected)?;
         if item.disabled {
             return None;
         }
         if item.is_branch() {
-            Some(TreePickerMsg::Toggled(self.selected))
+            Some(TreePickerMsg::Toggled(selected))
         } else {
-            Some(TreePickerMsg::Selected(self.selected))
+            Some(TreePickerMsg::Selected(selected))
         }
     }
 
@@ -599,11 +607,12 @@ impl TreePicker {
         f: impl FnOnce(usize) -> TreePickerMsg,
         expected_open: bool,
     ) -> Option<TreePickerMsg> {
-        let item = self.items.get(self.selected)?;
+        let selected = self.normalized_selected();
+        let item = self.items.get(selected)?;
         if item.disabled || !item.is_branch() || item.is_open() != expected_open {
             None
         } else {
-            Some(f(self.selected))
+            Some(f(selected))
         }
     }
 
@@ -617,7 +626,11 @@ impl TreePicker {
     }
 
     fn clamp_selection(&mut self) {
-        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.selected = self.normalized_selected();
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.items.len().saturating_sub(1))
     }
 
     fn default_item_color(&self, item: &TreePickerItem) -> Color {
@@ -846,6 +859,45 @@ mod tests {
         assert_eq!(picker.handle_key(&key(KeyCode::PageDown)), None);
 
         assert_eq!(picker.selected_index(), picker.items_value().len() - 1);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_rendering_and_input() {
+        let mut picker = TreePicker::without_title()
+            .max_items(1)
+            .item(TreePickerItem::leaf("one"))
+            .item(TreePickerItem::leaf("two"));
+        picker.selected = usize::MAX;
+
+        assert_eq!(picker.selected_index(), 1);
+        assert_eq!(
+            picker.selected_item().map(TreePickerItem::label),
+            Some("two")
+        );
+        assert_eq!(
+            picker.handle_key(&key(KeyCode::Enter)),
+            Some(TreePickerMsg::Selected(1))
+        );
+
+        let plain = strip_ansi(&picker.view(24, 2));
+        assert!(plain.contains("two"), "{plain:?}");
+        assert!(!plain.contains("one"), "{plain:?}");
+        assert!(plain.contains("2/2"), "{plain:?}");
+
+        let Element::Box(column) = picker.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(selected_item) = &column.children[1] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(selected_item.content, "    two");
+        assert_eq!(selected_item.style.bg, Some(Color::Cyan));
+
+        assert_eq!(picker.handle_key(&key(KeyCode::Down)), None);
+        assert_eq!(picker.selected_index(), 1);
+
+        assert_eq!(picker.handle_key(&key(KeyCode::Up)), None);
+        assert_eq!(picker.selected_index(), 0);
     }
 
     #[test]
