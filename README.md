@@ -166,7 +166,7 @@ Run with `cargo run --example counter_element`.
 | `ToolStatusLine` | Single-line tool status with marker, detail, and suffix |
 | `Toast` / `ToastManager` | Transient notifications with string and Element rendering |
 | `Tree` | Expandable tree view |
-| `TreePicker` | Selectable, scroll-aware file and hierarchy picker |
+| `TreePicker` | Selectable file and hierarchy picker with click and wheel handling |
 | `Modal` | Overlay dialog |
 | `Viewport` | Scrollable content container with reusable text-selection helpers |
 | `WelcomeBanner` | First-run mascot/art banner with metadata, tips, and notices |
