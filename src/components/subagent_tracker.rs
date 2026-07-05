@@ -437,15 +437,15 @@ fn parse_elapsed_seconds(text: &str) -> Option<u64> {
     let text = text.trim();
     if let Some(raw) = text.strip_suffix("ms") {
         let millis = raw.trim().parse::<f64>().ok()?;
-        return Some((millis / 1000.0).ceil() as u64);
+        return ceil_elapsed_seconds(millis / 1000.0);
     }
     if let Some(raw) = text.strip_suffix('s') {
         let seconds = raw.trim().parse::<f64>().ok()?;
-        return Some(seconds.ceil() as u64);
+        return ceil_elapsed_seconds(seconds);
     }
     if let Some(raw) = text.strip_suffix('m') {
         let minutes = raw.trim().parse::<f64>().ok()?;
-        return Some((minutes * 60.0).ceil() as u64);
+        return ceil_elapsed_seconds(minutes * 60.0);
     }
     if let Some((minutes, seconds)) = text.split_once(':') {
         let minutes = minutes.trim().parse::<u64>().ok()?;
@@ -453,6 +453,18 @@ fn parse_elapsed_seconds(text: &str) -> Option<u64> {
         return Some(minutes.saturating_mul(60).saturating_add(seconds));
     }
     None
+}
+
+fn ceil_elapsed_seconds(seconds: f64) -> Option<u64> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    let seconds = seconds.ceil();
+    if seconds >= u64::MAX as f64 {
+        Some(u64::MAX)
+    } else {
+        Some(seconds as u64)
+    }
 }
 
 fn fmt_elapsed_seconds(seconds: u64) -> String {
@@ -599,6 +611,20 @@ mod tests {
         let status = tracker.summary_status();
 
         assert!(status.contains(&format!("↓ {} tokens", fmt_tokens(u64::MAX))));
+    }
+
+    #[test]
+    fn non_finite_elapsed_values_are_ignored() {
+        assert_eq!(parse_elapsed_seconds("NaNms"), None);
+        assert_eq!(parse_elapsed_seconds("infs"), None);
+        assert_eq!(parse_elapsed_seconds("-infm"), None);
+        assert_eq!(parse_elapsed_seconds("-1s"), None);
+
+        let tracker = SubagentTracker::new("elapsed")
+            .row(SubagentRow::new("bad", "ignored").elapsed("infs"))
+            .row(SubagentRow::new("good", "used").elapsed("1.2s"));
+
+        assert!(tracker.summary_status().contains("2.0s"));
     }
 
     #[test]
