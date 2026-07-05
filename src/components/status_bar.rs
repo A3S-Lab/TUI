@@ -91,9 +91,18 @@ impl StatusBar {
         let center_width = visible_len(&center);
         let center_start = (w.saturating_sub(center_width)) / 2;
         let left_full_width = visible_len(&self.left);
-        let center_fits = center_width > 0
-            && center_start > left_full_width
-            && center_start + center_width < right_start;
+        let center_end = center_start.saturating_add(center_width);
+        let left_clear = if left_full_width == 0 {
+            center_start >= left_full_width
+        } else {
+            center_start > left_full_width
+        };
+        let right_clear = if right_width == 0 {
+            center_end <= right_start
+        } else {
+            center_end < right_start
+        };
+        let center_fits = center_width > 0 && left_clear && right_clear;
 
         let line = if center_fits {
             let left_budget = center_start.saturating_sub(1);
@@ -178,6 +187,16 @@ mod tests {
         assert!(plain.starts_with('L'));
         assert!(plain.ends_with('R'));
         assert_eq!(visible_len(&plain), 20);
+    }
+
+    #[test]
+    fn center_only_renders_when_it_fills_width() {
+        let sb = StatusBar::new().center("mid");
+        let view = sb.view(3);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(plain, "mid");
+        assert_eq!(visible_len(&plain), 3);
     }
 
     #[test]
