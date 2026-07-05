@@ -250,6 +250,67 @@ impl LogView {
         )
     }
 
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if let Some(title) = self.title_line() {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if self.show_separator && self.has_title() && children.len() < height {
+            children.push(Element::Text(
+                TextElement::new("─").fg(self.separator_color),
+            ));
+        }
+
+        let footer_rows = usize::from(self.footer.as_ref().is_some_and(|f| !f.is_empty()));
+        let body_height = height.saturating_sub(children.len() + footer_rows);
+        match self.state {
+            LogViewState::Loading if body_height > 0 => {
+                children.push(Element::Text(
+                    TextElement::new(self.loading_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
+            LogViewState::Ready | LogViewState::Refreshing
+                if self.lines.is_empty() && body_height > 0 =>
+            {
+                children.push(Element::Text(
+                    TextElement::new(self.empty_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
+            LogViewState::Ready | LogViewState::Refreshing => {
+                let scroll = self.normalized_scroll_for_body_height(body_height);
+                for line in self.lines.iter().skip(scroll).take(body_height) {
+                    children.push(Element::Text(
+                        TextElement::new(clean_log_line(line)).fg(self.text_color),
+                    ));
+                }
+            }
+            LogViewState::Loading => {}
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(footer).fg(self.metadata_color),
+            ));
+        }
+        children.truncate(height);
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
     fn render_lines(&self, width: usize, height: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if let Some(title) = self.title_line() {
@@ -478,6 +539,52 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_limits_scrolled_body_rows() {
+        let el: Element<()> = LogView::without_title()
+            .lines(vec!["one", "two", "three"])
+            .scroll(1)
+            .element_with_height(1);
+
+        let Element::Box(column) = el else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 1);
+        assert_eq!(text, "two");
+    }
+
+    #[test]
+    fn element_with_height_keeps_footer_budget() {
+        let el: Element<()> = LogView::without_title()
+            .lines(vec!["one", "two", "three"])
+            .scroll(1)
+            .footer("tail")
+            .element_with_height(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("two"));
+        assert!(text.contains("tail"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("three"));
     }
 
     #[test]
