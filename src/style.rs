@@ -399,7 +399,6 @@ impl Style {
         let inner_width = content_width + pad_left + pad_right;
 
         let border_chars = self.border.chars();
-        let has_border = border_chars.is_some();
 
         let mut result = Vec::new();
 
@@ -451,12 +450,21 @@ impl Style {
                 " ".repeat(pad_right)
             );
 
-            let full_line = match &border_chars {
-                Some(bc) => format!("{}{}{}{}{}", margin_left, bc.v, padded, bc.v, margin_right),
-                None => format!("{}{}{}", margin_left, padded, margin_right),
+            let styled_line = match &border_chars {
+                Some(bc) => self.apply_bordered_content_style(
+                    &margin_left,
+                    bc.v,
+                    &padded,
+                    bc.v,
+                    &margin_right,
+                ),
+                None => {
+                    let full_line = format!("{}{}{}", margin_left, padded, margin_right);
+                    self.apply_text_style(&full_line)
+                }
             };
 
-            result.push(self.apply_line_style(&full_line, has_border));
+            result.push(styled_line);
         }
 
         // Bottom padding
@@ -537,13 +545,33 @@ impl Style {
         }
     }
 
-    fn apply_line_style(&self, line: &str, has_border: bool) -> String {
-        if !has_border {
-            return self.apply_text_style(line);
+    fn apply_bordered_content_style(
+        &self,
+        margin_left: &str,
+        left_border: char,
+        content: &str,
+        right_border: char,
+        margin_right: &str,
+    ) -> String {
+        let left_border = left_border.to_string();
+        let right_border = right_border.to_string();
+
+        format!(
+            "{}{}{}{}{}",
+            self.apply_text_style_nonempty(margin_left),
+            self.apply_border_style(&left_border),
+            self.apply_text_style(content),
+            self.apply_border_style(&right_border),
+            self.apply_text_style_nonempty(margin_right)
+        )
+    }
+
+    fn apply_text_style_nonempty(&self, text: &str) -> String {
+        if text.is_empty() {
+            String::new()
+        } else {
+            self.apply_text_style(text)
         }
-        // For bordered content, apply border style to border chars
-        // and text style to inner content
-        self.apply_text_style(line)
     }
 
     fn apply_text_style(&self, text: &str) -> String {
@@ -1168,6 +1196,22 @@ mod tests {
             out.lines().collect::<Vec<_>>(),
             vec!["╭─╮", "│x│", "│ │", "╰─╯"]
         );
+    }
+
+    #[test]
+    fn render_bordered_content_uses_border_style_for_vertical_edges() {
+        let out = Style::new()
+            .fg(Color::Red)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36m╭─╮\x1b[0m");
+        assert_eq!(lines[1], "\x1b[36m│\x1b[0m\x1b[31mx\x1b[0m\x1b[36m│\x1b[0m");
+        assert_eq!(lines[2], "\x1b[36m╰─╯\x1b[0m");
+        assert_eq!(strip_ansi(lines[1]), "│x│");
+        assert_eq!(visible_len(lines[1]), 3);
     }
 
     #[test]
