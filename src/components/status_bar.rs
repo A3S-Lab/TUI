@@ -6,7 +6,7 @@ pub struct StatusBar {
     center: String,
     right: String,
     fg: Color,
-    bg: Color,
+    bg: Option<Color>,
     bold: bool,
 }
 
@@ -17,7 +17,7 @@ impl StatusBar {
             center: String::new(),
             right: String::new(),
             fg: Color::White,
-            bg: Color::BrightBlack,
+            bg: Some(Color::BrightBlack),
             bold: false,
         }
     }
@@ -43,7 +43,12 @@ impl StatusBar {
     }
 
     pub fn bg(mut self, color: Color) -> Self {
-        self.bg = color;
+        self.bg = Some(color);
+        self
+    }
+
+    pub fn no_bg(mut self) -> Self {
+        self.bg = None;
         self
     }
 
@@ -70,12 +75,11 @@ impl StatusBar {
             children.push(Element::Text(self.text_element(&self.right)));
         }
 
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Row)
-                .bg(self.bg)
-                .children(children),
-        )
+        let mut row = BoxElement::new().direction(FlexDirection::Row);
+        if let Some(bg) = self.bg {
+            row = row.bg(bg);
+        }
+        Element::Box(row.children(children))
     }
 
     pub fn view(&self, width: u16) -> String {
@@ -136,7 +140,10 @@ impl StatusBar {
     }
 
     fn style(&self) -> Style {
-        let mut style = Style::new().fg(self.fg).bg(self.bg);
+        let mut style = Style::new().fg(self.fg);
+        if let Some(bg) = self.bg {
+            style = style.bg(bg);
+        }
         if self.bold {
             style = style.bold();
         }
@@ -241,6 +248,28 @@ mod tests {
 
         assert_eq!(visible_len(&view), 18);
         assert!(plain.ends_with("运行中"));
+    }
+
+    #[test]
+    fn no_bg_keeps_foreground_without_background() {
+        let sb = StatusBar::new()
+            .left("left")
+            .right("right")
+            .fg(Color::Cyan)
+            .no_bg();
+        let view = sb.view(20);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(visible_len(&view), 20);
+        assert!(plain.starts_with("left"));
+        assert!(plain.ends_with("right"));
+        assert!(view.contains("\x1b[36m"));
+        assert!(!view.contains("\x1b[46m"));
+
+        let Element::Box(row) = sb.element::<()>() else {
+            panic!("expected row");
+        };
+        assert_eq!(row.style.bg, None);
     }
 
     #[test]

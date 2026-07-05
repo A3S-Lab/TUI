@@ -152,7 +152,7 @@ Run with `cargo run --example counter_element`.
 | `Sparkline` | Inline trend chart |
 | `SplitPane` | Two-column panel for IDE, git, memory, and detail views |
 | `Spinner` | Loading animation |
-| `StatusBar` | Bottom status bar |
+| `StatusBar` | Bottom/header status bar with optional background |
 | `SubagentTracker` | Parallel subagent/background work tracker |
 | `Table` | Data table with headers |
 | `Tabs` | Tab navigation with metadata and per-tab accents |
