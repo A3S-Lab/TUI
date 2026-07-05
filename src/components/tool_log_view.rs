@@ -129,20 +129,24 @@ impl ToolLogView {
 
     pub fn record(mut self, record: ToolLogRecord) -> Self {
         self.records.push(record);
+        self.clamp_scroll();
         self
     }
 
     pub fn records(mut self, records: Vec<ToolLogRecord>) -> Self {
         self.records = records;
+        self.clamp_scroll();
         self
     }
 
     pub fn add_record(&mut self, record: ToolLogRecord) {
         self.records.push(record);
+        self.clamp_scroll();
     }
 
     pub fn scroll(mut self, scroll: usize) -> Self {
         self.scroll = scroll;
+        self.clamp_scroll();
         self
     }
 
@@ -158,6 +162,7 @@ impl ToolLogView {
 
     pub fn max_output_lines_per_record(mut self, max: usize) -> Self {
         self.max_output_lines_per_record = Some(max.clamp(1, MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD));
+        self.clamp_scroll();
         self
     }
 
@@ -322,6 +327,10 @@ impl ToolLogView {
             }
         }
         rows
+    }
+
+    fn clamp_scroll(&mut self) {
+        self.scroll = self.scroll.min(self.plain_rows().len().saturating_sub(1));
     }
 
     fn status_color(&self, status: ToolLogStatus) -> Color {
@@ -504,6 +513,25 @@ mod tests {
 
         assert!(plain.contains("hello"));
         assert!(!plain.contains("#1 · read"));
+    }
+
+    #[test]
+    fn scroll_past_rows_clamps_to_last_row() {
+        let rendered = sample().scroll(usize::MAX).view(40, 3);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#2 · bash · exit 2"));
+    }
+
+    #[test]
+    fn records_reclamp_stale_scroll_after_rows_shrink() {
+        let rendered = sample()
+            .scroll(usize::MAX)
+            .records(vec![ToolLogRecord::ok("only")])
+            .view(40, 2);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#1 · only · ok"));
     }
 
     #[test]
