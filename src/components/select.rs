@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseEvent, MouseEventKind};
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, Color, Style};
 use crossterm::event::KeyCode;
 
 pub struct Select {
@@ -133,11 +133,11 @@ impl Select {
                 let prefix = if idx == self.cursor { ">" } else { " " };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
-                        Some(label) => pad_or_truncate(&format!("{prefix} {label} {item}"), width),
-                        None => pad_or_truncate(&format!("{prefix}   {item}"), width),
+                        Some(label) => fit_visible(&format!("{prefix} {label} {item}"), width),
+                        None => fit_visible(&format!("{prefix}   {item}"), width),
                     }
                 } else {
-                    pad_or_truncate(&format!("{prefix} {item}"), width)
+                    fit_visible(&format!("{prefix} {item}"), width)
                 };
                 if idx == self.cursor && self.focused {
                     Style::new().fg(Color::Cyan).bold().render(&raw)
@@ -207,19 +207,10 @@ fn number_shortcut_label(idx: usize) -> Option<char> {
     }
 }
 
-fn pad_or_truncate(value: &str, width: usize) -> String {
-    let truncated = truncate_visible(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        truncated
-    } else {
-        format!("{truncated}{}", " ".repeat(width - len))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::visible_len;
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {

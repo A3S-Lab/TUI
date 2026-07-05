@@ -1,4 +1,4 @@
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
 const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
@@ -228,7 +228,7 @@ impl DataTable {
             Style::new()
                 .fg(self.header_fg)
                 .bold()
-                .render(&pad_or_truncate(&header, width)),
+                .render(&fit_visible(&header, width)),
         );
 
         if height == 1 {
@@ -243,7 +243,7 @@ impl DataTable {
         lines.push(
             Style::new()
                 .fg(self.separator_fg)
-                .render(&pad_or_truncate(&sep, width)),
+                .render(&fit_visible(&sep, width)),
         );
 
         if height == 2 {
@@ -256,7 +256,7 @@ impl DataTable {
                 Style::new()
                     .fg(Color::BrightBlack)
                     .italic()
-                    .render(&pad_or_truncate(msg, width)),
+                    .render(&fit_visible(msg, width)),
             );
             return lines.join("\n");
         }
@@ -270,7 +270,7 @@ impl DataTable {
         for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
             let selected = self.selected == Some(idx);
             let raw = self.row_line(row, &cols, &widths, selected, &gap_text);
-            let line = pad_or_truncate(&raw, width);
+            let line = fit_visible(&raw, width);
             let mut style = Style::new();
             if selected {
                 if let Some(fg) = row.selected_fg {
@@ -429,7 +429,7 @@ impl DataTable {
 }
 
 fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
-    let truncated = truncate_to_width(value, width);
+    let truncated = truncate_visible(value, width);
     let len = visible_len(&truncated);
     if len >= width {
         return truncated;
@@ -448,20 +448,6 @@ fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
             )
         }
     }
-}
-
-fn pad_or_truncate(value: &str, width: usize) -> String {
-    let truncated = truncate_to_width(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        truncated
-    } else {
-        format!("{truncated}{}", " ".repeat(width - len))
-    }
-}
-
-fn truncate_to_width(value: &str, width: usize) -> String {
-    truncate_visible(value, width)
 }
 
 #[cfg(test)]
