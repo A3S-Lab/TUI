@@ -120,7 +120,7 @@ Run with `cargo run --example counter_element`.
 | `Confirm` | Keyboard/mouse confirmation with inline, box, and full-screen rendering |
 | `ConnectorBlock` | Connector-led compact output and continuation rows |
 | `CursorLine` | Display-width-aware editor line with a block cursor |
-| `DataTable` | Responsive, scrollable data table with line and Element rendering |
+| `DataTable` | Responsive, scrollable data table with line and Element rendering plus wheel/click row selection |
 | `DetailPanel` | Compact selected-row details with metadata and actions |
 | `DiffView` | Unified diff renderer for edits and tool output |
 | `Divider` | Element and line-rendered separators |

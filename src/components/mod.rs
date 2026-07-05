@@ -78,7 +78,7 @@ pub use choice_prompt::{ChoicePrompt, ChoicePromptItem, ChoicePromptMsg};
 pub use confirm::{Confirm, ConfirmMsg};
 pub use connector_block::{ConnectorBlock, ConnectorRow};
 pub use cursor_line::CursorLine;
-pub use data_table::{CellAlign, DataColumn, DataRow, DataTable};
+pub use data_table::{CellAlign, DataColumn, DataRow, DataTable, DataTableMsg};
 pub use detail_panel::{DetailPanel, DetailRow, DetailRowKind};
 pub use diff_view::{DiffLine, DiffLineKind, DiffView};
 pub use divider::{divider, divider_line, divider_line_with, divider_with};

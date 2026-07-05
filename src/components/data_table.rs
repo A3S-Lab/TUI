@@ -1,4 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
@@ -138,10 +139,16 @@ pub struct DataTable {
     rows: Vec<DataRow>,
     selected: Option<usize>,
     scroll: usize,
+    y_offset: u16,
     gap: usize,
     header_fg: Color,
     separator_fg: Color,
     empty: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataTableMsg {
+    Selected(usize),
 }
 
 impl DataTable {
@@ -151,6 +158,7 @@ impl DataTable {
             rows: Vec::new(),
             selected: None,
             scroll: 0,
+            y_offset: 0,
             gap: 2,
             header_fg: Color::BrightWhite,
             separator_fg: Color::BrightBlack,
@@ -199,6 +207,66 @@ impl DataTable {
 
     pub fn rows(&self) -> &[DataRow] {
         &self.rows
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.normalized_selected()
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    pub fn set_y_offset(&mut self, y_offset: u16) {
+        self.y_offset = y_offset;
+    }
+
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent, height: usize) -> Option<DataTableMsg> {
+        let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+        if height == 0 || local_row >= height || self.rows.is_empty() {
+            return None;
+        }
+
+        let body_height = height.saturating_sub(2);
+        if body_height == 0 {
+            return None;
+        }
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                let selected = self.normalized_selected().unwrap_or(0);
+                self.selected = Some(selected.saturating_sub(1));
+                self.keep_selected_visible(body_height);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                let selected = self.normalized_selected().unwrap_or(0);
+                self.selected = Some(
+                    selected
+                        .saturating_add(1)
+                        .min(self.rows.len().saturating_sub(1)),
+                );
+                self.keep_selected_visible(body_height);
+                None
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let body_row = local_row.checked_sub(2)?;
+                if body_row >= body_height {
+                    return None;
+                }
+                let index = self
+                    .visible_body_start(body_height)
+                    .saturating_add(body_row);
+                if index < self.rows.len() {
+                    self.selected = Some(index);
+                    self.keep_selected_visible(body_height);
+                    Some(DataTableMsg::Selected(index))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -545,6 +613,10 @@ impl DataTable {
         start.min(max_start)
     }
 
+    fn keep_selected_visible(&mut self, body_height: usize) {
+        self.scroll = self.visible_body_start(body_height);
+    }
+
     fn normalized_selected(&self) -> Option<usize> {
         self.selected
             .map(|selected| selected.min(self.rows.len().saturating_sub(1)))
@@ -751,6 +823,60 @@ mod tests {
         assert!(plain.contains("Name"));
         assert!(!plain.contains("one"));
         assert!(plain.contains("two"));
+    }
+
+    #[test]
+    fn mouse_wheel_moves_selection_at_y_offset() {
+        use crate::event::MouseEventKind;
+
+        let mut table = DataTable::new(vec![DataColumn::new("Name")])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .selected(Some(0));
+        table.set_y_offset(3);
+
+        let msg = table.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 5,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            4,
+        );
+
+        assert_eq!(msg, None);
+        assert_eq!(table.selected_index(), Some(1));
+        assert_eq!(table.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn mouse_click_selects_visible_body_row_at_y_offset() {
+        use crate::event::{MouseButton, MouseEventKind};
+
+        let mut table = DataTable::new(vec![DataColumn::new("Name")])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .row(DataRow::new(vec!["four"]))
+            .selected(Some(2))
+            .scroll(2);
+        table.set_y_offset(4);
+
+        let msg = table.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 7,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            4,
+        );
+
+        assert_eq!(msg, Some(DataTableMsg::Selected(3)));
+        assert_eq!(table.selected_index(), Some(3));
+        assert_eq!(table.scroll_offset(), 2);
     }
 
     #[test]
