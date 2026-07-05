@@ -95,7 +95,7 @@ impl Color {
     pub fn lighten(&self, amount: f64) -> Self {
         match self {
             Color::Rgb(r, g, b) => {
-                let factor = amount.clamp(0.0, 1.0);
+                let factor = normalized_color_amount(amount);
                 Color::Rgb(
                     (*r as f64 + (255.0 - *r as f64) * factor) as u8,
                     (*g as f64 + (255.0 - *g as f64) * factor) as u8,
@@ -110,7 +110,7 @@ impl Color {
     pub fn darken(&self, amount: f64) -> Self {
         match self {
             Color::Rgb(r, g, b) => {
-                let factor = 1.0 - amount.clamp(0.0, 1.0);
+                let factor = 1.0 - normalized_color_amount(amount);
                 Color::Rgb(
                     (*r as f64 * factor) as u8,
                     (*g as f64 * factor) as u8,
@@ -134,6 +134,14 @@ impl Color {
     /// Create a color from ANSI 256 palette index.
     pub fn ansi(n: u8) -> Self {
         Color::Ansi256(n)
+    }
+}
+
+fn normalized_color_amount(amount: f64) -> f64 {
+    if amount.is_finite() {
+        amount.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -1092,6 +1100,18 @@ mod tests {
     fn color_lighten_non_rgb_is_noop() {
         let c = Color::Red;
         assert_eq!(c.lighten(0.5), Color::Red);
+    }
+
+    #[test]
+    fn color_lighten_and_darken_ignore_non_finite_amounts() {
+        let c = Color::Rgb(120, 80, 40);
+
+        assert_eq!(c.lighten(f64::NAN), c);
+        assert_eq!(c.lighten(f64::INFINITY), c);
+        assert_eq!(c.lighten(f64::NEG_INFINITY), c);
+        assert_eq!(c.darken(f64::NAN), c);
+        assert_eq!(c.darken(f64::INFINITY), c);
+        assert_eq!(c.darken(f64::NEG_INFINITY), c);
     }
 
     #[test]
