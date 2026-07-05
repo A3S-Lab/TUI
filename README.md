@@ -132,7 +132,7 @@ Run with `cargo run --example counter_element`.
 | `LevelSlider` | Discrete level slider with tick labels and selected marker |
 | `List` | Scrollable list with selection |
 | `LogView` | Scrollable log/output panel with loading and empty states |
-| `MenuPanel` | Titled scroll-aware menu for command palettes and overlays |
+| `MenuPanel` | Titled menu with scroll windows, click selection, wheel navigation, and checkbox toggles |
 | `Meter` | Compact value meter with optional value label |
 | `MetricTrend` | Metric with trend visualization |
 | `ModeLine` | Current mode row with shortcut hints |

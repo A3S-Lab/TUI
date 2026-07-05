@@ -339,6 +339,21 @@ impl MenuPanel {
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<MenuPanelMsg> {
         match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                self.selected = self.normalized_selected().saturating_sub(1);
+                self.keep_selected_visible(1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                let selected = self.normalized_selected();
+                self.selected = selected
+                    .saturating_add(1)
+                    .min(self.items.len().saturating_sub(1));
+                self.keep_selected_visible(1);
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let item_row = local_row.checked_sub(self.item_start_row())?;
@@ -349,7 +364,7 @@ impl MenuPanel {
                 let index = self.window_start(item_count).saturating_add(item_row);
                 if index < self.items.len() {
                     self.selected = index;
-                    self.selected_msg()
+                    self.clicked_msg()
                 } else {
                     None
                 }
@@ -667,6 +682,16 @@ impl MenuPanel {
         }
     }
 
+    fn clicked_msg(&self) -> Option<MenuPanelMsg> {
+        let selected = self.normalized_selected();
+        let item = self.items.get(selected)?;
+        if item.checked.is_some() {
+            self.selected_toggle_msg()
+        } else {
+            self.selected_msg()
+        }
+    }
+
     fn number_shortcut_msg(&mut self, c: char) -> Option<MenuPanelMsg> {
         let index = number_shortcut_index(c)?;
         if index < self.items.len() {
@@ -975,8 +1000,49 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
 
-        assert_eq!(msg, Some(MenuPanelMsg::Selected(2)));
+        assert_eq!(msg, Some(MenuPanelMsg::Toggled(2)));
         assert_eq!(panel.selected_index(), 2);
+    }
+
+    #[test]
+    fn mouse_click_on_plain_row_selects_it() {
+        let mut panel = sample_panel();
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, Some(MenuPanelMsg::Selected(0)));
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_menu_item() {
+        let mut panel = sample_panel();
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 1);
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 0,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 0);
     }
 
     #[test]
