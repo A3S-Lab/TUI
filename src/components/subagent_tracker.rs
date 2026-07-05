@@ -221,7 +221,11 @@ impl SubagentTracker {
         let total = self.rows.len();
         let done = self.rows.iter().filter(|row| row.done).count();
         let running = total.saturating_sub(done);
-        let tokens = self.rows.iter().map(|row| row.tokens).sum::<u64>();
+        let tokens = self
+            .rows
+            .iter()
+            .map(|row| row.tokens)
+            .fold(0u64, u64::saturating_add);
         let elapsed = aggregate_elapsed(&self.rows);
         let status = if done == total {
             format!("{done}/{total} agents done")
@@ -584,6 +588,17 @@ mod tests {
         for row in plain.lines() {
             assert_eq!(visible_len(row), 36, "{row:?}");
         }
+    }
+
+    #[test]
+    fn summary_token_total_saturates_on_overflow() {
+        let tracker = SubagentTracker::new("large token counts")
+            .row(SubagentRow::new("one", "done").tokens(u64::MAX))
+            .row(SubagentRow::new("two", "done").tokens(1));
+
+        let status = tracker.summary_status();
+
+        assert!(status.contains(&format!("↓ {} tokens", fmt_tokens(u64::MAX))));
     }
 
     #[test]
