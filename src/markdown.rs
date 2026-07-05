@@ -85,7 +85,10 @@ impl Markdown {
                 let text = self.collect_inline(node);
                 let wrapped = wrap_text(&text, self.width.saturating_sub(depth * 2));
                 for line in wrapped {
-                    output.push(format!("{}{}", " ".repeat(depth * 2), line));
+                    output.push(fit_markdown_line(
+                        format!("{}{}", " ".repeat(depth * 2), line),
+                        self.width,
+                    ));
                 }
                 // No trailing blank line — keeps chat messages tight (a model that
                 // writes one sentence per paragraph would otherwise be double-spaced).
@@ -939,6 +942,16 @@ mod tests {
 
         for line in output.lines() {
             assert!(visible_len(line) <= 8, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn nested_paragraphs_respect_configured_width() {
+        let md = Markdown::new().with_width(2);
+        let output = md.render("- item\n\n  continuation text");
+
+        for line in output.lines() {
+            assert!(visible_len(line) <= 2, "{line:?}");
         }
     }
 
