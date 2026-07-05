@@ -373,6 +373,8 @@ impl Textarea {
                 }
             }
         }
+        self.fit_height();
+        self.ensure_visible();
     }
 
     fn can_insert_more(&self) -> bool {
@@ -923,6 +925,16 @@ mod tests {
 
         assert_eq!(ta.value(), "ab\ncd");
         assert_eq!(ta.total_chars(), 5);
+    }
+
+    #[test]
+    fn insert_str_updates_auto_grow_height() {
+        let mut ta = Textarea::new().with_height(1).with_auto_grow(8);
+
+        ta.insert_str("a\nb\nc");
+
+        assert_eq!(ta.height(), 3);
+        assert_eq!(ta.view(), "a\nb\nc");
     }
 
     #[test]
