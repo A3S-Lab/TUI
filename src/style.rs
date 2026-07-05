@@ -383,8 +383,17 @@ impl Style {
 
     pub fn render(&self, content: &str) -> String {
         let lines = split_lines_preserving_trailing_blank(content);
+        let content_height = self.content_height(lines.len());
+        let mut content_lines = lines
+            .iter()
+            .copied()
+            .take(content_height)
+            .collect::<Vec<_>>();
+        while content_lines.len() < content_height {
+            content_lines.push("");
+        }
 
-        let content_width = self.content_width(&lines);
+        let content_width = self.content_width(&content_lines);
         let pad_left = self.padding[3] as usize;
         let pad_right = self.padding[1] as usize;
         let inner_width = content_width + pad_left + pad_right;
@@ -432,7 +441,7 @@ impl Style {
         }
 
         // Content lines
-        for line in &lines {
+        for line in &content_lines {
             let visible_width = visible_len(line);
             let aligned = self.align_text(line, visible_width, content_width);
             let padded = format!(
@@ -484,6 +493,14 @@ impl Style {
             result.push(String::new());
         }
 
+        if let Some(height) = self.height {
+            let height = height as usize;
+            result.truncate(height);
+            while result.len() < height {
+                result.push(String::new());
+            }
+        }
+
         result.join("\n")
     }
 
@@ -495,6 +512,17 @@ impl Style {
             (w as usize).saturating_sub(border_cost + pad_cost + margin_cost)
         } else {
             lines.iter().map(|l| visible_len(l)).max().unwrap_or(0)
+        }
+    }
+
+    fn content_height(&self, line_count: usize) -> usize {
+        if let Some(h) = self.height {
+            let border_cost = if self.border != Border::None { 2 } else { 0 };
+            let pad_cost = self.padding[0] as usize + self.padding[2] as usize;
+            let margin_cost = self.margin[0] as usize + self.margin[2] as usize;
+            (h as usize).saturating_sub(border_cost + pad_cost + margin_cost)
+        } else {
+            line_count
         }
     }
 
@@ -1220,6 +1248,46 @@ mod tests {
 
         assert_eq!(lines, vec![" ╭────╮ ", " │abc…│ ", " ╰────╯ "]);
         assert!(lines.iter().all(|line| visible_len(line) == 8));
+    }
+
+    #[test]
+    fn render_height_truncates_and_pads_content_rows() {
+        let truncated = Style::new().width(4).height(2).render("one\ntwo\nthree");
+        let padded = Style::new().width(4).height(3).render("one");
+
+        assert_eq!(truncated.lines().collect::<Vec<_>>(), vec!["one ", "two "]);
+        assert_eq!(
+            padded.lines().collect::<Vec<_>>(),
+            vec!["one ", "    ", "    "]
+        );
+    }
+
+    #[test]
+    fn render_bordered_height_limits_inner_content() {
+        let out = Style::new()
+            .width(6)
+            .height(3)
+            .border(Border::Rounded)
+            .render("one\ntwo");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["╭────╮", "│one │", "╰────╯"]);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn render_height_includes_vertical_spacing() {
+        let out = Style::new()
+            .width(6)
+            .height(6)
+            .margin_top(1)
+            .margin_bottom(1)
+            .padding(1, 1)
+            .render("x\ny");
+        let lines = out.split('\n').collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["", "      ", " x    ", " y    ", "      ", ""]);
+        assert_eq!(lines.len(), 6);
     }
 
     #[test]
