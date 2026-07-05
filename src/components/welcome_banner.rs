@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, pad_visible, visible_len, Color, Style};
 
 const MAX_WELCOME_ART_OFFSET: usize = u16::MAX as usize;
 const MAX_WELCOME_GAP: usize = u16::MAX as usize;
@@ -300,7 +300,7 @@ impl WelcomeBanner {
             let mascot = self
                 .mascot_lines
                 .get(index)
-                .map(|line| pad_to_width(line, mascot_width))
+                .map(|line| pad_visible(line, mascot_width))
                 .unwrap_or_else(|| " ".repeat(mascot_width));
             let art = index
                 .checked_sub(self.art_offset)
@@ -347,15 +347,6 @@ impl Default for WelcomeBanner {
 struct LogoRow {
     mascot: String,
     art: String,
-}
-
-fn pad_to_width(value: &str, width: usize) -> String {
-    let len = visible_len(value);
-    if len >= width {
-        value.to_string()
-    } else {
-        format!("{value}{}", " ".repeat(width - len))
-    }
 }
 
 #[cfg(test)]
