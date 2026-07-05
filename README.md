@@ -114,11 +114,11 @@ Run with `cargo run --example counter_element`.
 | `Alert` | Colored alerts (Success/Info/Warning/Error) |
 | `Badge` | Inline status badges |
 | `Breadcrumb` | Hierarchical path navigation |
-| `Checklist` | Status-aware task/TODO list |
+| `Checklist` | Status-aware task/TODO list with configurable glyph/text color |
 | `ChipStrip` | Compact colored chip strip with active chip styling |
 | `ChoicePrompt` | Numbered action picker for approvals and command choices |
 | `Confirm` | Keyboard, mouse, and line-rendered confirmation prompt |
-| `ConnectorBlock` | Connector-led compact output and task-summary rows |
+| `ConnectorBlock` | Connector-led compact output and continuation rows |
 | `CursorLine` | Display-width-aware editor line with a block cursor |
 | `DataTable` | Responsive, scrollable data table with line and Element rendering |
 | `DetailPanel` | Compact selected-row details with metadata and actions |

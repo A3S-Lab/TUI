@@ -30,6 +30,8 @@ pub struct ChecklistItem {
     status: ChecklistStatus,
     glyph: Option<char>,
     color: Option<Color>,
+    glyph_color: Option<Color>,
+    text_color: Option<Color>,
 }
 
 impl ChecklistItem {
@@ -39,6 +41,8 @@ impl ChecklistItem {
             status: ChecklistStatus::Pending,
             glyph: None,
             color: None,
+            glyph_color: None,
+            text_color: None,
         }
     }
 
@@ -69,6 +73,16 @@ impl ChecklistItem {
         self
     }
 
+    pub fn glyph_color(mut self, color: Color) -> Self {
+        self.glyph_color = Some(color);
+        self
+    }
+
+    pub fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
+        self
+    }
+
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -93,6 +107,7 @@ pub struct Checklist {
     done_color: Color,
     error_color: Color,
     text_color: Color,
+    strikethrough_done: bool,
 }
 
 impl Checklist {
@@ -106,6 +121,7 @@ impl Checklist {
             done_color: Color::BrightBlack,
             error_color: Color::Red,
             text_color: Color::White,
+            strikethrough_done: true,
         }
     }
 
@@ -157,6 +173,11 @@ impl Checklist {
         self
     }
 
+    pub fn strikethrough_done(mut self, enabled: bool) -> Self {
+        self.strikethrough_done = enabled;
+        self
+    }
+
     pub fn items(&self) -> &[ChecklistItem] {
         &self.items
     }
@@ -188,7 +209,7 @@ impl Checklist {
             .enumerate()
             .map(|(index, item)| {
                 let mut label = TextElement::new(item.label.clone()).fg(self.item_text_color(item));
-                if item.status == ChecklistStatus::Done {
+                if self.strikethrough_done && item.status == ChecklistStatus::Done {
                     label = label.strikethrough();
                 }
 
@@ -224,7 +245,7 @@ impl Checklist {
             width.saturating_sub(visible_len(&prefix).saturating_add(visible_len(gap)));
         let label = truncate_visible(&item.label, label_width);
         let mut style = Style::new().fg(self.item_text_color(item));
-        if item.status == ChecklistStatus::Done {
+        if self.strikethrough_done && item.status == ChecklistStatus::Done {
             style = style.strikethrough();
         }
         fit_visible(&format!("{prefix}{gap}{}", style.render(&label)), width)
@@ -262,16 +283,18 @@ impl Checklist {
     }
 
     fn glyph_color(&self, item: &ChecklistItem) -> Color {
-        item.color.unwrap_or(match item.status {
-            ChecklistStatus::Pending => self.pending_color,
-            ChecklistStatus::Active => self.active_color,
-            ChecklistStatus::Done => self.done_color,
-            ChecklistStatus::Error => self.error_color,
-        })
+        item.glyph_color
+            .or(item.color)
+            .unwrap_or(match item.status {
+                ChecklistStatus::Pending => self.pending_color,
+                ChecklistStatus::Active => self.active_color,
+                ChecklistStatus::Done => self.done_color,
+                ChecklistStatus::Error => self.error_color,
+            })
     }
 
     fn item_text_color(&self, item: &ChecklistItem) -> Color {
-        item.color.unwrap_or(match item.status {
+        item.text_color.or(item.color).unwrap_or(match item.status {
             ChecklistStatus::Pending => self.text_color,
             ChecklistStatus::Active => self.active_color,
             ChecklistStatus::Done => self.done_color,
@@ -393,6 +416,31 @@ mod tests {
         let rendered = checklist.view(30, 1);
 
         assert!(rendered.contains("\x1b[9;"));
+    }
+
+    #[test]
+    fn row_color_still_tints_glyph_and_label() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("tinted").color(Color::Yellow)]);
+        let rendered = checklist.view(30, 1);
+
+        assert!(rendered.contains("\x1b[33m◻\x1b[0m"));
+        assert!(rendered.contains("\x1b[33mtinted\x1b[0m"));
+    }
+
+    #[test]
+    fn glyph_and_text_colors_can_differ_without_done_strike() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("agent result")
+            .done()
+            .glyph('✓')
+            .glyph_color(Color::Green)
+            .text_color(Color::BrightBlack)])
+        .strikethrough_done(false);
+        let rendered = checklist.view(40, 1);
+
+        assert_eq!(strip_ansi(&rendered).trim_end(), "✓ agent result");
+        assert!(rendered.contains("\x1b[32m✓\x1b[0m"));
+        assert!(rendered.contains("\x1b[90magent result\x1b[0m"));
+        assert!(!rendered.contains("\x1b[9;"));
     }
 
     #[test]
