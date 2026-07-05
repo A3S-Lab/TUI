@@ -1,6 +1,6 @@
 use crate::element::{BorderStyle as ElBorder, BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{
-    split_nonempty_lines_preserving_trailing_blank, visible_len, Border, Color, Style,
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, visible_len, Border, Color, Style,
 };
 
 pub struct Modal {
@@ -98,8 +98,14 @@ impl Modal {
     }
 
     pub fn view(&self, screen_width: u16, screen_height: u16) -> String {
+        let screen_width = screen_width as usize;
+        let screen_height = screen_height as usize;
+        if screen_width == 0 || screen_height == 0 {
+            return String::new();
+        }
+
         let content_width = self.compute_width();
-        let modal_width = content_width + 4;
+        let modal_width = content_width.saturating_add(4).min(screen_width);
 
         let mut inner_lines = Vec::new();
 
@@ -141,8 +147,8 @@ impl Modal {
         let box_lines: Vec<&str> = rendered_box.lines().collect();
         let box_height = box_lines.len();
 
-        let top_pad = (screen_height as usize).saturating_sub(box_height) / 2;
-        let left_pad = (screen_width as usize).saturating_sub(modal_width) / 2;
+        let top_pad = screen_height.saturating_sub(box_height) / 2;
+        let left_pad = screen_width.saturating_sub(modal_width) / 2;
 
         let mut output = Vec::new();
 
@@ -154,11 +160,20 @@ impl Modal {
             output.push(format!("{}{}", " ".repeat(left_pad), line));
         }
 
-        for _ in 0..(screen_height as usize).saturating_sub(top_pad + box_height) {
+        for _ in 0..screen_height.saturating_sub(top_pad + box_height) {
             output.push(String::new());
         }
 
-        output.join("\n")
+        output.truncate(screen_height);
+        while output.len() < screen_height {
+            output.push(String::new());
+        }
+
+        output
+            .into_iter()
+            .map(|line| fit_visible(&line, screen_width))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn compute_width(&self) -> usize {
@@ -298,6 +313,28 @@ mod tests {
 
         assert_eq!(modal.update(ModalMsg::Select(99)), None);
         assert_eq!(modal.confirm(), 0);
+    }
+
+    #[test]
+    fn modal_view_clamps_to_screen_size() {
+        let rendered = Modal::new()
+            .title("Confirm an unusually long operation title")
+            .body("This body is also far longer than the available modal width.")
+            .options(vec!["Accept the full operation", "Cancel"])
+            .view(16, 5);
+
+        assert_eq!(rendered.lines().count(), 5);
+        for line in rendered.lines() {
+            assert_eq!(visible_len(line), 16, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn modal_view_returns_empty_for_zero_screen_dimensions() {
+        let modal = Modal::new().title("Confirm").options(vec!["OK"]);
+
+        assert_eq!(modal.view(0, 5), "");
+        assert_eq!(modal.view(20, 0), "");
     }
 
     #[test]
