@@ -439,7 +439,8 @@ impl TabbedMenuPanel {
         }
 
         let selected = self.normalized_selected();
-        for (index, item) in self.active_items().iter().enumerate() {
+        for index in self.element_item_range() {
+            let item = &self.active_items()[index];
             let mut text = TextElement::new(self.plain_item_line(index, None));
             if index == selected {
                 text = text
@@ -673,6 +674,14 @@ impl TabbedMenuPanel {
             start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let item_count = self.active_items().len();
+        let visible_items = self.max_items.unwrap_or(item_count).min(item_count);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(item_count);
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -957,7 +966,8 @@ mod tests {
         let Element::Box(column) = panel.element::<()>() else {
             panic!("expected column element");
         };
-        let Element::Text(selected_item) = &column.children[2] else {
+        assert_eq!(column.children.len(), 2);
+        let Element::Text(selected_item) = &column.children[1] else {
             panic!("expected selected item");
         };
         assert_eq!(selected_item.content, "  two");
@@ -1019,5 +1029,35 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let items = (0..5)
+            .map(|idx| TabbedMenuItem::new(format!("session-{idx}")))
+            .collect::<Vec<_>>();
+        let el: Element<()> =
+            TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan).items(items)])
+                .show_tabs_when_single(true)
+                .selected(3)
+                .scroll(1)
+                .max_items(3)
+                .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("session-1"));
+        assert!(text.contains("session-2"));
+        assert!(text.contains("session-3"));
+        assert!(!text.contains("session-0"));
+        assert!(!text.contains("session-4"));
     }
 }
