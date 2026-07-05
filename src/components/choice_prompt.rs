@@ -240,9 +240,26 @@ impl ChoicePrompt {
     }
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<ChoicePromptMsg> {
+        let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+        if local_row >= self.row_count() {
+            return None;
+        }
+
         match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.selected = self.normalized_selected().saturating_sub(1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.choices.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
+                }
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let choice_row = local_row.checked_sub(self.choice_start_row())?;
                 if choice_row < self.choices.len() {
                     self.selected = choice_row;
@@ -444,6 +461,12 @@ impl ChoicePrompt {
         usize::from(!self.title.is_empty())
     }
 
+    fn row_count(&self) -> usize {
+        self.choice_start_row()
+            + self.choices.len()
+            + usize::from(self.hint.as_deref().is_some_and(|hint| !hint.is_empty()))
+    }
+
     fn clamp_selected(&mut self) {
         self.selected = self.selected.min(self.choices.len().saturating_sub(1));
     }
@@ -641,6 +664,46 @@ mod tests {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 0,
             row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(prompt.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_choice() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let down = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(down, None);
+        assert_eq!(prompt.selected_index(), 1);
+
+        let up = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(up, None);
+        assert_eq!(prompt.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_below_prompt_is_ignored() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let msg = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 9,
             modifiers: KeyModifiers::NONE,
         });
 

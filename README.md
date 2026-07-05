@@ -116,7 +116,7 @@ Run with `cargo run --example counter_element`.
 | `Breadcrumb` | Hierarchical path navigation |
 | `Checklist` | Status-aware task/TODO list with configurable glyph/text color |
 | `ChipStrip` | Compact colored chip strip with active chip styling |
-| `ChoicePrompt` | Numbered action picker for approvals and command choices with string, line, and Element rendering |
+| `ChoicePrompt` | Numbered action picker for approvals and command choices with wheel/click input plus string, line, and Element rendering |
 | `Confirm` | Keyboard/mouse confirmation with inline, box, and full-screen rendering |
 | `ConnectorBlock` | Connector-led compact output and continuation rows |
 | `CursorLine` | Display-width-aware editor line with a block cursor |
