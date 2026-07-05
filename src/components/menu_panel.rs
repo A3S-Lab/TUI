@@ -397,7 +397,8 @@ impl MenuPanel {
         }
 
         let selected = self.normalized_selected();
-        for (index, item) in self.items.iter().enumerate() {
+        for index in self.element_item_range() {
+            let item = &self.items[index];
             let mut text = TextElement::new(self.plain_item_line(index, None));
             if index == selected {
                 text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
@@ -564,6 +565,16 @@ impl MenuPanel {
             start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let visible_items = self
+            .max_items
+            .unwrap_or(self.items.len())
+            .min(self.items.len());
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -855,6 +866,7 @@ mod tests {
         let Element::Box(box_el) = panel.element::<()>() else {
             panic!("expected box element");
         };
+        assert_eq!(box_el.children.len(), 2);
         let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
             panic!("expected menu item");
         };
@@ -939,9 +951,30 @@ mod tests {
         match el {
             Element::Box(column) => {
                 assert_eq!(column.style.flex_direction, FlexDirection::Column);
-                assert_eq!(column.children.len(), 8);
+                assert_eq!(column.children.len(), 6);
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let el: Element<()> = sample_panel().selected(3).scroll(1).element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("/theme"));
+        assert!(text.contains("/plugins"));
+        assert!(text.contains("/top"));
+        assert!(!text.contains("/model"));
+        assert!(!text.contains("/quit"));
     }
 }
