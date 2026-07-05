@@ -1,4 +1,4 @@
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
 const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
@@ -429,24 +429,10 @@ impl DataTable {
 }
 
 fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
-    let truncated = truncate_visible(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        return truncated;
-    }
-    let pad = width - len;
     match align {
-        CellAlign::Left => format!("{truncated}{}", " ".repeat(pad)),
-        CellAlign::Right => format!("{}{truncated}", " ".repeat(pad)),
-        CellAlign::Center => {
-            let left = pad / 2;
-            format!(
-                "{}{}{}",
-                " ".repeat(left),
-                truncated,
-                " ".repeat(pad - left)
-            )
-        }
+        CellAlign::Left => fit_visible(value, width),
+        CellAlign::Right => right_visible(value, width),
+        CellAlign::Center => center_visible(value, width),
     }
 }
 

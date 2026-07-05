@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, right_visible, truncate_visible, visible_len, Color, Style};
 
 const MAX_TIMELINE_BADGE_WIDTH: usize = u16::MAX as usize;
 const MAX_TIMELINE_MARGIN: usize = u16::MAX as usize;
@@ -446,16 +446,10 @@ impl Timeline {
     }
 
     fn fit_slot(&self, value: &str, width: usize, align_right: bool) -> String {
-        let value = truncate_visible(value, width);
-        let len = visible_len(&value);
-        if len >= width {
-            return value;
-        }
-        let pad = " ".repeat(width - len);
         if align_right {
-            format!("{pad}{value}")
+            right_visible(value, width)
         } else {
-            format!("{value}{pad}")
+            fit_visible(value, width)
         }
     }
 }

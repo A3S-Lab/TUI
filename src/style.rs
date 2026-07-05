@@ -631,6 +631,17 @@ pub fn fit_visible(s: &str, width: usize) -> String {
     pad_visible(&truncate_visible(s, width), width)
 }
 
+/// Right-align a string in `width` display columns, truncating first if needed.
+pub fn right_visible(s: &str, width: usize) -> String {
+    let truncated = truncate_visible(s, width);
+    let len = visible_len(&truncated);
+    if len >= width {
+        truncated
+    } else {
+        format!("{}{truncated}", " ".repeat(width - len))
+    }
+}
+
 /// Center a string in `width` display columns, truncating first if needed.
 pub fn center_visible(s: &str, width: usize) -> String {
     let truncated = truncate_visible(s, width);
@@ -1040,6 +1051,15 @@ mod tests {
 
         assert_eq!(visible_len(&centered), 6);
         assert!(strip_ansi(&centered).starts_with("  中"));
+    }
+
+    #[test]
+    fn right_aligns_visible_width_with_ansi_and_cjk() {
+        let styled = Style::new().fg(Color::Green).render("中");
+        let right = right_visible(&styled, 6);
+
+        assert_eq!(visible_len(&right), 6);
+        assert!(strip_ansi(&right).starts_with("    中"));
     }
 
     #[test]
