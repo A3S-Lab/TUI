@@ -269,6 +269,43 @@ impl DetailPanel {
         )
     }
 
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if self.show_separator {
+            children.push(Element::Text(
+                TextElement::new("─").fg(self.separator_color),
+            ));
+        }
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            if children.len() < height {
+                children.push(Element::Text(
+                    TextElement::new(title).fg(self.title_color).bold(),
+                ));
+            }
+        }
+
+        let available = height.saturating_sub(children.len());
+        let limit = self
+            .max_rows
+            .unwrap_or(usize::MAX)
+            .min(available)
+            .min(self.rows.len());
+        for row in self.rows.iter().take(limit) {
+            children.push(self.row_element(row));
+        }
+        children.truncate(height);
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
     fn render_lines(&self, width: usize, height: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if self.show_separator && height > 0 {
@@ -540,5 +577,51 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_respects_separator_title_and_rows() {
+        let Element::Box(column) = sample().max_rows(3).element_with_height::<()>(4) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .flat_map(|child| match child {
+                Element::Text(text) => vec![text.content.as_str()],
+                Element::Box(row) => row
+                    .children
+                    .iter()
+                    .filter_map(Element::text_content)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 4);
+        assert!(text.contains("─"));
+        assert!(text.contains("process 42"));
+        assert!(text.contains("cpu"));
+        assert!(text.contains("mem"));
+        assert!(!text.contains("cwd"));
+    }
+
+    #[test]
+    fn element_with_height_can_hide_rows_when_header_fills_space() {
+        let Element::Box(column) = sample().element_with_height::<()>(2) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("─"));
+        assert!(text.contains("process 42"));
+        assert!(!text.contains("cpu"));
     }
 }
