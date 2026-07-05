@@ -639,6 +639,57 @@ pub fn repeat_visible_char(ch: char, width: usize) -> String {
     format!("{}{}", ch.to_string().repeat(count), " ".repeat(remainder))
 }
 
+/// Repeat a string pattern until the output fills `width` display columns.
+///
+/// ANSI escape sequences are stripped from the pattern before repeating. If the
+/// pattern is zero-width, or if a wide glyph would straddle the final column,
+/// spaces are used for the remaining columns.
+pub fn repeat_visible(pattern: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let pattern = strip_ansi(pattern);
+    if UnicodeWidthStr::width(pattern.as_str()) == 0 {
+        return " ".repeat(width);
+    }
+
+    let mut out = String::new();
+    let mut used = 0usize;
+    while used < width {
+        let pass_start = used;
+        let mut index = 0usize;
+        while used < width {
+            let Some((end, cell_width)) = next_display_cell_boundary(&pattern, index) else {
+                break;
+            };
+            let cell = &pattern[index..end];
+            index = end;
+
+            if cell_width == 0 {
+                if !out.is_empty() {
+                    out.push_str(cell);
+                }
+                continue;
+            }
+            if used + cell_width > width {
+                out.push_str(&" ".repeat(width - used));
+                return out;
+            }
+
+            out.push_str(cell);
+            used += cell_width;
+        }
+
+        if used == pass_start {
+            out.push_str(&" ".repeat(width - used));
+            return out;
+        }
+    }
+
+    out
+}
+
 /// Truncate a string to `width` display columns, then pad it to exactly `width`.
 pub fn fit_visible(s: &str, width: usize) -> String {
     pad_visible(&truncate_visible(s, width), width)
@@ -1003,6 +1054,15 @@ mod tests {
         assert_eq!(repeat_visible_char('界', 3), "界 ");
         assert_eq!(repeat_visible_char('\u{301}', 3), "   ");
         assert_eq!(visible_len(&repeat_visible_char('界', 5)), 5);
+    }
+
+    #[test]
+    fn repeats_visible_pattern_to_display_width() {
+        assert_eq!(repeat_visible("ab", 5), "ababa");
+        assert_eq!(repeat_visible("界", 5), "界界 ");
+        assert_eq!(repeat_visible("\u{301}", 3), "   ");
+        assert_eq!(repeat_visible("\x1b[31m-\x1b[0m", 3), "---");
+        assert_eq!(visible_len(&repeat_visible("界a", 6)), 6);
     }
 
     #[test]
