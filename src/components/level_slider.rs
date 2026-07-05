@@ -216,46 +216,65 @@ impl LevelSlider {
         let margin = self.margin_for_width(width);
         if let Some(title) = self.title.as_deref() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(margin), title))
-                    .fg(self.title_color)
-                    .bold(),
+                TextElement::new(fit_visible(
+                    &format!("{}{}", " ".repeat(margin), title),
+                    width,
+                ))
+                .fg(self.title_color)
+                .bold(),
             ));
         }
         if self.left_label.is_some() || self.right_label.is_some() {
             children.push(Element::Text(
-                TextElement::new(format!(
-                    "{}{}",
-                    " ".repeat(margin),
-                    self.range_line(self.track_width(width))
+                TextElement::new(fit_visible(
+                    &format!(
+                        "{}{}",
+                        " ".repeat(margin),
+                        self.range_line(self.track_width(width))
+                    ),
+                    width,
                 ))
                 .fg(self.muted_color),
             ));
         }
         children.push(self.track_element(width));
-        children.push(Element::Text(TextElement::new(format!(
-            "{}{}",
-            " ".repeat(margin),
-            self.labels_plain(self.track_width(width))
+        children.push(Element::Text(TextElement::new(fit_visible(
+            &format!(
+                "{}{}",
+                " ".repeat(margin),
+                self.labels_plain(self.track_width(width))
+            ),
+            width,
         ))));
         children.push(Element::Text(
-            TextElement::new(format!(
-                "{}{} {}",
-                " ".repeat(margin),
-                self.pointer,
-                self.selected_label()
+            TextElement::new(fit_visible(
+                &format!(
+                    "{}{} {}",
+                    " ".repeat(margin),
+                    self.pointer,
+                    self.selected_label()
+                ),
+                width,
             ))
             .fg(self.selected_level_color())
             .bold(),
         ));
         if let Some(description) = self.selected_description() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(margin), description))
-                    .fg(self.muted_color),
+                TextElement::new(fit_visible(
+                    &format!("{}{}", " ".repeat(margin), description),
+                    width,
+                ))
+                .fg(self.muted_color),
             ));
         }
         if let Some(hint) = self.hint.as_deref() {
             children.push(Element::Text(
-                TextElement::new(format!("{}{}", " ".repeat(margin), hint)).fg(self.muted_color),
+                TextElement::new(fit_visible(
+                    &format!("{}{}", " ".repeat(margin), hint),
+                    width,
+                ))
+                .fg(self.muted_color),
             ));
         }
 
@@ -329,16 +348,26 @@ impl LevelSlider {
 
     fn track_element<Msg>(&self, width: usize) -> Element<Msg> {
         let track_width = self.track_width(width);
-        let mut children = vec![Element::Text(TextElement::new(
+        let mut children = Vec::new();
+        let mut used = 0usize;
+        Self::push_limited_text(
+            &mut children,
             " ".repeat(self.margin_for_width(width)),
-        ))];
+            None,
+            false,
+            &mut used,
+            width,
+        );
 
         for segment in self.track_segments(track_width) {
-            let mut text = TextElement::new(segment.text).fg(segment.color);
-            if segment.bold {
-                text = text.bold();
-            }
-            children.push(Element::Text(text));
+            Self::push_limited_text(
+                &mut children,
+                segment.text,
+                Some(segment.color),
+                segment.bold,
+                &mut used,
+                width,
+            );
         }
 
         Element::Box(
@@ -346,6 +375,35 @@ impl LevelSlider {
                 .direction(FlexDirection::Row)
                 .children(children),
         )
+    }
+
+    fn push_limited_text<Msg>(
+        children: &mut Vec<Element<Msg>>,
+        text: String,
+        fg: Option<Color>,
+        bold: bool,
+        used: &mut usize,
+        width: usize,
+    ) {
+        let remaining = width.saturating_sub(*used);
+        if remaining == 0 {
+            return;
+        }
+
+        let clipped = truncate_visible(&text, remaining);
+        if clipped.is_empty() {
+            return;
+        }
+
+        *used = (*used).saturating_add(visible_len(&clipped));
+        let mut element = TextElement::new(clipped);
+        if let Some(color) = fg {
+            element = element.fg(color);
+        }
+        if bold {
+            element = element.bold();
+        }
+        children.push(Element::Text(element));
     }
 
     fn track_line(&self, track_width: usize) -> String {
@@ -601,6 +659,16 @@ mod tests {
         .hint("←/→ adjust · Enter confirm")
     }
 
+    fn element_visible_width(element: &Element<()>) -> usize {
+        match element {
+            Element::Box(box_element) => {
+                box_element.children.iter().map(element_visible_width).sum()
+            }
+            Element::Text(text) => visible_len(&text.content),
+            _ => 0,
+        }
+    }
+
     #[test]
     fn renders_discrete_track_labels_and_selected_level() {
         let rendered = sample_slider().view(72);
@@ -742,6 +810,27 @@ mod tests {
 
         assert_eq!(row_width, 18);
         assert!(row_text.contains('好'));
+    }
+
+    #[test]
+    fn element_rows_fit_requested_width() {
+        let element: Element<()> = LevelSlider::new(vec![
+            SliderLevel::new("低").description("非常长的说明文字"),
+            SliderLevel::new("高级模式"),
+        ])
+        .title("非常长的标题")
+        .range_labels("左侧很长", "右侧也很长")
+        .hint("提示文字也很长")
+        .margin(usize::MAX)
+        .selected(0)
+        .element(8);
+        let Element::Box(column) = element else {
+            panic!("expected column");
+        };
+
+        for row in &column.children {
+            assert!(element_visible_width(row) <= 8);
+        }
     }
 
     #[test]
