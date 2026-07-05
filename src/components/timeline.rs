@@ -307,7 +307,7 @@ impl Timeline {
             TimelineRow::Item(item) if selected => {
                 let color = item.color.unwrap_or(self.item_color);
                 Element::Text(
-                    TextElement::new(self.item_plain(item, width))
+                    TextElement::new(fit_visible(&self.item_plain(item, width), width))
                         .fg(self.selected_fg)
                         .bg(color),
                 )
@@ -318,27 +318,76 @@ impl Timeline {
                 let time = self.fit_slot(&item.time, self.time_width_for_width(width), true);
                 let badge = self.fit_slot(&item.badge, self.badge_width_for_width(width), false);
                 let preview = truncate_visible(&item.preview, preview_width);
+                let mut children = Vec::new();
+                let mut used = 0usize;
+                Self::push_limited_text(
+                    &mut children,
+                    " ".repeat(self.margin_for_width(width)),
+                    None,
+                    &mut used,
+                    width,
+                );
+                Self::push_limited_text(
+                    &mut children,
+                    format!(" {}", self.marker),
+                    Some(color),
+                    &mut used,
+                    width,
+                );
+                Self::push_limited_text(
+                    &mut children,
+                    format!(" {time}"),
+                    Some(self.time_color),
+                    &mut used,
+                    width,
+                );
+                Self::push_limited_text(
+                    &mut children,
+                    format!("  {badge}"),
+                    Some(color),
+                    &mut used,
+                    width,
+                );
+                Self::push_limited_text(
+                    &mut children,
+                    format!("  {preview}"),
+                    Some(self.preview_color),
+                    &mut used,
+                    width,
+                );
+
                 Element::Box(
                     BoxElement::new()
                         .direction(FlexDirection::Row)
-                        .child(Element::Text(TextElement::new(
-                            " ".repeat(self.margin_for_width(width)),
-                        )))
-                        .child(Element::Text(
-                            TextElement::new(format!(" {}", self.marker)).fg(color),
-                        ))
-                        .child(Element::Text(
-                            TextElement::new(format!(" {time}")).fg(self.time_color),
-                        ))
-                        .child(Element::Text(
-                            TextElement::new(format!("  {badge}")).fg(color),
-                        ))
-                        .child(Element::Text(
-                            TextElement::new(format!("  {preview}")).fg(self.preview_color),
-                        )),
+                        .children(children),
                 )
             }
         }
+    }
+
+    fn push_limited_text<Msg>(
+        children: &mut Vec<Element<Msg>>,
+        text: String,
+        fg: Option<Color>,
+        used: &mut usize,
+        width: usize,
+    ) {
+        let remaining = width.saturating_sub(*used);
+        if remaining == 0 {
+            return;
+        }
+
+        let clipped = truncate_visible(&text, remaining);
+        if clipped.is_empty() {
+            return;
+        }
+
+        *used = (*used).saturating_add(visible_len(&clipped));
+        let mut text = TextElement::new(clipped);
+        if let Some(color) = fg {
+            text = text.fg(color);
+        }
+        children.push(Element::Text(text));
     }
 
     fn item_plain(&self, item: &TimelineItem, width: usize) -> String {
@@ -477,6 +526,16 @@ mod tests {
             .item(TimelineItem::new("1d", "fix", "patched terminal layout").color(Color::Green))
     }
 
+    fn element_visible_width(element: &Element<()>) -> usize {
+        match element {
+            Element::Box(box_element) => {
+                box_element.children.iter().map(element_visible_width).sum()
+            }
+            Element::Text(text) => visible_len(&text.content),
+            _ => 0,
+        }
+    }
+
     #[test]
     fn renders_sections_items_and_selected_row_at_fixed_width() {
         let rendered = sample_timeline().selected_item(1).view(56, 5);
@@ -546,6 +605,24 @@ mod tests {
             panic!("expected margin text");
         };
         assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn element_item_rows_fit_requested_width() {
+        let element: Element<()> = Timeline::new()
+            .marker("好")
+            .item(TimelineItem::new("现在", "事实", "中文内容").color(Color::Cyan))
+            .item(TimelineItem::new("稍后", "完成", "更多内容").color(Color::Green))
+            .selected_item(0)
+            .element(6, 2);
+        let Element::Box(column) = element else {
+            panic!("expected column");
+        };
+
+        assert_eq!(column.children.len(), 2);
+        for row in &column.children {
+            assert!(element_visible_width(row) <= 6);
+        }
     }
 
     #[test]
