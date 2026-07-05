@@ -45,8 +45,13 @@ impl MetricTrend {
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
         if min.is_finite() && max.is_finite() {
-            self.min = min;
-            self.max = max.max(min);
+            if min <= max {
+                self.min = min;
+                self.max = max;
+            } else {
+                self.min = max;
+                self.max = min;
+            }
         }
         self
     }
@@ -145,6 +150,17 @@ mod tests {
         assert_eq!(visible_len(&cell), 15);
         assert!(cell.starts_with(" 50.0% "));
         assert!(cell.ends_with('█'));
+    }
+
+    #[test]
+    fn reversed_range_bounds_are_sorted() {
+        let cell = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .range(100.0, 0.0)
+            .width(10)
+            .trend_width(3)
+            .plain();
+
+        assert!(cell.ends_with("▁▅█"));
     }
 
     #[test]

@@ -31,10 +31,28 @@ impl Sparkline {
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.min = min.is_finite().then_some(min);
-        self.max = max
-            .is_finite()
-            .then_some(self.min.map_or(max, |min| max.max(min)));
+        match (min.is_finite(), max.is_finite()) {
+            (true, true) if min <= max => {
+                self.min = Some(min);
+                self.max = Some(max);
+            }
+            (true, true) => {
+                self.min = Some(max);
+                self.max = Some(min);
+            }
+            (true, false) => {
+                self.min = Some(min);
+                self.max = None;
+            }
+            (false, true) => {
+                self.min = None;
+                self.max = Some(max);
+            }
+            (false, false) => {
+                self.min = None;
+                self.max = None;
+            }
+        }
         self
     }
 
@@ -163,6 +181,16 @@ mod tests {
 
         assert_eq!(visible_len(&line), 3);
         assert!(line.ends_with('█'));
+    }
+
+    #[test]
+    fn reversed_range_bounds_are_sorted() {
+        let line = Sparkline::new([0.0, 50.0, 100.0])
+            .width(3)
+            .range(100.0, 0.0)
+            .plain();
+
+        assert_eq!(line, "▁▅█");
     }
 
     #[test]
