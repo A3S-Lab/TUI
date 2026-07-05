@@ -1,6 +1,6 @@
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{center_visible, fit_visible, wrap_words, Color, Style};
+use crate::style::{center_visible, fit_visible, truncate_visible, wrap_words, Color, Style};
 use crossterm::event::KeyCode;
 
 const MAX_CONFIRM_WIDTH: usize = u16::MAX as usize;
@@ -114,37 +114,41 @@ impl Confirm {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_content_width(None)
+    }
+
+    pub fn element_with_width<Msg>(&self, width: u16) -> Element<Msg> {
+        let width = width as usize;
+        if width == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        let content_width = self.max_width.min(width).saturating_sub(4).max(1);
+        self.element_with_content_width(Some(content_width))
+    }
+
+    fn element_with_content_width<Msg>(&self, content_width: Option<usize>) -> Element<Msg> {
         let mut children = Vec::new();
         if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            let title = Self::bounded_text(title, content_width);
             children.push(Element::Text(
                 TextElement::new(title).bold().fg(Color::BrightWhite),
             ));
         }
-        children.push(Element::Text(TextElement::new(&self.message).bold()));
 
-        let yes_el = if self.selected {
-            Element::Text(
-                TextElement::new(format!(" [{}] ", self.yes_label))
-                    .bold()
-                    .fg(Color::White)
-                    .bg(Color::Green),
-            )
+        if let Some(width) = content_width {
+            for line in wrap_words(&self.message, width.max(1)) {
+                children.push(Element::Text(TextElement::new(line).bold()));
+            }
         } else {
-            Element::Text(
-                TextElement::new(format!("  {}  ", self.yes_label)).fg(Color::BrightBlack),
-            )
-        };
+            children.push(Element::Text(TextElement::new(&self.message).bold()));
+        }
 
-        let no_el = if !self.selected {
-            Element::Text(
-                TextElement::new(format!(" [{}] ", self.no_label))
-                    .bold()
-                    .fg(Color::White)
-                    .bg(Color::Red),
-            )
-        } else {
-            Element::Text(TextElement::new(format!("  {}  ", self.no_label)).fg(Color::BrightBlack))
-        };
+        let button_width =
+            content_width.map(|width| width.saturating_sub(2).saturating_div(2).max(1));
+        let yes_el =
+            self.button_element(&self.yes_label, self.selected, Color::Green, button_width);
+        let no_el = self.button_element(&self.no_label, !self.selected, Color::Red, button_width);
 
         children.push(Element::Box(
             BoxElement::new()
@@ -154,7 +158,9 @@ impl Confirm {
                 .child(no_el),
         ));
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
-            children.push(Element::Text(TextElement::new(hint).fg(Color::BrightBlack)));
+            children.push(Element::Text(
+                TextElement::new(Self::bounded_text(hint, content_width)).fg(Color::BrightBlack),
+            ));
         }
 
         Element::Box(
@@ -166,6 +172,37 @@ impl Confirm {
                 .gap(1)
                 .children(children),
         )
+    }
+
+    fn button_element<Msg>(
+        &self,
+        label: &str,
+        selected: bool,
+        selected_bg: Color,
+        width: Option<usize>,
+    ) -> Element<Msg> {
+        let raw = if selected {
+            format!(" [{label}] ")
+        } else {
+            format!("  {label}  ")
+        };
+        let content = Self::bounded_text(&raw, width);
+        if selected {
+            Element::Text(
+                TextElement::new(content)
+                    .bold()
+                    .fg(Color::White)
+                    .bg(selected_bg),
+            )
+        } else {
+            Element::Text(TextElement::new(content).fg(Color::BrightBlack))
+        }
+    }
+
+    fn bounded_text(value: &str, width: Option<usize>) -> String {
+        width
+            .map(|width| truncate_visible(value, width))
+            .unwrap_or_else(|| value.to_string())
     }
 
     /// Render a horizontally centered confirmation box.
@@ -382,5 +419,76 @@ mod tests {
         let plain = crate::style::strip_ansi(&rendered);
 
         assert!(plain.contains("[No] cancel"));
+    }
+
+    #[test]
+    fn element_with_width_zero_returns_empty_column() {
+        let el: Element<()> = Confirm::new("Continue?").element_with_width(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_width_wraps_long_message() {
+        let el: Element<()> = Confirm::new(
+            "Delete the selected workspace artifact and all generated runtime outputs?",
+        )
+        .title("Confirm destructive action")
+        .hint("Enter to confirm · Esc to cancel")
+        .element_with_width(24);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let texts = text_contents(&column.children);
+
+        assert!(texts.iter().any(|text| text.contains("Confirm")));
+        assert!(texts.iter().any(|text| text.contains("Delete")));
+        assert!(texts.iter().any(|text| text.contains("runtime")));
+        assert!(texts.iter().all(|text| visible_len(text) <= 20));
+    }
+
+    #[test]
+    fn element_with_width_truncates_long_button_labels() {
+        let el: Element<()> = Confirm::new("Proceed?")
+            .with_labels("Absolutely continue", "No, abort everything")
+            .element_with_width(18);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let Element::Box(buttons) = &column.children[1] else {
+            panic!("expected button row");
+        };
+
+        for child in &buttons.children {
+            let Element::Text(text) = child else {
+                panic!("expected button text");
+            };
+            assert!(visible_len(&text.content) <= 7, "{:?}", text.content);
+        }
+    }
+
+    fn text_contents<Msg>(elements: &[Element<Msg>]) -> Vec<&str> {
+        let mut out = Vec::new();
+        for element in elements {
+            collect_text_contents(element, &mut out);
+        }
+        out
+    }
+
+    fn collect_text_contents<'a, Msg>(element: &'a Element<Msg>, out: &mut Vec<&'a str>) {
+        match element {
+            Element::Text(text) => out.push(text.content.as_str()),
+            Element::Box(box_element) => {
+                for child in &box_element.children {
+                    collect_text_contents(child, out);
+                }
+            }
+            Element::Spacer | Element::_Phantom(_) => {}
+        }
     }
 }
