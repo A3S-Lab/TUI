@@ -87,7 +87,7 @@ pub use help_panel::{HelpPanel, HelpRow, HelpSection};
 pub use inline_action::InlineAction;
 pub use input_border::InputBorder;
 pub use key_value::KeyValue;
-pub use level_slider::{LevelSlider, SliderLevel};
+pub use level_slider::{LevelSlider, LevelSliderMsg, SliderLevel};
 pub use list::List;
 pub use log_view::{LogView, LogViewState};
 pub use menu_panel::{MenuItem, MenuPanel, MenuPanelMsg};

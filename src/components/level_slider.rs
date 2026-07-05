@@ -1,4 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, repeat_visible_char, truncate_visible, visible_len, Color, Style};
 
 const MAX_LEVEL_SLIDER_MARGIN: usize = u16::MAX as usize;
@@ -65,10 +66,17 @@ pub struct LevelSlider {
     track_char: char,
     separator_char: char,
     pointer: String,
+    y_offset: u16,
     title_color: Color,
     selected_color: Color,
     track_color: Color,
     muted_color: Color,
+}
+
+/// Message returned by [`LevelSlider`] mouse handlers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LevelSliderMsg {
+    Selected(usize),
 }
 
 impl LevelSlider {
@@ -86,6 +94,7 @@ impl LevelSlider {
             track_char: '─',
             separator_char: '┆',
             pointer: "▸".to_string(),
+            y_offset: 0,
             title_color: Color::Cyan,
             selected_color: Color::Cyan,
             track_color: Color::White,
@@ -112,6 +121,10 @@ impl LevelSlider {
 
     pub fn set_selected(&mut self, selected: usize) {
         self.selected = selected.min(self.levels.len().saturating_sub(1));
+    }
+
+    pub fn set_y_offset(&mut self, y: u16) {
+        self.y_offset = y;
     }
 
     pub fn range_labels(mut self, left: impl Into<String>, right: impl Into<String>) -> Self {
@@ -283,6 +296,37 @@ impl LevelSlider {
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent, width: u16) -> Option<LevelSliderMsg> {
+        let width = width as usize;
+        if width == 0 || self.levels.is_empty() {
+            return None;
+        }
+        let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+        if local_row >= self.row_count() {
+            return None;
+        }
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.set_selected(self.selected_index().saturating_sub(1));
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                self.set_selected(self.selected_index().saturating_add(1));
+                None
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !self.is_clickable_row(local_row) {
+                    return None;
+                }
+                let selected = self.index_for_column(mouse.column, width)?;
+                self.set_selected(selected);
+                Some(LevelSliderMsg::Selected(selected))
+            }
+            _ => None,
+        }
     }
 
     fn render_lines(&self, width: usize) -> Vec<String> {
@@ -600,6 +644,56 @@ impl LevelSlider {
     fn margin_for_width(&self, width: usize) -> usize {
         self.margin.min(width).min(MAX_LEVEL_SLIDER_MARGIN)
     }
+
+    fn row_count(&self) -> usize {
+        let mut count = 3;
+        if self.title.is_some() {
+            count += 1;
+        }
+        if self.left_label.is_some() || self.right_label.is_some() {
+            count += 1;
+        }
+        if self.selected_description().is_some() {
+            count += 1;
+        }
+        if self.hint.is_some() {
+            count += 1;
+        }
+        count
+    }
+
+    fn track_row_index(&self) -> usize {
+        let title_row = if self.title.is_some() { 1 } else { 0 };
+        let range_row = if self.left_label.is_some() || self.right_label.is_some() {
+            1
+        } else {
+            0
+        };
+        title_row + range_row
+    }
+
+    fn is_clickable_row(&self, row: usize) -> bool {
+        let track_row = self.track_row_index();
+        row == track_row || row == track_row.saturating_add(1)
+    }
+
+    fn index_for_column(&self, column: u16, width: usize) -> Option<usize> {
+        let margin = self.margin_for_width(width);
+        let column = usize::from(column);
+        let track_width = self.track_width(width);
+        let local_column = column.checked_sub(margin)?;
+        if local_column >= track_width {
+            return None;
+        }
+        if self.levels.len() <= 1 {
+            return Some(0);
+        }
+
+        (0..self.levels.len()).min_by_key(|index| {
+            let position = self.position_for(*index, track_width);
+            position.abs_diff(local_column)
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -850,5 +944,75 @@ mod tests {
         let marker = marker.expect("selected marker should be a text segment");
         assert_eq!(marker.style.fg, Some(Color::Yellow));
         assert!(marker.style.bold);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_level() {
+        let mut slider = sample_slider();
+
+        let msg = slider.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 2,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            48,
+        );
+
+        assert_eq!(msg, None);
+        assert_eq!(slider.selected_value(), 3);
+
+        slider.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 0,
+                row: 2,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            48,
+        );
+
+        assert_eq!(slider.selected_value(), 2);
+    }
+
+    #[test]
+    fn mouse_click_on_track_selects_nearest_level() {
+        let mut slider = sample_slider().selected(0);
+        let width = 48;
+        let track_width = slider.track_width(width);
+        let column = slider.margin_for_width(width) + slider.position_for(2, track_width);
+
+        let msg = slider.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: column as u16,
+                row: slider.track_row_index() as u16,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            width as u16,
+        );
+
+        assert_eq!(msg, Some(LevelSliderMsg::Selected(2)));
+        assert_eq!(slider.selected_value(), 2);
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut slider = sample_slider().selected(1);
+        slider.set_y_offset(4);
+
+        let msg = slider.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 4,
+                row: 3,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            48,
+        );
+
+        assert_eq!(msg, None);
+        assert_eq!(slider.selected_value(), 1);
     }
 }
