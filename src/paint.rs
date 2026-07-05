@@ -158,7 +158,7 @@ fn paint_element<Msg>(
                 match text_el.wrap {
                     TextWrap::Wrap => {
                         if max_w == 0 {
-                            if !paint_line.is_empty() && visible_len(paint_line) == 0 {
+                            if is_zero_width_text(paint_line) {
                                 if !paint_text_row(
                                     grid,
                                     node,
@@ -211,16 +211,15 @@ fn paint_element<Msg>(
                         }
                     }
                     TextWrap::Truncate => {
-                        let display_line = truncate_visible(paint_line, max_w);
-                        if !paint_text_row(
-                            grid,
-                            node,
-                            painted_rows,
-                            grid_h,
-                            clip,
-                            &display_line,
-                            &style,
-                        ) {
+                        let display_line;
+                        let row_text = if max_w == 0 && is_zero_width_text(paint_line) {
+                            paint_line
+                        } else {
+                            display_line = truncate_visible(paint_line, max_w);
+                            display_line.as_str()
+                        };
+                        if !paint_text_row(grid, node, painted_rows, grid_h, clip, row_text, &style)
+                        {
                             break;
                         }
                         painted_rows += 1;
@@ -245,6 +244,10 @@ fn paint_element<Msg>(
         Element::Spacer => {}
         Element::_Phantom(_) => {}
     }
+}
+
+fn is_zero_width_text(text: &str) -> bool {
+    !text.is_empty() && visible_len(text) == 0
 }
 
 fn paint_text_row(
@@ -433,6 +436,24 @@ mod tests {
                 .child(Element::Text(TextElement::new("e").wrap(TextWrap::NoWrap)))
                 .child(Element::Text(
                     TextElement::new("\u{0301}").wrap(TextWrap::NoWrap),
+                )),
+        );
+
+        let grid = render(&el, 2, 1);
+
+        assert_eq!(grid.get(0, 0).ch, 'e');
+        assert_eq!(grid.get(0, 0).combining, "\u{0301}");
+        assert_eq!(grid.render_to_string(), "e\u{0301} ");
+    }
+
+    #[test]
+    fn paint_truncated_zero_width_text_segment_attaches_to_previous_cell() {
+        let el: Element<()> = Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Text(TextElement::new("e").wrap(TextWrap::NoWrap)))
+                .child(Element::Text(
+                    TextElement::new("\u{0301}").wrap(TextWrap::Truncate),
                 )),
         );
 
