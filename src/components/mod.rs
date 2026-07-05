@@ -52,6 +52,7 @@ pub mod textarea;
 pub mod timeline;
 pub mod toast;
 pub mod tool_log_view;
+pub mod tool_status_line;
 pub mod tree;
 pub mod tree_picker;
 pub mod viewport;
@@ -120,6 +121,7 @@ pub use textarea::Textarea;
 pub use timeline::{Timeline, TimelineItem, TimelineRow};
 pub use toast::{ToastKind, ToastManager};
 pub use tool_log_view::{ToolLogRecord, ToolLogStatus, ToolLogView};
+pub use tool_status_line::ToolStatusLine;
 pub use tree::{Tree, TreeNode};
 pub use tree_picker::{TreePicker, TreePickerItem, TreePickerItemKind, TreePickerMsg};
 pub use viewport::{

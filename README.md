@@ -162,6 +162,7 @@ Run with `cargo run --example counter_element`.
 | `Textarea` | Multi-line text editor with scrolling |
 | `Timeline` | Sectioned timeline with colored nodes and selected-row highlighting |
 | `ToolLogView` | Completed tool/command history with args and indented output |
+| `ToolStatusLine` | Single-line tool status with marker, detail, and suffix |
 | `ToastManager` | Transient notifications |
 | `Tree` | Expandable tree view |
 | `TreePicker` | Selectable, scroll-aware file and hierarchy picker |
@@ -232,7 +233,7 @@ See `examples/chat.rs` for a complete chat UI with:
 
 Run `cargo bench --bench rendering` to measure hot rendering paths:
 - display-width helpers with ANSI and CJK text
-- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PanelFrame`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `WrappedPrefixBlock`, and viewport selection string rendering
+- `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PanelFrame`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `ToolStatusLine`, `WrappedPrefixBlock`, and viewport selection string rendering
 - mixed markdown rendering with task lists and code blocks
 
 ### Integration Tests
