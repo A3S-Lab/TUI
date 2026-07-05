@@ -199,14 +199,51 @@ impl HelpPanel {
                 TextElement::new(title).fg(self.title_color).bold(),
             ));
         }
+        self.push_section_elements(&mut children, usize::MAX);
+        self.push_footer_element(&mut children, usize::MAX);
 
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        self.push_section_elements(&mut children, height);
+        self.push_footer_element(&mut children, height);
+        children.truncate(height);
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    fn push_section_elements<Msg>(&self, children: &mut Vec<Element<Msg>>, height: usize) {
         for section in &self.sections {
+            if children.len() >= height {
+                break;
+            }
             children.push(Element::Text(
                 TextElement::new(section.title.as_str())
                     .fg(self.section_color)
                     .bold(),
             ));
             for row in &section.rows {
+                if children.len() >= height {
+                    break;
+                }
                 children.push(Element::Box(
                     BoxElement::new()
                         .direction(FlexDirection::Row)
@@ -222,18 +259,17 @@ impl HelpPanel {
                 ));
             }
         }
+    }
 
+    fn push_footer_element<Msg>(&self, children: &mut Vec<Element<Msg>>, height: usize) {
+        if children.len() >= height {
+            return;
+        }
         if let Some(footer) = &self.footer {
             children.push(Element::Text(
                 TextElement::new(footer.as_str()).fg(self.footer_color),
             ));
         }
-
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Column)
-                .children(children),
-        )
     }
 
     fn render_lines(&self, width: usize) -> Vec<String> {
@@ -372,6 +408,34 @@ mod tests {
         let rendered = sample_panel().view(60, 3);
 
         assert_eq!(rendered.lines().count(), 3);
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let Element::Box(column) = sample_panel().element_with_height::<()>(3) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .flat_map(|child| match child {
+                Element::Text(text) => vec![text.content.as_str()],
+                Element::Box(row) => row
+                    .children
+                    .iter()
+                    .filter_map(Element::text_content)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 3);
+        assert!(text.contains("A3S CODE - help"));
+        assert!(text.contains("Slash commands"));
+        assert!(text.contains("/model"));
+        assert!(!text.contains("/help"));
+        assert!(!text.contains("Resume with:"));
     }
 
     #[test]
