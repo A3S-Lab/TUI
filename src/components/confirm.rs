@@ -1,6 +1,8 @@
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{center_visible, fit_visible, truncate_visible, wrap_words, Color, Style};
+use crate::style::{
+    center_visible, fit_visible, truncate_visible, visible_len, wrap_words, Color, Style,
+};
 use crossterm::event::KeyCode;
 
 const MAX_CONFIRM_WIDTH: usize = u16::MAX as usize;
@@ -58,6 +60,10 @@ impl Confirm {
     pub fn selected(mut self, yes_selected: bool) -> Self {
         self.selected = yes_selected;
         self
+    }
+
+    pub fn selected_yes(&self) -> bool {
+        self.selected
     }
 
     pub fn max_width(mut self, width: usize) -> Self {
@@ -245,6 +251,29 @@ impl Confirm {
             .join("\n")
     }
 
+    /// Render a compact inline confirmation row.
+    pub fn line(&self, width: u16) -> String {
+        let width = width as usize;
+        if width == 0 {
+            return String::new();
+        }
+
+        let prompt = self.compact_prompt();
+        let suffix = match self.hint.as_deref().filter(|hint| !hint.is_empty()) {
+            Some(hint) => format!("{prompt}  {hint}"),
+            None => prompt,
+        };
+        let suffix_len = visible_len(&suffix);
+        let message_width = width.saturating_sub(suffix_len.saturating_add(2));
+        let message = truncate_visible(&self.message, message_width);
+        let raw = if message.is_empty() {
+            suffix
+        } else {
+            format!("{message}  {suffix}")
+        };
+        fit_visible(&self.style_line(&raw), width)
+    }
+
     /// Render a full-screen confirmation view centered in both axes.
     pub fn view(&self, screen_width: u16, screen_height: u16) -> String {
         let width = screen_width as usize;
@@ -292,6 +321,20 @@ impl Confirm {
             };
             format!("{yes} confirm     {no} cancel")
         }
+    }
+
+    fn compact_prompt(&self) -> String {
+        let yes = if self.selected {
+            format!("[{}]", self.yes_label)
+        } else {
+            self.yes_label.clone()
+        };
+        let no = if !self.selected {
+            format!("[{}]", self.no_label)
+        } else {
+            self.no_label.clone()
+        };
+        format!("{yes} / {no}")
     }
 
     fn style_line(&self, line: &str) -> String {
@@ -411,6 +454,30 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 48, "{line:?}");
         }
+    }
+
+    #[test]
+    fn line_view_is_width_bounded_and_styled() {
+        let rendered = Confirm::new("Delete knowledge note?")
+            .with_labels("Delete", "Cancel")
+            .hint("Enter/y | n/Esc")
+            .danger()
+            .line(48);
+        let plain = crate::style::strip_ansi(&rendered);
+
+        assert_eq!(visible_len(&rendered), 48);
+        assert!(plain.contains("Delete"), "{plain}");
+        assert!(plain.contains("Enter/y"), "{plain}");
+        assert!(
+            rendered.contains("\x1b["),
+            "inline confirm should carry styling"
+        );
+    }
+
+    #[test]
+    fn line_view_handles_tiny_widths() {
+        assert_eq!(Confirm::new("Delete?").line(0), "");
+        assert_eq!(visible_len(&Confirm::new("Delete?").line(1)), 1);
     }
 
     #[test]
