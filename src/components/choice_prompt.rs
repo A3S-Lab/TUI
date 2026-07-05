@@ -202,22 +202,25 @@ impl ChoicePrompt {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn selected_choice(&self) -> Option<&ChoicePromptItem> {
-        self.choices.get(self.selected)
+        self.choices.get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<ChoicePromptMsg> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < self.choices.len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.choices.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 None
             }
@@ -283,10 +286,11 @@ impl ChoicePrompt {
             ));
         }
 
+        let selected = self.normalized_selected();
         for (index, choice) in self.choices.iter().enumerate() {
             let text = self.plain_choice_line(index, None);
             let mut element = TextElement::new(text);
-            if index == self.selected {
+            if index == selected {
                 element = element.fg(self.selected_fg).bg(self.selected_bg).bold();
             } else if choice.danger {
                 element = element.fg(self.danger_color);
@@ -314,9 +318,10 @@ impl ChoicePrompt {
             lines.push(Style::new().fg(self.title_color).bold().render(&raw));
         }
 
+        let selected = self.normalized_selected();
         for (index, choice) in self.choices.iter().enumerate() {
             let raw = fit_visible(&self.plain_choice_line(index, Some(width)), width);
-            if index == self.selected {
+            if index == selected {
                 lines.push(
                     Style::new()
                         .fg(self.selected_fg)
@@ -345,7 +350,7 @@ impl ChoicePrompt {
         let Some(choice) = self.choices.get(index) else {
             return String::new();
         };
-        let marker = if index == self.selected {
+        let marker = if index == self.normalized_selected() {
             self.marker.as_str()
         } else {
             " "
@@ -408,7 +413,7 @@ impl ChoicePrompt {
         if self.choices.is_empty() {
             None
         } else {
-            Some(ChoicePromptMsg::Selected(self.selected))
+            Some(ChoicePromptMsg::Selected(self.normalized_selected()))
         }
     }
 
@@ -418,6 +423,10 @@ impl ChoicePrompt {
 
     fn clamp_selected(&mut self) {
         self.selected = self.selected.min(self.choices.len().saturating_sub(1));
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.choices.len().saturating_sub(1))
     }
 
     fn indent_for_width(&self, width: usize) -> usize {
@@ -508,6 +517,38 @@ mod tests {
         prompt.handle_key(&key(KeyCode::Down));
         assert_eq!(prompt.selected_index(), 2);
         prompt.handle_key(&key(KeyCode::Up));
+        assert_eq!(prompt.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_input_and_rendering() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.selected = usize::MAX;
+
+        assert_eq!(prompt.selected_index(), 2);
+        assert_eq!(
+            prompt.selected_choice().map(ChoicePromptItem::label),
+            Some("No")
+        );
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Enter)),
+            Some(ChoicePromptMsg::Selected(2))
+        );
+
+        let rendered = strip_ansi(&prompt.view(40, 5));
+        assert!(rendered.contains("❯ 3. No"));
+
+        let Element::Box(column) = prompt.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(choice) = &column.children[3] else {
+            panic!("expected choice text");
+        };
+        assert_eq!(choice.content, "  ❯ 3. No");
+
+        assert_eq!(prompt.handle_key(&key(KeyCode::Down)), None);
+        assert_eq!(prompt.selected_index(), 2);
+        assert_eq!(prompt.handle_key(&key(KeyCode::Up)), None);
         assert_eq!(prompt.selected_index(), 1);
     }
 
