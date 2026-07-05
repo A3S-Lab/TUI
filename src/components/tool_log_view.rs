@@ -223,6 +223,10 @@ impl ToolLogView {
 
     pub fn element<Msg>(&self, height: usize) -> Element<Msg> {
         let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
         if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
             children.push(Element::Text(
                 TextElement::new(title).fg(self.title_color).bold(),
@@ -230,15 +234,18 @@ impl ToolLogView {
         }
 
         if self.records.is_empty() {
-            children.push(Element::Text(
-                TextElement::new(self.empty_text.as_str())
-                    .fg(self.muted_color)
-                    .italic(),
-            ));
+            if children.len() < height {
+                children.push(Element::Text(
+                    TextElement::new(self.empty_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
         } else {
+            let available = height.saturating_sub(children.len());
             let rows = self.plain_rows();
-            let scroll = self.normalized_scroll_for_window(rows.len(), height);
-            let visible = rows.into_iter().skip(scroll).take(height);
+            let scroll = self.normalized_scroll_for_window(rows.len(), available);
+            let visible = rows.into_iter().skip(scroll).take(available);
             for row in visible {
                 children.push(row.element(
                     self.header_color,
@@ -246,6 +253,13 @@ impl ToolLogView {
                     self.muted_color,
                     self.output_color,
                 ));
+            }
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
             }
         }
 
@@ -578,7 +592,7 @@ mod tests {
         assert!(text.contains("#2 · bash · exit 2"));
         assert!(!text.contains("#1 · read"));
         match element {
-            Element::Box(column) => assert_eq!(column.children.len(), 3),
+            Element::Box(column) => assert_eq!(column.children.len(), 2),
             _ => panic!("expected Box"),
         }
     }
@@ -658,6 +672,77 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_zero_height_returns_empty_column() {
+        let el: Element<()> = sample().element(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_title_counts_against_height_budget() {
+        let el: Element<()> = sample().element(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .map(element_text)
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("/output"), "{text:?}");
+        assert!(text.contains("#1 · read · ok"), "{text:?}");
+        assert!(!text.contains("args:"), "{text:?}");
+    }
+
+    #[test]
+    fn element_empty_state_respects_title_height_budget() {
+        let el: Element<()> = ToolLogView::new()
+            .title("/output")
+            .empty_text("nothing yet")
+            .element(1);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .map(element_text)
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert_eq!(column.children.len(), 1);
+        assert!(text.contains("/output"), "{text:?}");
+        assert!(!text.contains("nothing yet"), "{text:?}");
+    }
+
+    #[test]
+    fn element_fill_height_pads_empty_rows() {
+        let el: Element<()> = ToolLogView::new()
+            .record(ToolLogRecord::failed("patch"))
+            .fill_height(true)
+            .element(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column.children.iter().map(element_text).collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], "#1 · patch · failed");
+        assert_eq!(rows[1], "");
+        assert_eq!(rows[2], "");
+        assert_eq!(rows[3], "");
     }
 
     fn element_text(element: &Element<()>) -> String {
