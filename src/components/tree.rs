@@ -62,8 +62,13 @@ impl Tree {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(usize::MAX)
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
         let mut lines: Vec<Element<Msg>> = Vec::new();
         self.render_node(&self.root, &mut lines, "", true);
+        lines.truncate(height);
         Element::Box(
             BoxElement::new()
                 .direction(FlexDirection::Column)
@@ -248,5 +253,28 @@ mod tests {
         assert!(lines[0].contains('…'));
         assert!(plain.contains("child"));
         assert!(!plain.contains("hidden"));
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let tree = Tree::new(TreeNode::branch(
+            "root",
+            vec![TreeNode::leaf("child"), TreeNode::leaf("hidden")],
+        ));
+
+        let Element::Box(column) = tree.element_with_height::<()>(2) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("root"));
+        assert!(text.contains("child"));
+        assert!(!text.contains("hidden"));
     }
 }

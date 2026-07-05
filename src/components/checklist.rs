@@ -177,9 +177,14 @@ impl Checklist {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(self.items.len())
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
         let children = self
             .items
             .iter()
+            .take(height)
             .enumerate()
             .map(|(index, item)| {
                 let mut label = TextElement::new(item.label.clone()).fg(self.item_text_color(item));
@@ -402,5 +407,35 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let checklist = Checklist::empty()
+            .item(ChecklistItem::new("one"))
+            .item(ChecklistItem::new("two").active())
+            .item(ChecklistItem::new("three").done());
+
+        let Element::Box(column) = checklist.element_with_height::<()>(2) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .flat_map(|row| match row {
+                Element::Box(row) => row
+                    .children
+                    .iter()
+                    .filter_map(Element::text_content)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("one"));
+        assert!(text.contains("two"));
+        assert!(!text.contains("three"));
     }
 }
