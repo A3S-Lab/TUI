@@ -133,7 +133,7 @@ impl Markdown {
                 } else {
                     "•".to_string()
                 };
-                let bw = bullet.chars().count();
+                let bw = visible_len(&bullet);
                 let bullet_style = Style::new().fg(Color::Rgb(122, 162, 247)).render(&bullet);
                 // The item's first paragraph is its bulleted label; every other
                 // block child (nested list, code block, extra paragraph) renders
