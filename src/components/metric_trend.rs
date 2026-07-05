@@ -1,5 +1,5 @@
 use crate::components::Sparkline;
-use crate::style::{truncate_visible, visible_len, Color};
+use crate::style::{fit_visible, right_visible, truncate_visible, visible_len, Color};
 
 const MAX_METRIC_TREND_WIDTH: usize = u16::MAX as usize;
 const MAX_METRIC_TREND_SPARKLINE_WIDTH: usize = u16::MAX as usize;
@@ -79,11 +79,7 @@ impl MetricTrend {
             .view();
         let cell = format!("{label} {trend}");
 
-        if visible_len(&cell) < self.width {
-            format!("{cell}{}", " ".repeat(self.width - visible_len(&cell)))
-        } else {
-            cell
-        }
+        fit_visible(&cell, self.width)
     }
 
     pub fn plain(&self) -> String {
@@ -93,7 +89,7 @@ impl MetricTrend {
     fn value_label(&self) -> String {
         self.value
             .map(|value| format!("{value:>5.1}%"))
-            .unwrap_or_else(|| format!("{:>6}", self.missing))
+            .unwrap_or_else(|| right_visible(&self.missing, 6))
     }
 }
 
@@ -117,6 +113,18 @@ mod tests {
 
         assert_eq!(visible_len(&cell), 15);
         assert!(cell.starts_with("     - "));
+        assert!(cell.contains("····"));
+    }
+
+    #[test]
+    fn missing_metric_placeholder_uses_display_width() {
+        let cell = MetricTrend::new(None, Vec::<f64>::new())
+            .missing("暂无")
+            .width(15)
+            .plain();
+
+        assert_eq!(visible_len(&cell), 15);
+        assert!(cell.starts_with("  暂无 "));
         assert!(cell.contains("····"));
     }
 
