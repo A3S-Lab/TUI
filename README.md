@@ -156,6 +156,27 @@ if let Event::Key(key) = event {
 }
 ```
 
+Theme-aware applications can use stable semantic tokens instead of storing raw
+colors in app state. Built-in themes have configuration-friendly names, and
+`ThemeRole` maps design-system roles to concrete `Color` and `Style` values:
+
+```rust
+use a3s_tui::prelude::*;
+
+let theme = Theme::from_builtin_name("tokyo-night").unwrap_or_default();
+
+let title = TextElement::new("Workspace")
+    .bold()
+    .fg(theme.color(ThemeRole::Primary));
+
+let selected = theme.selection_style().render("  current row");
+let panel = theme.surface_style().render("Connected");
+
+for preset in Theme::builtins() {
+    println!("{} -> {}", preset.name(), preset.label());
+}
+```
+
 ## Feature Flags
 
 Default features preserve the full current experience:
@@ -639,7 +660,7 @@ ElementProgramBuilder::new(model)
 - [x] Mouse event support
 - [x] Grid layout
 - [x] Animation system
-- [x] Theme system
+- [x] Theme system with semantic token APIs
 - [x] Component and core unit tests
 - [x] Performance benchmarks
 - [x] End-to-end terminal integration tests

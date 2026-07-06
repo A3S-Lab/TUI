@@ -26,4 +26,6 @@ pub use crate::markdown::Markdown;
 pub use crate::model::{ElementModel, Model};
 pub use crate::program::{Program, ProgramBuilder};
 pub use crate::style::{Align, Border, Color, Style};
-pub use crate::theme::Theme;
+pub use crate::theme::{
+    BuiltinTheme, ParseBuiltinThemeError, ParseThemeRoleError, Theme, ThemeRole,
+};
