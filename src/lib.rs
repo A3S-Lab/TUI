@@ -78,11 +78,14 @@ pub mod layout_engine;
 #[macro_use]
 pub mod macros;
 pub mod animation;
+#[cfg(feature = "markdown")]
 pub mod markdown;
 pub mod model;
 pub mod paint;
+pub mod prelude;
 pub mod program;
 pub mod renderer;
+#[cfg(feature = "markdown")]
 pub mod streaming;
 pub mod style;
 pub mod terminal;

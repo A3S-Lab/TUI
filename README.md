@@ -34,9 +34,8 @@ tokio = { version = "1", features = ["full"] }
 Create a counter app:
 
 ```rust
-use a3s_tui::{cmd, col, text, Element, ElementModel, ElementProgramBuilder};
-use a3s_tui::{Event, KeyCode, TextElement};
-use a3s_tui::style::Color;
+use a3s_tui::prelude::*;
+use a3s_tui::{col, text};
 
 struct Counter { count: i64 }
 
@@ -93,6 +92,49 @@ async fn main() -> std::io::Result<()> {
 ```
 
 Run with `cargo run --example counter_element`.
+
+---
+
+## API Surface
+
+For application code, prefer importing from the stable prelude:
+
+```rust
+use a3s_tui::prelude::*;
+use a3s_tui::{col, row, text};
+```
+
+The prelude contains the TEA program builders, event types, layout primitives,
+element types, styling types, keymaps, focus helpers, and the `components`
+module. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
+individual component modules remain public for advanced use, but the prelude is
+the intended starting point for semver-stable app code.
+
+## Feature Flags
+
+Default features preserve the full current experience:
+
+```toml
+a3s-tui = "0.1"
+```
+
+For lightweight apps that do not render markdown transcripts or highlighted
+code blocks, disable defaults:
+
+```toml
+a3s-tui = { version = "0.1", default-features = false }
+```
+
+Available features:
+
+| Feature | Default | Enables |
+| --- | --- | --- |
+| `markdown` | Yes | `a3s_tui::markdown::Markdown` and `a3s_tui::streaming::StreamingMarkdown` via `comrak`. |
+| `syntax-highlighting` | Yes | `syntect` code highlighting for markdown code blocks. Requires `markdown`. |
+| `full` | No | Convenience alias for `markdown` + `syntax-highlighting`. |
+
+Turning off `syntax-highlighting` keeps markdown rendering available but renders
+code block contents as plain text.
 
 ---
 
@@ -349,7 +391,7 @@ let screen = format!("{}\n{}", StatusBar::new().left("/top").view(width), body);
 
 ### Advanced Features
 
-- **Markdown Rendering** — Full CommonMark support with syntax highlighting (via `syntect`)
+- **Markdown Rendering** — Optional CommonMark support with feature-gated syntax highlighting
 - **Streaming Content** — Real-time text streaming (perfect for LLM outputs)
 - **Keymap System** — Vim-like key bindings
 - **Focus Management** — Tab navigation between components
@@ -523,8 +565,8 @@ ElementProgramBuilder::new(model)
 | Layout | Flexbox (Taffy) | Constraints | Linear |
 | Rendering | Incremental | Full redraw | Incremental |
 | Async | Native (Tokio) | Manual | Callbacks |
-| Markdown | Built-in | External | External |
-| Components | 59 built-in | DIY | 10+ built-in |
+| Markdown | Optional built-in | External | External |
+| Components | 60+ built-in | DIY | 10+ built-in |
 
 ---
 
@@ -532,7 +574,9 @@ ElementProgramBuilder::new(model)
 
 - [x] TEA architecture
 - [x] Element tree + Flexbox layout
-- [x] 59 core components
+- [x] 60+ core components
+- [x] Stable application prelude
+- [x] Feature-gated markdown and syntax highlighting
 - [x] Markdown rendering
 - [x] Streaming content
 - [x] Keymap system

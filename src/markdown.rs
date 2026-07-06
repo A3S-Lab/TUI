@@ -1,11 +1,15 @@
-//! Markdown-to-terminal renderer with syntax highlighting.
+//! Markdown-to-terminal renderer.
 //!
-//! Supports CommonMark via comrak and code highlighting via syntect.
+//! Supports CommonMark via comrak. Code highlighting is enabled by the
+//! `syntax-highlighting` crate feature.
 
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
+#[cfg(feature = "syntax-highlighting")]
 use syntect::easy::HighlightLines;
+#[cfg(feature = "syntax-highlighting")]
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
+#[cfg(feature = "syntax-highlighting")]
 use syntect::parsing::SyntaxSet;
 
 use crate::style::{
@@ -17,8 +21,11 @@ const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
 
 pub struct Markdown {
     width: usize,
+    #[cfg(feature = "syntax-highlighting")]
     syntax_set: SyntaxSet,
+    #[cfg(feature = "syntax-highlighting")]
     theme_set: ThemeSet,
+    #[cfg(feature = "syntax-highlighting")]
     theme_name: String,
 }
 
@@ -26,8 +33,11 @@ impl Markdown {
     pub fn new() -> Self {
         Self {
             width: 80,
+            #[cfg(feature = "syntax-highlighting")]
             syntax_set: SyntaxSet::load_defaults_newlines(),
+            #[cfg(feature = "syntax-highlighting")]
             theme_set: ThemeSet::load_defaults(),
+            #[cfg(feature = "syntax-highlighting")]
             theme_name: "base16-eighties.dark".to_string(),
         }
     }
@@ -38,7 +48,14 @@ impl Markdown {
     }
 
     pub fn with_theme(mut self, name: &str) -> Self {
-        self.theme_name = name.to_string();
+        #[cfg(feature = "syntax-highlighting")]
+        {
+            self.theme_name = name.to_string();
+        }
+        #[cfg(not(feature = "syntax-highlighting"))]
+        {
+            let _ = name;
+        }
         self
     }
 
@@ -364,6 +381,7 @@ impl Markdown {
         }
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     fn highlight_code(&self, code: &str, lang: &str) -> String {
         let syntax = self
             .syntax_set
@@ -393,6 +411,11 @@ impl Markdown {
 
         output.join("\n")
     }
+
+    #[cfg(not(feature = "syntax-highlighting"))]
+    fn highlight_code(&self, code: &str, _lang: &str) -> String {
+        code.to_string()
+    }
 }
 
 impl Default for Markdown {
@@ -412,6 +435,7 @@ fn heading_color(level: u8) -> Color {
     }
 }
 
+#[cfg(feature = "syntax-highlighting")]
 fn style_to_ansi(style: &SynStyle, text: &str) -> String {
     let fg = style.foreground;
     format!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text)
@@ -904,6 +928,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "syntax-highlighting")]
     #[test]
     fn render_code_block_without_themes_falls_back_to_plain_text() {
         let md = Markdown {
