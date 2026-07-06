@@ -6,8 +6,9 @@
 //! their own model.
 
 use crate::components::{
-    ActivityBlock, Chip, ChipStrip, ConnectorBlock, InputBorder, OutputBlock, PromptLine,
-    SessionStatus, StatusBar, Tabs, ToolStatusLine,
+    ActivityBlock, Chip, ChipStrip, ConnectorBlock, InputBorder, ModeLine, OutputBlock, PromptLine,
+    QueuedTask, SessionStatus, StatusBar, SubagentRow, SubagentTracker, Tabs, TaskQueue,
+    ToolLogRecord, ToolLogView, ToolStatusLine,
 };
 use crate::theme::Theme;
 
@@ -41,6 +42,10 @@ impl<'a> AgentChrome<'a> {
         ToolStatusLine::new(label).with_theme(self.theme)
     }
 
+    pub fn tool_log(&self) -> ToolLogView {
+        ToolLogView::new().with_theme(self.theme)
+    }
+
     pub fn prompt(&self, prompt: impl Into<String>) -> PromptLine {
         PromptLine::new(prompt).with_theme(self.theme)
     }
@@ -63,6 +68,34 @@ impl<'a> AgentChrome<'a> {
 
     pub fn chip_strip(&self, chips: Vec<Chip>) -> ChipStrip {
         ChipStrip::new(chips).with_theme(self.theme)
+    }
+
+    pub fn mode_line(&self, mode: impl Into<String>) -> ModeLine {
+        ModeLine::new(mode).with_theme(self.theme)
+    }
+
+    pub fn task_queue(&self) -> TaskQueue {
+        TaskQueue::new().with_theme(self.theme)
+    }
+
+    pub fn queued_task(&self, text: impl Into<String>) -> QueuedTask {
+        QueuedTask::new(text)
+    }
+
+    pub fn subagent_tracker(&self, title: impl Into<String>) -> SubagentTracker {
+        SubagentTracker::new(title).with_theme(self.theme)
+    }
+
+    pub fn subagent_row(
+        &self,
+        agent: impl Into<String>,
+        description: impl Into<String>,
+    ) -> SubagentRow {
+        SubagentRow::new(agent, description)
+    }
+
+    pub fn tool_record(&self, name: impl Into<String>) -> ToolLogRecord {
+        ToolLogRecord::ok(name)
     }
 }
 
@@ -201,5 +234,55 @@ mod tests {
             active_chip.style.bg,
             Some(theme.color(ThemeRole::Highlight))
         );
+    }
+
+    #[test]
+    fn builds_themed_task_and_log_components() {
+        let theme = sample_theme();
+        let chrome = AgentChrome::new(&theme);
+
+        let mode_line = chrome.mode_line("auto").glyph("⏵⏵").view(40);
+        assert!(mode_line.contains("\x1b[1;35m⏵⏵ auto mode on\x1b[0m"));
+
+        let Element::Box(queue) = chrome
+            .task_queue()
+            .running("compile")
+            .queued(chrome.queued_task("docs"))
+            .element::<()>()
+        else {
+            panic!("expected task queue column");
+        };
+        let Element::Text(header) = &queue.children[0] else {
+            panic!("expected task queue header");
+        };
+        assert_eq!(header.style.fg, Some(theme.color(ThemeRole::Border)));
+
+        let Element::Box(tracker) = chrome
+            .subagent_tracker("Extract")
+            .row(chrome.subagent_row("coder", "build"))
+            .element::<()>()
+        else {
+            panic!("expected subagent tracker column");
+        };
+        let Element::Box(summary) = &tracker.children[0] else {
+            panic!("expected tracker summary");
+        };
+        let Element::Text(summary_left) = &summary.children[0] else {
+            panic!("expected tracker summary text");
+        };
+        assert_eq!(summary_left.style.fg, Some(theme.color(ThemeRole::Primary)));
+
+        let Element::Box(tool_log) = chrome
+            .tool_log()
+            .title("/output")
+            .record(chrome.tool_record("read").output("ok"))
+            .element::<()>(3)
+        else {
+            panic!("expected tool log column");
+        };
+        let Element::Text(title) = &tool_log.children[0] else {
+            panic!("expected tool log title");
+        };
+        assert_eq!(title.style.fg, Some(theme.color(ThemeRole::Primary)));
     }
 }

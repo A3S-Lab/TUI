@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD: usize = u16::MAX as usize;
 
@@ -189,6 +190,16 @@ impl ToolLogView {
 
     pub fn title_color(mut self, color: Color) -> Self {
         self.title_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_color = theme.color(ThemeRole::Foreground);
+        self.ok_color = theme.color(ThemeRole::Success);
+        self.error_color = theme.color(ThemeRole::Error);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.output_color = theme.color(ThemeRole::Foreground);
+        self.title_color = theme.color(ThemeRole::Primary);
         self
     }
 
@@ -609,6 +620,19 @@ mod tests {
         assert!(!plain.contains("one"));
         assert!(plain.contains("three"));
         assert!(plain.contains("four"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let view = ToolLogView::new().with_theme(&theme);
+
+        assert_eq!(view.header_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.ok_color, theme.color(ThemeRole::Success));
+        assert_eq!(view.error_color, theme.color(ThemeRole::Error));
+        assert_eq!(view.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.output_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.title_color, theme.color(ThemeRole::Primary));
     }
 
     #[test]

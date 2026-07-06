@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_MODE_LINE_MARGIN: usize = u16::MAX as usize;
 
@@ -59,6 +60,12 @@ impl ModeLine {
 
     pub fn hint_color(mut self, color: Color) -> Self {
         self.hint_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.mode_color = theme.color(ThemeRole::Primary);
+        self.hint_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -188,6 +195,15 @@ mod tests {
             .view(20);
 
         assert_eq!(strip_ansi(&rendered).trim_end(), " -- insert");
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let line = ModeLine::new("auto").with_theme(&theme);
+
+        assert_eq!(line.mode_color, theme.color(ThemeRole::Primary));
+        assert_eq!(line.hint_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]

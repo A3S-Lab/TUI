@@ -107,10 +107,10 @@ use a3s_tui::{col, row, text};
 The prelude contains the TEA program builders, event types, layout primitives,
 element types, styling types, input routing, keymaps, focus helpers, and the
 `components` module. It also exports `AgentChrome`, a small middleware builder
-for applying a shared theme across transcript, input, and status surfaces.
-Lower-level modules such as `paint`, `renderer`, `layout_engine`, and individual
-component modules remain public for advanced use, but the prelude is the
-intended starting point for semver-stable app code.
+for applying a shared theme across transcript, input, status, task, and tool-log
+surfaces. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
+individual component modules remain public for advanced use, but the prelude is
+the intended starting point for semver-stable app code.
 
 Interactive list-like components also implement small shared state traits:
 
@@ -421,7 +421,8 @@ let view = table.view(80, 12);
 These components are also the preferred middleware building blocks for A3S Code
 TUI shells. Keep shell-owned state in the application, then compose a small
 adapter that passes the current `Theme` into every transcript, input, and status
-surface:
+surface. `AgentChrome` also exposes themed builders for mode lines, task queues,
+subagent trackers, and tool logs:
 
 ```rust
 use a3s_tui::prelude::*;

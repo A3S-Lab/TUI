@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_TASK_QUEUE_MARGIN: usize = u16::MAX as usize;
 const MAX_TASK_QUEUE_QUEUED_ROWS: usize = u16::MAX as usize;
@@ -128,6 +129,13 @@ impl TaskQueue {
 
     pub fn queued_color(mut self, color: Color) -> Self {
         self.queued_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_color = theme.color(ThemeRole::Border);
+        self.running_color = theme.color(ThemeRole::Warning);
+        self.queued_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -391,6 +399,16 @@ mod tests {
         assert_eq!(visible_len(header), 48);
         assert!(header.starts_with("  界 tasks"));
         assert!(header.matches('界').count() > 1);
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let queue = TaskQueue::new().with_theme(&theme);
+
+        assert_eq!(queue.header_color, theme.color(ThemeRole::Border));
+        assert_eq!(queue.running_color, theme.color(ThemeRole::Warning));
+        assert_eq!(queue.queued_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_SUBAGENT_CHILD_INDENT: usize = u16::MAX as usize;
 const MAX_SUBAGENT_MARGIN: usize = u16::MAX as usize;
@@ -103,6 +104,14 @@ impl SubagentTracker {
 
     pub fn error_color(mut self, color: Color) -> Self {
         self.error_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.accent_color = theme.color(ThemeRole::Primary);
+        self.active_color = theme.color(ThemeRole::Secondary);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.error_color = theme.color(ThemeRole::Error);
         self
     }
 
@@ -584,6 +593,17 @@ mod tests {
             panic!("expected left text");
         };
         assert_eq!(text.style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let tracker = SubagentTracker::new("Extract").with_theme(&theme);
+
+        assert_eq!(tracker.accent_color, theme.color(ThemeRole::Primary));
+        assert_eq!(tracker.active_color, theme.color(ThemeRole::Secondary));
+        assert_eq!(tracker.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(tracker.error_color, theme.color(ThemeRole::Error));
     }
 
     #[test]
