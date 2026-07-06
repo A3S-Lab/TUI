@@ -71,6 +71,7 @@ pub mod element_program;
 pub mod event;
 pub mod focus;
 pub mod grid;
+pub mod input;
 pub mod interaction;
 pub mod key;
 pub mod keymap;
@@ -102,6 +103,10 @@ pub use element_program::{ElementProgram, ElementProgramBuilder};
 pub use event::{Event, KeyEvent, MouseEvent};
 pub use focus::{FocusId, FocusManager};
 pub use grid::{Cell, CellStyle, Grid};
+pub use input::{
+    InputCapture, InputCaptureMode, InputHelpEntry, InputRoute, InputRouter, InputScope,
+    RoutedInput,
+};
 pub use key::{KeyCode, KeyModifiers};
 pub use keymap::{KeyBinding, Keymap};
 pub use layout::{Constraint, Direction, Layout};

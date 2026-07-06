@@ -105,8 +105,8 @@ use a3s_tui::{col, row, text};
 ```
 
 The prelude contains the TEA program builders, event types, layout primitives,
-element types, styling types, keymaps, focus helpers, and the `components`
-module. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
+element types, styling types, input routing, keymaps, focus helpers, and the
+`components` module. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
 individual component modules remain public for advanced use, but the prelude is
 the intended starting point for semver-stable app code.
 
@@ -121,6 +121,40 @@ Interactive list-like components also implement small shared state traits:
 These traits do not replace component-specific message enums such as
 `MenuPanelMsg` or `DataTableMsg`; they give app shells and command systems a
 common way to coordinate selection, scrolling, and tab state across components.
+
+For app-level input orchestration, use `InputRouter` to resolve keys in a fixed
+order: newest captured scope, focused component bindings, then global bindings.
+This keeps blocking modals, passthrough overlays, and regular focused widgets
+from each hand-rolling a different shortcut policy.
+
+```rust
+use a3s_tui::prelude::*;
+
+const PROMPT: FocusId = 1;
+
+#[derive(Clone)]
+enum Action {
+    ClosePalette,
+    PromptSubmit,
+    Quit,
+}
+
+let mut focus = FocusManager::new();
+focus.register(PROMPT);
+
+let mut router = InputRouter::new()
+    .bind_global(KeyBinding::ctrl(KeyCode::Char('c')), Action::Quit, "Quit")
+    .bind_focus(PROMPT, KeyBinding::new(KeyCode::Enter), Action::PromptSubmit, "Submit prompt")
+    .bind_scope("palette", KeyBinding::new(KeyCode::Esc), Action::ClosePalette, "Close palette");
+
+router.push_capture("palette");
+
+if let Event::Key(key) = event {
+    if let Some(routed) = router.resolve_key(&key, focus.current()) {
+        // Dispatch routed.action in your update function.
+    }
+}
+```
 
 ## Feature Flags
 
@@ -407,6 +441,7 @@ let screen = format!("{}\n{}", StatusBar::new().left("/top").view(width), body);
 - **Streaming Content** — Real-time text streaming (perfect for LLM outputs)
 - **Keymap System** — Vim-like key bindings
 - **Focus Management** — Tab navigation between components
+- **Input Routing** — Global, focused, and captured command scopes
 - **Interaction Traits** — Shared `Selectable`, `Scrollable`, and `Tabbed` state contracts
 - **Mouse Support** — Click, drag, and scroll events with component handlers
 
@@ -591,6 +626,7 @@ ElementProgramBuilder::new(model)
 - [x] Stable application prelude
 - [x] Feature-gated markdown and syntax highlighting
 - [x] Shared interaction traits for selectable, scrollable, and tabbed components
+- [x] Input routing for global, focused, and captured command scopes
 - [x] Markdown rendering
 - [x] Streaming content
 - [x] Keymap system
