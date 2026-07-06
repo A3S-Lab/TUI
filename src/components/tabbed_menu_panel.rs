@@ -3,6 +3,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::interaction::{Activatable, Scrollable, Selectable, Tabbed};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
 
 const MAX_TABBED_MENU_PANEL_INDENT: usize = u16::MAX as usize;
@@ -296,6 +297,18 @@ impl TabbedMenuPanel {
 
     pub fn items_use_tab_color(mut self, enabled: bool) -> Self {
         self.items_use_tab_color = enabled;
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving tab brand colors.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = Some(theme.color(ThemeRole::Primary));
+        self.hint_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = Some(theme.color(ThemeRole::Highlight));
+        self.disabled_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -956,6 +969,19 @@ mod tests {
             code,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = sample().with_theme(&theme);
+
+        assert_eq!(panel.title_color, Some(theme.color(ThemeRole::Primary)));
+        assert_eq!(panel.hint_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.selected_bg, Some(theme.color(ThemeRole::Highlight)));
+        assert_eq!(panel.disabled_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.tabs[0].color_value(), Color::Cyan);
     }
 
     #[test]

@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::interaction::{Activatable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
 
 const MAX_CHOICE_PROMPT_INDENT: usize = u16::MAX as usize;
@@ -187,6 +188,17 @@ impl ChoicePrompt {
     pub fn selected_colors(mut self, fg: Color, bg: Color) -> Self {
         self.selected_fg = fg;
         self.selected_bg = bg;
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving choices and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.danger_color = theme.color(ThemeRole::Error);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = theme.color(ThemeRole::Highlight);
         self
     }
 
@@ -564,6 +576,18 @@ mod tests {
             code,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let prompt = ChoicePrompt::approval("Allow?").with_theme(&theme);
+
+        assert_eq!(prompt.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(prompt.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(prompt.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(prompt.danger_color, theme.color(ThemeRole::Error));
+        assert_eq!(prompt.selected_bg, theme.color(ThemeRole::Highlight));
     }
 
     #[test]

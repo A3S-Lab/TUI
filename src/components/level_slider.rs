@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::interaction::Selectable;
 use crate::style::{fit_visible, repeat_visible_char, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_LEVEL_SLIDER_MARGIN: usize = u16::MAX as usize;
 
@@ -200,6 +201,15 @@ impl LevelSlider {
 
     pub fn muted_color(mut self, color: Color) -> Self {
         self.muted_color = color;
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving levels and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.selected_color = theme.color(ThemeRole::Primary);
+        self.track_color = theme.color(ThemeRole::Border);
+        self.muted_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -776,6 +786,17 @@ mod tests {
             Element::Text(text) => visible_len(&text.content),
             _ => 0,
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let slider = sample_slider().with_theme(&theme);
+
+        assert_eq!(slider.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(slider.selected_color, theme.color(ThemeRole::Primary));
+        assert_eq!(slider.track_color, theme.color(ThemeRole::Border));
+        assert_eq!(slider.muted_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]

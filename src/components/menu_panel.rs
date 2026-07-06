@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::interaction::{Activatable, Scrollable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
 
 const MAX_MENU_ITEM_DEPTH: usize = u16::MAX as usize / 2;
@@ -269,6 +270,19 @@ impl MenuPanel {
 
     pub fn disabled_color(mut self, color: Color) -> Self {
         self.disabled_color = color;
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving content and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.subtitle_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = theme.color(ThemeRole::Highlight);
+        self.checked_color = theme.color(ThemeRole::Success);
+        self.disabled_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -868,6 +882,19 @@ mod tests {
             .item(MenuItem::new("/top").description("process monitor"))
             .item(MenuItem::new("/quit").disabled(true).description("leave"))
             .footer("type to filter")
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = MenuPanel::without_title().with_theme(&theme);
+
+        assert_eq!(panel.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(panel.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.selected_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(panel.checked_color, theme.color(ThemeRole::Success));
+        assert_eq!(panel.disabled_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]

@@ -187,6 +187,13 @@ let title = TextElement::new("Workspace")
 let selected = theme.selection_style().render("  current row");
 let panel = theme.surface_style().render("Connected");
 
+let menu = components::MenuPanel::new("Command palette")
+    .item(components::MenuItem::new("/theme"))
+    .with_theme(&theme);
+
+let table = components::DataTable::new(vec![components::DataColumn::new("Name")])
+    .with_theme(&theme);
+
 for preset in Theme::builtins() {
     println!("{} -> {}", preset.name(), preset.label());
 }

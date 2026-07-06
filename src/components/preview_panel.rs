@@ -5,6 +5,7 @@ use crate::style::{
     fit_visible, split_nonempty_lines_preserving_trailing_blank, strip_ansi, truncate_visible,
     visible_len, Color, Style,
 };
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
 
 const MAX_PREVIEW_PANEL_INDENT: usize = u16::MAX as usize;
@@ -265,6 +266,20 @@ impl PreviewPanel {
 
     pub fn divider_color(mut self, color: Color) -> Self {
         self.divider_color = color;
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving content and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.subtitle_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = theme.color(ThemeRole::Highlight);
+        self.disabled_color = theme.color(ThemeRole::Muted);
+        self.preview_color = theme.color(ThemeRole::Foreground);
+        self.divider_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -802,6 +817,19 @@ mod tests {
                 "}",
             ])
             .footer("↑/↓ preview")
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = PreviewPanel::without_title().with_theme(&theme);
+
+        assert_eq!(panel.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(panel.subtitle_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.selected_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(panel.preview_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.divider_color, theme.color(ThemeRole::Border));
     }
 
     #[test]

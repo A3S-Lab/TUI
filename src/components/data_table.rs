@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::interaction::{Scrollable, Selectable};
 use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
 const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
@@ -203,6 +204,13 @@ impl DataTable {
 
     pub fn empty(mut self, message: impl Into<String>) -> Self {
         self.empty = Some(message.into());
+        self
+    }
+
+    /// Apply semantic colors from a theme while preserving rows and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_fg = theme.color(ThemeRole::Foreground);
+        self.separator_fg = theme.color(ThemeRole::Border);
         self
     }
 
@@ -669,6 +677,15 @@ fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
 mod tests {
     use super::*;
     use crate::style::strip_ansi;
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let table = DataTable::new(vec![DataColumn::new("Name")]).with_theme(&theme);
+
+        assert_eq!(table.header_fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(table.separator_fg, theme.color(ThemeRole::Border));
+    }
 
     #[test]
     fn renders_header_separator_and_rows() {
