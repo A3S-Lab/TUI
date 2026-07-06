@@ -71,6 +71,7 @@ pub mod element_program;
 pub mod event;
 pub mod focus;
 pub mod grid;
+pub mod interaction;
 pub mod key;
 pub mod keymap;
 pub mod layout;

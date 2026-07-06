@@ -1,6 +1,7 @@
 use super::chip_strip::{Chip, ChipStrip};
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Scrollable, Selectable, Tabbed};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -875,6 +876,46 @@ impl TabbedMenuPanel {
 
     fn indent_for_element(&self) -> usize {
         self.indent.min(MAX_TABBED_MENU_PANEL_INDENT)
+    }
+}
+
+impl Selectable for TabbedMenuPanel {
+    fn item_count(&self) -> usize {
+        self.active_items().len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.active_items().is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_state();
+    }
+}
+
+impl Scrollable for TabbedMenuPanel {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.active_items().len().saturating_sub(1));
+    }
+}
+
+impl Tabbed for TabbedMenuPanel {
+    fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    fn active_tab_index(&self) -> Option<usize> {
+        (!self.tabs.is_empty()).then(|| self.normalized_active_tab())
+    }
+
+    fn set_active_tab_index(&mut self, index: usize) {
+        self.active_tab = index;
+        self.clamp_state();
     }
 }
 

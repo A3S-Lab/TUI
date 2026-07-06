@@ -13,6 +13,7 @@ pub use crate::element::{
 pub use crate::element_program::{ElementProgram, ElementProgramBuilder};
 pub use crate::event::{Event, KeyEvent, MouseEvent};
 pub use crate::focus::{FocusId, FocusManager};
+pub use crate::interaction::{Scrollable, Selectable, Tabbed};
 pub use crate::key::{KeyCode, KeyModifiers};
 pub use crate::keymap::{KeyBinding, Keymap};
 pub use crate::layout::{Constraint, Direction, Layout};

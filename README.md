@@ -110,6 +110,18 @@ module. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
 individual component modules remain public for advanced use, but the prelude is
 the intended starting point for semver-stable app code.
 
+Interactive list-like components also implement small shared state traits:
+
+| Trait | Purpose |
+| --- | --- |
+| `Selectable` | Read item count, read selected index, and select an item with clamping. |
+| `Scrollable` | Read and set a component scroll offset with component-owned bounds. |
+| `Tabbed` | Read tab count, read active tab, and switch active tab with clamping. |
+
+These traits do not replace component-specific message enums such as
+`MenuPanelMsg` or `DataTableMsg`; they give app shells and command systems a
+common way to coordinate selection, scrolling, and tab state across components.
+
 ## Feature Flags
 
 Default features preserve the full current experience:
@@ -395,6 +407,7 @@ let screen = format!("{}\n{}", StatusBar::new().left("/top").view(width), body);
 - **Streaming Content** — Real-time text streaming (perfect for LLM outputs)
 - **Keymap System** — Vim-like key bindings
 - **Focus Management** — Tab navigation between components
+- **Interaction Traits** — Shared `Selectable`, `Scrollable`, and `Tabbed` state contracts
 - **Mouse Support** — Click, drag, and scroll events with component handlers
 
 ---
@@ -577,6 +590,7 @@ ElementProgramBuilder::new(model)
 - [x] 60+ core components
 - [x] Stable application prelude
 - [x] Feature-gated markdown and syntax highlighting
+- [x] Shared interaction traits for selectable, scrollable, and tabbed components
 - [x] Markdown rendering
 - [x] Streaming content
 - [x] Keymap system

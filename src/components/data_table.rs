@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Scrollable, Selectable};
 use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
 
 const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
@@ -621,6 +622,30 @@ impl DataTable {
         self.selected
             .map(|selected| selected.min(self.rows.len().saturating_sub(1)))
             .filter(|_| !self.rows.is_empty())
+    }
+}
+
+impl Selectable for DataTable {
+    fn item_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        self.normalized_selected()
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = (!self.rows.is_empty()).then(|| index.min(self.rows.len() - 1));
+    }
+}
+
+impl Scrollable for DataTable {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.rows.len().saturating_sub(1));
     }
 }
 

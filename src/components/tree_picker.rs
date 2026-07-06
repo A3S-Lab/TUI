@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Scrollable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -781,6 +782,31 @@ impl TreePicker {
 impl Default for TreePicker {
     fn default() -> Self {
         Self::without_title()
+    }
+}
+
+impl Selectable for TreePicker {
+    fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.items.is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_selection();
+    }
+}
+
+impl Scrollable for TreePicker {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.items.len().saturating_sub(1));
     }
 }
 

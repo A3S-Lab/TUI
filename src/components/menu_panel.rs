@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Scrollable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -805,6 +806,31 @@ fn number_shortcut_label(index: usize) -> Option<char> {
         0..=8 => Some((b'1' + index as u8) as char),
         9 => Some('0'),
         _ => None,
+    }
+}
+
+impl Selectable for MenuPanel {
+    fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.items.is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_selection();
+    }
+}
+
+impl Scrollable for MenuPanel {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.items.len().saturating_sub(1));
     }
 }
 
