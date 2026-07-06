@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::Selectable;
 use crate::style::{fit_visible, repeat_visible_char, truncate_visible, visible_len, Color, Style};
 
 const MAX_LEVEL_SLIDER_MARGIN: usize = u16::MAX as usize;
@@ -693,6 +694,20 @@ impl LevelSlider {
             let position = self.position_for(*index, track_width);
             position.abs_diff(local_column)
         })
+    }
+}
+
+impl Selectable for LevelSlider {
+    fn item_count(&self) -> usize {
+        self.levels.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.levels.is_empty()).then(|| LevelSlider::selected_index(self))
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.set_selected(index);
     }
 }
 

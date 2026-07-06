@@ -1,7 +1,7 @@
 use super::chip_strip::{Chip, ChipStrip};
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::interaction::{Scrollable, Selectable, Tabbed};
+use crate::interaction::{Activatable, Scrollable, Selectable, Tabbed};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -916,6 +916,14 @@ impl Tabbed for TabbedMenuPanel {
     fn set_active_tab_index(&mut self, index: usize) {
         self.active_tab = index;
         self.clamp_state();
+    }
+}
+
+impl Activatable for TabbedMenuPanel {
+    fn is_item_disabled(&self, index: usize) -> bool {
+        self.active_items()
+            .get(index)
+            .is_some_and(TabbedMenuItem::is_disabled)
     }
 }
 

@@ -17,7 +17,7 @@ pub use crate::input::{
     InputCapture, InputCaptureMode, InputHelpEntry, InputRoute, InputRouter, InputScope,
     RoutedInput,
 };
-pub use crate::interaction::{Scrollable, Selectable, Tabbed};
+pub use crate::interaction::{Activatable, Scrollable, Selectable, Tabbed};
 pub use crate::key::{KeyCode, KeyModifiers};
 pub use crate::keymap::{KeyBinding, Keymap};
 pub use crate::layout::{Constraint, Direction, Layout};

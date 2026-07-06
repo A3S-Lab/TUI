@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::interaction::{Scrollable, Selectable};
+use crate::interaction::{Activatable, Scrollable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -807,6 +807,14 @@ impl Scrollable for TreePicker {
 
     fn set_scroll_offset(&mut self, offset: usize) {
         self.scroll = offset.min(self.items.len().saturating_sub(1));
+    }
+}
+
+impl Activatable for TreePicker {
+    fn is_item_disabled(&self, index: usize) -> bool {
+        self.items
+            .get(index)
+            .is_some_and(TreePickerItem::is_disabled)
     }
 }
 

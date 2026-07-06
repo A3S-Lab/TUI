@@ -1,4 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::interaction::Selectable;
 use crate::style::Color;
 
 pub struct List<T> {
@@ -156,6 +157,21 @@ impl<T: std::fmt::Display> List<T> {
 
     fn normalized_cursor(&self) -> usize {
         self.cursor.min(self.items.len().saturating_sub(1))
+    }
+}
+
+impl<T: std::fmt::Display> Selectable for List<T> {
+    fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.items.is_empty()).then(|| self.normalized_cursor())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.cursor = index.min(self.items.len().saturating_sub(1));
+        self.adjust_offset();
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::interaction::{Scrollable, Selectable};
+use crate::interaction::{Activatable, Scrollable, Selectable};
 use crate::style::{
     fit_visible, split_nonempty_lines_preserving_trailing_blank, strip_ansi, truncate_visible,
     visible_len, Color, Style,
@@ -771,6 +771,12 @@ impl Scrollable for PreviewPanel {
 
     fn set_scroll_offset(&mut self, offset: usize) {
         self.scroll = offset.min(self.items.len().saturating_sub(1));
+    }
+}
+
+impl Activatable for PreviewPanel {
+    fn is_item_disabled(&self, index: usize) -> bool {
+        self.items.get(index).is_some_and(PreviewItem::is_disabled)
     }
 }
 

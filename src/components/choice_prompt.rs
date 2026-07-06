@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Activatable, Selectable};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crossterm::event::KeyCode;
 
@@ -512,6 +513,27 @@ impl ChoicePrompt {
 impl Default for ChoicePrompt {
     fn default() -> Self {
         Self::new("", Vec::new())
+    }
+}
+
+impl Selectable for ChoicePrompt {
+    fn item_count(&self) -> usize {
+        self.choices.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.choices.is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_selected();
+    }
+}
+
+impl Activatable for ChoicePrompt {
+    fn is_item_disabled(&self, _index: usize) -> bool {
+        false
     }
 }
 

@@ -114,13 +114,28 @@ Interactive list-like components also implement small shared state traits:
 
 | Trait | Purpose |
 | --- | --- |
-| `Selectable` | Read item count, read selected index, and select an item with clamping. |
-| `Scrollable` | Read and set a component scroll offset with component-owned bounds. |
-| `Tabbed` | Read tab count, read active tab, and switch active tab with clamping. |
+| `Selectable` | Read item count, read selected index, move to first/previous/next/last item, and select an item with clamping. |
+| `Scrollable` | Read and set a component scroll offset, scroll by a signed delta, and jump to top/bottom with component-owned bounds. |
+| `Tabbed` | Read tab count, read active tab, and switch first/previous/next/last tab with clamping. |
+| `Activatable` | Check whether a selected item can emit an action, including disabled menu rows. |
 
 These traits do not replace component-specific message enums such as
 `MenuPanelMsg` or `DataTableMsg`; they give app shells and command systems a
 common way to coordinate selection, scrolling, and tab state across components.
+
+```rust
+use a3s_tui::prelude::*;
+
+fn move_down<T: Selectable>(component: &mut T) {
+    component.select_next();
+}
+
+fn maybe_run<T: Activatable>(component: &T) {
+    if component.can_activate_selected() {
+        // Dispatch the component-specific selected action.
+    }
+}
+```
 
 For app-level input orchestration, use `InputRouter` to resolve keys in a fixed
 order: newest captured scope, focused component bindings, then global bindings.
