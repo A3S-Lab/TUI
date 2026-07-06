@@ -1,0 +1,39 @@
+---
+source: tests/render_snapshots.rs
+expression: strip_ansi(&surface)
+---
+  • Running cargo test tui::render…                             
+    │ checking shared chrome                                    
+    │ snapshot ready                                            
+
+  • Ran cargo test                                              
+    ⎿  35 tests passed                                          
+
+⎿  ✔ collect evidence                                           
+   ◼ wire AgentChrome into CLI                                  
+   ◻ push submodule pointer                                     
+
+  • Edited src/tui/ui/render.rs (+1 -1)                         
+      1 - old line                                              
+      1 + new line                                              
+      2   keep                                                  
+
+A3S Code                                                        
+                                                                
+Actions                                                         
+    /output           show tool calls                           
+    /theme            switch code highlighting                  
+                                                                
+
+ session log · 2 events                                         
+────────────────────────────────────────────────────────────────
+tool started                                                    
+tool finished                                                   
+tail                                                            
+
+#1 · Ran cargo test · ok                                        
+  output:                                                       
+    ok                                                          
+                                                                
+#2 · Edited render.rs · exit 1                                  
+  args: {"file_path":"src/tui/ui/render.rs"}

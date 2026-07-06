@@ -1,6 +1,6 @@
 use a3s_tui::components::{
-    CellAlign, DataColumn, DataRow, DataTable, MenuItem, MenuPanel, TextInput, Textarea,
-    TreePicker, TreePickerItem,
+    CellAlign, DataColumn, DataRow, DataTable, HelpSection, MenuItem, MenuPanel, OutputStatus,
+    TextInput, Textarea, ToolLogRecord, ToolLogStatus, TreePicker, TreePickerItem,
 };
 use a3s_tui::element::{BoxElement, Element, FlexDirection};
 use a3s_tui::event::{Event, KeyEvent};
@@ -8,6 +8,7 @@ use a3s_tui::grid::{Cell, Grid};
 use a3s_tui::layout_engine::LayoutEngine;
 use a3s_tui::paint;
 use a3s_tui::style::{strip_ansi, Color};
+use a3s_tui::{AgentChrome, Theme};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 fn render(element: &Element<()>, width: u16, height: u16) -> Grid {
@@ -147,4 +148,77 @@ fn data_table_plain_snapshot() {
     let grid = render(&element, 38, 5);
 
     insta::assert_snapshot!("data_table_plain", plain(&grid));
+}
+
+#[test]
+fn agent_chrome_code_surfaces_plain_snapshot() {
+    let theme = Theme::tokyo_night();
+    let chrome = AgentChrome::new(&theme);
+
+    let live = chrome
+        .activity("Running")
+        .detail("cargo test tui::render")
+        .line("checking shared chrome")
+        .line("snapshot ready")
+        .width(64)
+        .view();
+
+    let completed = chrome
+        .output("Ran")
+        .detail("cargo test")
+        .status(OutputStatus::Success)
+        .line("35 tests passed")
+        .view(64);
+
+    let plan = chrome
+        .checklist(vec![
+            chrome.checklist_item("collect evidence").done(),
+            chrome.checklist_item("wire AgentChrome into CLI").active(),
+            chrome.checklist_item("push submodule pointer"),
+        ])
+        .connector(true)
+        .strikethrough_done(false)
+        .view(64, 4);
+
+    let diff = chrome
+        .diff_texts(
+            "src/tui/ui/render.rs",
+            "old line\nkeep\n",
+            "new line\nkeep\n",
+        )
+        .max_lines(6)
+        .view(64, 8);
+
+    let help = chrome
+        .help_panel("A3S Code")
+        .section(
+            HelpSection::new("Actions")
+                .row("/output", "show tool calls")
+                .row("/theme", "switch code highlighting"),
+        )
+        .footer("Esc close")
+        .view(64, 6);
+
+    let log = chrome
+        .log_view("session log")
+        .metadata("2 events")
+        .line("tool started")
+        .line("tool finished")
+        .footer("tail")
+        .view(64, 5);
+
+    let tool_log = chrome
+        .tool_log()
+        .records(vec![
+            ToolLogRecord::new("Ran cargo test", ToolLogStatus::Ok).output("ok"),
+            ToolLogRecord::new("Edited render.rs", ToolLogStatus::Exit(1))
+                .args("{\"file_path\":\"src/tui/ui/render.rs\"}")
+                .output("review needed"),
+        ])
+        .max_output_lines_per_record(1)
+        .view(64, 6);
+
+    let surface = [live, completed, plan, diff, help, log, tool_log].join("\n\n");
+
+    insta::assert_snapshot!("agent_chrome_code_surfaces_plain", strip_ansi(&surface));
 }
