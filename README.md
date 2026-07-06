@@ -500,6 +500,11 @@ Run `cargo test --test terminal_integration` to exercise the headless terminal
 pipeline from Element trees through Flexbox layout, grid painting, ANSI snapshots,
 resize behavior, truncation, and incremental diff changes.
 
+Run `cargo test --test render_snapshots` to compare stable golden snapshots for
+core widgets such as text editors, menus, tree pickers, and data tables. Update
+those fixtures intentionally with `INSTA_UPDATE=always cargo test --test render_snapshots`
+after reviewing the visual change.
+
 ---
 
 ## Architecture

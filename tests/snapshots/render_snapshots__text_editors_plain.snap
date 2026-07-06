@@ -1,0 +1,9 @@
+---
+source: tests/render_snapshots.rs
+expression: plain(&grid)
+---
+> ask about logs                        
+first line                              
+second line                             
+third line                              
+~

@@ -1,0 +1,12 @@
+---
+source: tests/render_snapshots.rs
+expression: plain(&grid)
+---
+@ file                                      
+choose a source file                        
+  ▾ src                                     
+      lib.rs                                
+      input.rs                              
+  ▸ tests                                   
+    README.md                               
+5 entries

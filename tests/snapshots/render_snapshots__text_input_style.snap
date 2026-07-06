@@ -1,0 +1,5 @@
+---
+source: tests/render_snapshots.rs
+expression: styled_cells(&grid)
+---
+03,00 'e' fg=None bg=None bold=false italic=false reverse=true dim=false
