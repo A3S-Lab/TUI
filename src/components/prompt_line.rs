@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_PROMPT_LINE_CONTINUATION_INDENT: usize = u16::MAX as usize;
 const MAX_PROMPT_LINE_MARGIN: usize = u16::MAX as usize;
@@ -72,6 +73,12 @@ impl PromptLine {
 
     pub fn text_color(mut self, color: Color) -> Self {
         self.text_style = Some(Style::new().fg(color));
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.prompt_style = Some(theme.foreground_style(ThemeRole::Primary).bold());
+        self.text_style = Some(theme.foreground_style(ThemeRole::Foreground));
         self
     }
 
@@ -280,6 +287,24 @@ mod tests {
         assert_eq!(strip_ansi(&rendered), " ? research mode");
         assert!(rendered.contains("\x1b[1;36m? \x1b[0m"));
         assert!(rendered.contains("\x1b[97mresearch mode\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_styles() {
+        let theme = Theme::tokyo_night();
+        let line = PromptLine::new("❯ ").with_theme(&theme);
+        let prompt_style = line.prompt_style.as_ref().expect("prompt style");
+        let text_style = line.text_style.as_ref().expect("text style");
+
+        assert_eq!(
+            prompt_style.foreground(),
+            Some(theme.color(ThemeRole::Primary))
+        );
+        assert!(prompt_style.is_bold());
+        assert_eq!(
+            text_style.foreground(),
+            Some(theme.color(ThemeRole::Foreground))
+        );
     }
 
     #[test]

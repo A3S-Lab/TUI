@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_INPUT_BORDER_MARGIN: usize = u16::MAX as usize;
 const MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH: usize = u16::MAX as usize;
@@ -94,6 +95,13 @@ impl InputBorder {
         if !palette.is_empty() {
             self.rainbow = Some(RainbowRule { palette, offset });
         }
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.rule_color = theme.color(ThemeRole::Border);
+        self.context_color = theme.color(ThemeRole::Muted);
+        self.label_color = theme.color(ThemeRole::Primary);
         self
     }
 
@@ -342,6 +350,16 @@ mod tests {
 
         assert_eq!(strip_ansi(&rendered), " ━━━━━━━━━━━");
         assert!(rendered.contains("\x1b[1;32m━━━━━━━━━━━\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let border = InputBorder::new().with_theme(&theme);
+
+        assert_eq!(border.rule_color, theme.color(ThemeRole::Border));
+        assert_eq!(border.context_color, theme.color(ThemeRole::Muted));
+        assert_eq!(border.label_color, theme.color(ThemeRole::Primary));
     }
 
     #[test]

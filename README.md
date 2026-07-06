@@ -194,6 +194,19 @@ let menu = components::MenuPanel::new("Command palette")
 let table = components::DataTable::new(vec![components::DataColumn::new("Name")])
     .with_theme(&theme);
 
+let transcript = components::OutputBlock::new("Ran command")
+    .line("tests passed")
+    .with_theme(&theme);
+
+let prompt = components::PromptLine::new("❯ ")
+    .text("/model gpt-5")
+    .with_theme(&theme);
+
+let footer = components::SessionStatus::new("/workspace/a3s")
+    .model("openai/gpt-5")
+    .context(42_000, 128_000)
+    .with_theme(&theme);
+
 for preset in Theme::builtins() {
     println!("{} -> {}", preset.name(), preset.label());
 }
@@ -397,6 +410,46 @@ let view = table.view(80, 12);
 | `Toast` / `ToastManager` | Temporary notifications and footer flashes. | Push `Toast` values into a manager and render active ones each frame. |
 | `SideNotePanel` | Side-channel question/answer panels. | Use for compact auxiliary context that should not become transcript history. |
 | `WelcomeBanner` | First-run or empty-state welcome surface. | Render once at startup with tips, version metadata, and notices. |
+
+These components are also the preferred middleware building blocks for A3S Code
+TUI shells. Keep shell-owned state in the application, then compose a small
+adapter that passes the current `Theme` into every transcript, input, and status
+surface:
+
+```rust
+use a3s_tui::prelude::*;
+
+fn render_agent_chrome(theme: &Theme, width: u16) -> String {
+    let status = components::StatusBar::new()
+        .left("A3S Code")
+        .right("live")
+        .with_theme(theme)
+        .view(width);
+
+    let tabs = components::Tabs::new(vec!["Chat", "Tools", "Memory"])
+        .with_theme(theme)
+        .view(width);
+
+    let output = components::OutputBlock::new("Ran")
+        .detail("cargo test")
+        .line("ok")
+        .with_theme(theme)
+        .view(width);
+
+    let border = components::InputBorder::new()
+        .context("42% context used")
+        .label("◇ high")
+        .with_theme(theme)
+        .view(width);
+
+    let prompt = components::PromptLine::new("❯ ")
+        .text("summarize changes")
+        .with_theme(theme)
+        .view();
+
+    [status, tabs, output, border, prompt].join("\n")
+}
+```
 
 #### Text Input, Editing, And Viewports
 

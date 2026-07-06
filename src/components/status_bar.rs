@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 pub struct StatusBar {
     left: String,
@@ -54,6 +55,12 @@ impl StatusBar {
 
     pub fn bold(mut self, enabled: bool) -> Self {
         self.bold = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.fg = theme.color(ThemeRole::Foreground);
+        self.bg = Some(theme.color(ThemeRole::Surface));
         self
     }
 
@@ -270,6 +277,15 @@ mod tests {
             panic!("expected row");
         };
         assert_eq!(row.style.bg, None);
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let bar = StatusBar::new().no_bg().with_theme(&theme);
+
+        assert_eq!(bar.fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(bar.bg, Some(theme.color(ThemeRole::Surface)));
     }
 
     #[test]

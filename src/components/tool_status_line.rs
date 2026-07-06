@@ -1,4 +1,5 @@
 use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_TOOL_STATUS_LINE_MARGIN: usize = u16::MAX as usize;
 
@@ -93,6 +94,14 @@ impl ToolStatusLine {
 
     pub fn label_bold(mut self, bold: bool) -> Self {
         self.label_bold = bold;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.marker_color = theme.color(ThemeRole::Primary);
+        self.label_color = Some(theme.color(ThemeRole::Foreground));
+        self.detail_color = theme.color(ThemeRole::Muted);
+        self.suffix_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -205,6 +214,17 @@ mod tests {
         assert_eq!(plain, "  • Running cargo test…");
         assert!(rendered.contains("\x1b[1;36mcargo\x1b[0m"));
         assert!(rendered.contains("\x1b[33mtest\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let line = ToolStatusLine::new("Running").with_theme(&theme);
+
+        assert_eq!(line.marker_color, theme.color(ThemeRole::Primary));
+        assert_eq!(line.label_color, Some(theme.color(ThemeRole::Foreground)));
+        assert_eq!(line.detail_color, theme.color(ThemeRole::Muted));
+        assert_eq!(line.suffix_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]

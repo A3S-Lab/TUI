@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_CONNECTOR_BLOCK_GAP: usize = u16::MAX as usize;
 const MAX_CONNECTOR_BLOCK_INDENT: usize = u16::MAX as usize;
@@ -141,6 +142,13 @@ impl ConnectorBlock {
 
     pub fn connector_color(mut self, color: Color) -> Self {
         self.connector_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.text_color = theme.color(ThemeRole::Muted);
+        self.omitted_color = theme.color(ThemeRole::Muted);
+        self.connector_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -444,6 +452,16 @@ mod tests {
             .view(32);
 
         assert!(rendered.contains("\x1b[31mfailed\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let block = ConnectorBlock::new().with_theme(&theme);
+
+        assert_eq!(block.text_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.omitted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.connector_color, theme.color(ThemeRole::Border));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::components::Meter;
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_SESSION_STATUS_CHIP_LABEL_WIDTH: usize = u16::MAX as usize;
 const MAX_SESSION_STATUS_MARGIN: usize = u16::MAX as usize;
@@ -112,6 +113,16 @@ impl SessionStatus {
     pub fn threshold_colors(mut self, warning: Color, danger: Color) -> Self {
         self.warning_color = warning;
         self.danger_color = danger;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.accent_color = theme.color(ThemeRole::Primary);
+        self.branch_color = theme.color(ThemeRole::Secondary);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.warning_color = theme.color(ThemeRole::Warning);
+        self.danger_color = theme.color(ThemeRole::Error);
         self
     }
 
@@ -450,6 +461,19 @@ mod tests {
 
         assert!(plain.contains("ctx:50%"), "{plain}");
         assert!(plain.contains(&expected), "{plain}");
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let status = SessionStatus::new("/tmp/a3s").with_theme(&theme);
+
+        assert_eq!(status.accent_color, theme.color(ThemeRole::Primary));
+        assert_eq!(status.branch_color, theme.color(ThemeRole::Secondary));
+        assert_eq!(status.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(status.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(status.warning_color, theme.color(ThemeRole::Warning));
+        assert_eq!(status.danger_color, theme.color(ThemeRole::Error));
     }
 
     #[test]

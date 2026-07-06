@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_OUTPUT_BLOCK_BODY_LINES: usize = u16::MAX as usize;
 const MAX_OUTPUT_BLOCK_INDENT: usize = u16::MAX as usize;
@@ -176,6 +177,18 @@ impl OutputBlock {
 
     pub fn connector_color(mut self, color: Color) -> Self {
         self.connector_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.detail_color = theme.color(ThemeRole::Muted);
+        self.success_color = theme.color(ThemeRole::Success);
+        self.error_color = theme.color(ThemeRole::Error);
+        self.running_color = theme.color(ThemeRole::Warning);
+        self.info_color = theme.color(ThemeRole::Info);
+        self.body_color = None;
+        self.connector_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -479,6 +492,23 @@ mod tests {
 
         assert!(rendered.contains("\x1b[31"));
         assert!(strip_ansi(&rendered).contains("failed"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let block = OutputBlock::new("Ran")
+            .body_color(Color::Red)
+            .with_theme(&theme);
+
+        assert_eq!(block.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(block.detail_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.success_color, theme.color(ThemeRole::Success));
+        assert_eq!(block.error_color, theme.color(ThemeRole::Error));
+        assert_eq!(block.running_color, theme.color(ThemeRole::Warning));
+        assert_eq!(block.info_color, theme.color(ThemeRole::Info));
+        assert_eq!(block.body_color, None);
+        assert_eq!(block.connector_color, theme.color(ThemeRole::Border));
     }
 
     #[test]

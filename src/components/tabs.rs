@@ -1,6 +1,7 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
 
 const MAX_TAB_GAP: usize = u16::MAX as usize;
@@ -136,6 +137,14 @@ impl Tabs {
 
     pub fn suffix_color(mut self, color: Color) -> Self {
         self.suffix_fg = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.active_fg = theme.color(ThemeRole::Foreground);
+        self.active_bg = theme.color(ThemeRole::Highlight);
+        self.inactive_fg = theme.color(ThemeRole::Muted);
+        self.suffix_fg = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -410,6 +419,17 @@ mod tests {
 
         assert_eq!(visible_len(&rendered), 40);
         assert!(crate::style::strip_ansi(&rendered).contains("中文"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let tabs = Tabs::new(vec!["Agents", "Tools"]).with_theme(&theme);
+
+        assert_eq!(tabs.active_fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(tabs.active_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(tabs.inactive_fg, theme.color(ThemeRole::Muted));
+        assert_eq!(tabs.suffix_fg, theme.color(ThemeRole::Muted));
     }
 
     #[test]

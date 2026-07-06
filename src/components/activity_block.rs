@@ -3,6 +3,7 @@ use crate::style::{
     fit_visible, split_nonempty_lines_preserving_trailing_blank, truncate_visible, visible_len,
     Color, Style,
 };
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
 const MAX_ACTIVITY_BLOCK_OUTPUT_LINES: usize = u16::MAX as usize;
@@ -156,6 +157,16 @@ impl ActivityBlock {
 
     pub fn connector_color(mut self, color: Color) -> Self {
         self.connector_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.label_color = theme.color(ThemeRole::Primary);
+        self.detail_color = theme.color(ThemeRole::Muted);
+        self.active_color = theme.color(ThemeRole::Primary);
+        self.inactive_color = theme.color(ThemeRole::Muted);
+        self.output_color = theme.color(ThemeRole::Muted);
+        self.connector_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -441,6 +452,19 @@ mod tests {
         let rendered = ActivityBlock::new("Running").detail("plain").view();
 
         assert!(rendered.contains("\x1b[90mplain\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let block = ActivityBlock::new("Running").with_theme(&theme);
+
+        assert_eq!(block.label_color, theme.color(ThemeRole::Primary));
+        assert_eq!(block.detail_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.active_color, theme.color(ThemeRole::Primary));
+        assert_eq!(block.inactive_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.output_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.connector_color, theme.color(ThemeRole::Border));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_CHIP_STRIP_GAP: usize = u16::MAX as usize;
 const MAX_CHIP_STRIP_MARGIN: usize = u16::MAX as usize;
@@ -123,6 +124,13 @@ impl ChipStrip {
 
     pub fn bold_active(mut self, enabled: bool) -> Self {
         self.bold_active = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.active_fg = theme.color(ThemeRole::Foreground);
+        self.active_bg = theme.color(ThemeRole::Highlight);
+        self.inactive_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -270,6 +278,16 @@ mod tests {
         let strip = ChipStrip::from_labels(vec!["one", "two"]).active(99);
 
         assert_eq!(strip.active_value(), Some(1));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let strip = ChipStrip::from_labels(vec!["one", "two"]).with_theme(&theme);
+
+        assert_eq!(strip.active_fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(strip.active_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(strip.inactive_color, theme.color(ThemeRole::Muted));
     }
 
     #[test]
