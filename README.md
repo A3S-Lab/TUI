@@ -172,6 +172,172 @@ Run with `cargo run --example counter_element`.
 | `WelcomeBanner` | First-run mascot/art banner with metadata, tips, and notices |
 | `WrappedPrefixBlock` | Wrapped callout/transcript block with aligned continuation prefix |
 
+### Component Usage Guide
+
+Most components are intentionally small. Build screens by composing a few
+purpose-built components instead of creating one large renderer. Components
+generally follow one or more of these shapes:
+
+- **Element components** return `Element<Msg>` and participate in Flexbox layout.
+- **Line components** return `String` or `Vec<String>` for transcript, overlay,
+  and fixed-format rendering.
+- **Interactive components** expose `handle_key` and/or `handle_mouse` helpers
+  and return a small message enum such as `MenuPanelMsg`, `DataTableMsg`, or
+  `ChoicePromptMsg`.
+
+#### Navigation And Selection
+
+| Component | Use it for | Typical usage |
+| --- | --- | --- |
+| `Tabs` | A compact horizontal tab row where each tab changes a view. | Keep the active tab in app state; call the tab mouse handler when capture is enabled. |
+| `TabbedMenuPanel` | Account/model pickers and other tabbed command menus. | Build tabs with `TabbedMenuTab`, add tab-specific `TabbedMenuItem` rows, then handle tab clicks and row selection. |
+| `MenuPanel` | Slash menus, asset pickers, plugin toggles, and short overlay menus. | Create `MenuItem` rows, set `selected` and `scroll`, render a bounded `view`, then process `MenuPanelMsg`. |
+| `TreePicker` | File pickers and flattened hierarchy selection. | Build `TreePickerItem::branch` and `TreePickerItem::leaf` rows from your model; handle open, close, selected, and cancelled messages. |
+| `Select` | Small single-choice controls where only a selected index matters. | Store the selected index in app state and use the returned `SelectMsg` to update it. |
+| `MultiSelect` | Checkbox-like multi-selection lists. | Store checked indices separately from cursor state and toggle from `MultiSelectMsg`. |
+| `List` | Simple scrollable lists without rich row metadata. | Use when labels are enough and a full `MenuPanel` would be too heavy. |
+| `ChoicePrompt` | Human-in-the-loop approval prompts and numbered choices. | Build `ChoicePromptItem` rows, set the current choice, then map `ChoicePromptMsg::Selected` into the domain action. |
+| `Confirm` | Yes/no confirmation before a destructive action. | Render inline, boxed, or full-screen confirmation and map `ConfirmMsg` to approve/cancel behavior. |
+
+```rust
+use a3s_tui::components::{MenuItem, MenuPanel, MenuPanelMsg};
+
+let mut menu = MenuPanel::new("Commands")
+    .items(vec![
+        MenuItem::new("/model").description("Switch model"),
+        MenuItem::new("/theme").description("Preview themes"),
+    ])
+    .selected(0)
+    .max_items(8);
+
+let rendered = menu.view(64, 10).lines().collect::<Vec<_>>();
+
+if let Some(MenuPanelMsg::Selected(index)) = menu.handle_key(&key) {
+    // Run the selected command.
+}
+```
+
+#### Tables, Timelines, And Structured Data
+
+| Component | Use it for | Typical usage |
+| --- | --- | --- |
+| `DataTable` | Responsive process tables, activity tables, and dense operational views. | Define `DataColumn` widths/priorities, add `DataRow` values, then use `DataTableMsg` for wheel/click row selection. |
+| `Table` | Static two-dimensional output where no selection or responsive hiding is needed. | Add rows and render as a compact read-only table. |
+| `Timeline` | Event streams with time, status, and selected-row highlighting. | Keep events as `TimelineItem` rows and render history, memory, or run activity chronologically. |
+| `DetailPanel` | Selected item details, metadata, and short action rows. | Pair with a list/table selection; update rows when selection changes. |
+| `KeyValue` | Compact metadata, runtime facts, and summary fields. | Add label/value pairs for panel sidebars and diagnostics. |
+| `ToolLogView` | Completed command/tool history with arguments and output. | Append `ToolLogRecord` entries as tool calls complete. |
+| `LogView` | Scrollable plain output with loading/empty states. | Use for long logs where selection is less important than browsing. |
+| `Sparkline` | Inline trends for CPU, memory, tokens, latency, or rates. | Feed recent numeric samples and render inside tables or status rows. |
+| `MetricTrend` | A metric value plus a small trend display. | Use in dashboards where a number and motion both matter. |
+| `Meter` | Compact percentage or capacity indicator. | Use for context fill, quota, progress, or health meters. |
+| `Progress` | Task progress bars and phase completion. | Store progress as a normalized value and render where the task status lives. |
+
+```rust
+use a3s_tui::components::{CellAlign, DataColumn, DataRow, DataTable};
+
+let table = DataTable::new(vec![
+    DataColumn::new("PID").width(7).align(CellAlign::Right),
+    DataColumn::new("CPU%").width(6).align(CellAlign::Right),
+    DataColumn::new("COMMAND").min_width(16),
+])
+.row(DataRow::new(vec!["4242", "12.5", "a3s code"]))
+.selected(Some(0))
+.scroll(0);
+
+let view = table.view(80, 12);
+```
+
+#### Transcript, Agent, And Tool Surfaces
+
+| Component | Use it for | Typical usage |
+| --- | --- | --- |
+| `GutterBlock` | Chat transcript entries with a left marker and optional bubble styling. | Render assistant/user/tool blocks with consistent gutters. |
+| `PromptLine` | Prompt-prefixed user input or command text. | Keep continuation rows aligned under the prompt glyph. |
+| `WrappedPrefixBlock` | Wrapped reasoning, callouts, and prefixed transcript text. | Use when every wrapped line must align under a marker. |
+| `OutputBlock` | Tool output summaries with status, title, and tail preview. | Display running, completed, failed, and cancelled tool output consistently. |
+| `ToolStatusLine` | One-line live tool status with marker, detail, and suffix. | Use in streaming transcripts for active tool calls. |
+| `ActivityBlock` | Live activity rows with optional stdout tail. | Show long-running work without taking over the whole screen. |
+| `ConnectorBlock` | Compact multi-row output with connector glyphs. | Use when a tool emits related lines that should visually hang together. |
+| `SubagentTracker` | Parallel subagent or background work tracking. | Add `SubagentRow` entries for worker name, description, and status. |
+| `TaskQueue` | Running task plus queued follow-up work. | Render active and queued tasks near the input or status area. |
+| `Checklist` | Plans, TODOs, and multi-step workflow status. | Store each `ChecklistItem` with a `ChecklistStatus` and render the current plan. |
+| `InlineAction` | Inline command/action pills such as "Open view". | Pair a visible label with muted detail text and host-side click detection. |
+| `Toast` / `ToastManager` | Temporary notifications and footer flashes. | Push `Toast` values into a manager and render active ones each frame. |
+| `SideNotePanel` | Side-channel question/answer panels. | Use for compact auxiliary context that should not become transcript history. |
+| `WelcomeBanner` | First-run or empty-state welcome surface. | Render once at startup with tips, version metadata, and notices. |
+
+#### Text Input, Editing, And Viewports
+
+| Component | Use it for | Typical usage |
+| --- | --- | --- |
+| `TextInput` | Single-line fields. | Forward key events into `TextInputMsg` and read the current value on submit. |
+| `Textarea` | Multi-line prompt boxes and editors. | Configure width, height, auto-grow, and submit behavior; forward key events into `TextareaMsg`. |
+| `CursorLine` | Editor rows with a visible cursor and width-safe text. | Render the active line in a fixed-width editor panel. |
+| `Viewport` | Scrollable transcript or document content. | Store the viewport state and update it from page keys or mouse wheel events. |
+| `Scrollbar` | Visual scroll position on text views. | Append to a rendered view or render beside a fixed-height panel. |
+| `Paragraph` | Wrapped prose with optional alignment. | Use for descriptions, help text, and detail copy that must fit a width. |
+| `DiffView` | Unified diff display. | Convert edits into `DiffLine` rows and render with add/remove/context styling. |
+| `Markdown` support | Rich transcript and documentation rendering. | Use the markdown renderer for CommonMark content and code highlighting. |
+
+#### Layout, Frames, And Visual Structure
+
+| Component | Use it for | Typical usage |
+| --- | --- | --- |
+| `PanelFrame` | Titled fixed-size panels with focus-aware borders. | Wrap file browsers, previews, and split panes. |
+| `SplitPane` | Two-column layouts such as file tree plus editor. | Provide left and right rendered rows and let the component bound widths. |
+| `Modal` | Centered overlay dialogs. | Use for blocking dialogs that should sit above the current screen. |
+| `TextOverlay` | Inject overlay rows into an existing rendered frame. | Compose slash menus, pickers, and prompts above the input area. |
+| `Divider` | Horizontal separators in Element or line-rendered views. | Use `divider`, `divider_line`, or width-aware variants between sections. |
+| `SectionHeader` | Panel section headings with metadata and divider rows. | Use above grouped rows in detail and activity panels. |
+| `StatusBar` | Header/footer bars with left, center, and right regions. | Use for screen titles, active mode, or panel hints. |
+| `ModeLine` | Current mode plus shortcut hints. | Render near the footer or input area. |
+| `SessionStatus` | Agent/session footer with chips and context meter. | Feed cwd, branch, model, mode, and `SessionStatusChip` values. |
+| `InputBorder` | Prompt box chrome. | Render the input top/bottom border with context, effort, and ribbon variants. |
+| `Breadcrumb` | Path metadata and navigation context. | Render workspace paths, config paths, or nested object locations. |
+| `Badge` | Inline status labels. | Use for small state markers such as "beta", "cached", or "remote". |
+| `ChipStrip` | Multiple compact tags with active styling. | Build from `Chip` values for filters, modes, or scopes. |
+| `Alert` | Success, info, warning, and error messages. | Pick `AlertKind` and render as a line or Element. |
+| `Spinner` | Lightweight loading indicator. | Tick on a timer and render beside running labels. |
+| `ShimmerText` | Animated activity text. | Use for active phases where a spinner is too small. |
+| `Tree` | Read-only hierarchical display. | Use when the hierarchy is visible but not acting as a picker. |
+
+#### Common Composition Patterns
+
+Use a picker overlay when the user is choosing one item and should return to the
+current screen immediately:
+
+```rust
+let width: u16 = 80;
+let frame = "...".repeat(24);
+let rows = MenuPanel::new("Theme")
+    .items(theme_items)
+    .selected(selected)
+    .max_items(10)
+    .view(width, 12)
+    .lines()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+
+let frame = TextOverlay::new(rows)
+    .bottom()
+    .width(width as usize)
+    .apply(&frame);
+```
+
+Use a full-screen panel when the content needs sustained browsing:
+
+```rust
+let width: u16 = 80;
+let height: usize = 24;
+let body = DataTable::new(columns)
+    .selected(Some(selected))
+    .scroll(scroll)
+    .view(width, height.saturating_sub(1));
+
+let screen = format!("{}\n{}", StatusBar::new().left("/top").view(width), body);
+```
+
 ### Layout & Styling
 
 - **Flexbox Layout** — `FlexDirection`, `AlignItems`, `JustifyContent`
@@ -335,7 +501,7 @@ pub trait ElementModel: Sized + 'static {
 ElementProgramBuilder::new(model)
     .with_alt_screen()         // Use alternate screen buffer
     .with_fps(30)              // Target frame rate
-    .with_mouse(true)          // Enable mouse events
+    .with_mouse_support()      // Enable mouse events
     .run()
     .await
 ```
