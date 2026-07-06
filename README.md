@@ -359,8 +359,8 @@ let view = table.view(80, 12);
 
 | Component | Use it for | Typical usage |
 | --- | --- | --- |
-| `TextInput` | Single-line fields. | Forward key events into `TextInputMsg` and read the current value on submit. |
-| `Textarea` | Multi-line prompt boxes and editors. | Configure width, height, auto-grow, and submit behavior; forward key events into `TextareaMsg`. |
+| `TextInput` | Single-line fields. | Forward key or paste events into `TextInputMsg`; paste is sanitized to one line and word-level navigation/deletion is built in. |
+| `Textarea` | Multi-line prompt boxes and editors. | Configure width, height, auto-grow, and submit behavior; paste inserts newlines without submitting and word-level navigation/deletion is built in. |
 | `CursorLine` | Editor rows with a visible cursor and width-safe text. | Render the active line in a fixed-width editor panel. |
 | `Viewport` | Scrollable transcript or document content. | Store the viewport state and update it from page keys or mouse wheel events. |
 | `Scrollbar` | Visual scroll position on text views. | Append to a rendered view or render beside a fixed-height panel. |
@@ -442,6 +442,7 @@ let screen = format!("{}\n{}", StatusBar::new().left("/top").view(width), body);
 - **Keymap System** — Vim-like key bindings
 - **Focus Management** — Tab navigation between components
 - **Input Routing** — Global, focused, and captured command scopes
+- **Editor Input** — Paste-aware `TextInput`/`Textarea` with word-level editing
 - **Interaction Traits** — Shared `Selectable`, `Scrollable`, and `Tabbed` state contracts
 - **Mouse Support** — Click, drag, and scroll events with component handlers
 
