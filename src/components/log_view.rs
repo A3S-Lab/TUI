@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, split_nonempty_lines_preserving_trailing_blank, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 /// Current display state for a [`LogView`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -162,6 +163,15 @@ impl LogView {
 
     pub fn separator_color(mut self, color: Color) -> Self {
         self.separator_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.metadata_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.separator_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -594,5 +604,17 @@ mod tests {
 
         assert_eq!(plain.lines().next().unwrap().trim(), "body");
         assert!(!plain.contains('─'));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let view = LogView::new("logs").with_theme(&theme);
+
+        assert_eq!(view.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(view.metadata_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.separator_color, theme.color(ThemeRole::Border));
     }
 }

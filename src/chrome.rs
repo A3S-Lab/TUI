@@ -6,9 +6,10 @@
 //! their own model.
 
 use crate::components::{
-    ActivityBlock, Chip, ChipStrip, ConnectorBlock, InputBorder, ModeLine, OutputBlock, PromptLine,
-    QueuedTask, SessionStatus, StatusBar, SubagentRow, SubagentTracker, Tabs, TaskQueue,
-    ToolLogRecord, ToolLogView, ToolStatusLine,
+    ActivityBlock, Checklist, ChecklistItem, Chip, ChipStrip, ConnectorBlock, DiffLine, DiffView,
+    GutterBlock, HelpPanel, InputBorder, LogView, ModeLine, OutputBlock, PromptLine, QueuedTask,
+    SessionStatus, StatusBar, SubagentRow, SubagentTracker, Tabs, TaskQueue, ToolLogRecord,
+    ToolLogView, ToolStatusLine,
 };
 use crate::theme::Theme;
 
@@ -30,6 +31,10 @@ impl<'a> AgentChrome<'a> {
         ActivityBlock::new(label).with_theme(self.theme)
     }
 
+    pub fn gutter(&self, content: impl AsRef<str>) -> GutterBlock {
+        GutterBlock::new(content).with_theme(self.theme)
+    }
+
     pub fn output(&self, title: impl Into<String>) -> OutputBlock {
         OutputBlock::new(title).with_theme(self.theme)
     }
@@ -44,6 +49,10 @@ impl<'a> AgentChrome<'a> {
 
     pub fn tool_log(&self) -> ToolLogView {
         ToolLogView::new().with_theme(self.theme)
+    }
+
+    pub fn log_view(&self, title: impl Into<String>) -> LogView {
+        LogView::new(title).with_theme(self.theme)
     }
 
     pub fn prompt(&self, prompt: impl Into<String>) -> PromptLine {
@@ -68,6 +77,31 @@ impl<'a> AgentChrome<'a> {
 
     pub fn chip_strip(&self, chips: Vec<Chip>) -> ChipStrip {
         ChipStrip::new(chips).with_theme(self.theme)
+    }
+
+    pub fn help_panel(&self, title: impl Into<String>) -> HelpPanel {
+        HelpPanel::new(title).with_theme(self.theme)
+    }
+
+    pub fn checklist(&self, items: Vec<ChecklistItem>) -> Checklist {
+        Checklist::new(items).with_theme(self.theme)
+    }
+
+    pub fn checklist_item(&self, label: impl Into<String>) -> ChecklistItem {
+        ChecklistItem::new(label)
+    }
+
+    pub fn diff(&self, lines: Vec<DiffLine>) -> DiffView {
+        DiffView::new(lines).with_theme(self.theme)
+    }
+
+    pub fn diff_texts(
+        &self,
+        path: impl Into<String>,
+        before: impl AsRef<str>,
+        after: impl AsRef<str>,
+    ) -> DiffView {
+        DiffView::from_texts(path, before, after).with_theme(self.theme)
     }
 
     pub fn mode_line(&self, mode: impl Into<String>) -> ModeLine {
@@ -284,5 +318,72 @@ mod tests {
             panic!("expected tool log title");
         };
         assert_eq!(title.style.fg, Some(theme.color(ThemeRole::Primary)));
+    }
+
+    #[test]
+    fn builds_themed_support_surfaces() {
+        let theme = sample_theme();
+        let chrome = AgentChrome::new(&theme);
+
+        let Element::Box(gutter) = chrome.gutter("hello").element::<()>() else {
+            panic!("expected gutter column");
+        };
+        let Element::Box(gutter_row) = &gutter.children[0] else {
+            panic!("expected gutter row");
+        };
+        let Element::Text(gutter_marker) = &gutter_row.children[1] else {
+            panic!("expected gutter marker");
+        };
+        assert_eq!(
+            gutter_marker.style.fg,
+            Some(theme.color(ThemeRole::Primary))
+        );
+
+        let Element::Box(log) = chrome.log_view("logs").line("ok").element::<()>() else {
+            panic!("expected log column");
+        };
+        let Element::Text(log_title) = &log.children[0] else {
+            panic!("expected log title");
+        };
+        assert_eq!(log_title.style.fg, Some(theme.color(ThemeRole::Primary)));
+
+        let Element::Box(help) = chrome.help_panel("Help").element::<()>() else {
+            panic!("expected help column");
+        };
+        let Element::Text(help_title) = &help.children[0] else {
+            panic!("expected help title");
+        };
+        assert_eq!(help_title.style.fg, Some(theme.color(ThemeRole::Primary)));
+
+        let Element::Box(checklist) = chrome
+            .checklist(vec![
+                chrome.checklist_item("collect"),
+                chrome.checklist_item("ship").done(),
+            ])
+            .element::<()>()
+        else {
+            panic!("expected checklist column");
+        };
+        let Element::Box(first_item) = &checklist.children[0] else {
+            panic!("expected checklist row");
+        };
+        let Element::Text(first_label) = &first_item.children[3] else {
+            panic!("expected checklist label");
+        };
+        assert_eq!(
+            first_label.style.fg,
+            Some(theme.color(ThemeRole::Foreground))
+        );
+
+        let Element::Box(diff) = chrome
+            .diff_texts("src/lib.rs", "old\n", "new\n")
+            .element_with_height::<()>(2)
+        else {
+            panic!("expected diff column");
+        };
+        let Element::Text(diff_header) = &diff.children[0] else {
+            panic!("expected diff header");
+        };
+        assert_eq!(diff_header.style.fg, Some(theme.color(ThemeRole::Primary)));
     }
 }

@@ -2,6 +2,7 @@ use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{
     fit_visible, split_lines_preserving_trailing_blank, strip_ansi, visible_len, Color, Style,
 };
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_GUTTER_BLOCK_MARGIN: usize = u16::MAX as usize;
 const MAX_GUTTER_BLOCK_WIDTH: usize = u16::MAX as usize;
@@ -94,6 +95,12 @@ impl GutterBlock {
 
     pub fn background_color(mut self, color: Color) -> Self {
         self.background_color = Some(color);
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.marker_color = theme.color(ThemeRole::Primary);
+        self.content_color = Some(theme.color(ThemeRole::Foreground));
         self
     }
 
@@ -368,5 +375,18 @@ mod tests {
             }
             _ => panic!("expected column element"),
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors_without_setting_background() {
+        let theme = Theme::tokyo_night();
+        let block = GutterBlock::new("hello").with_theme(&theme);
+
+        assert_eq!(block.marker_color, theme.color(ThemeRole::Primary));
+        assert_eq!(
+            block.content_color,
+            Some(theme.color(ThemeRole::Foreground))
+        );
+        assert_eq!(block.background_color, None);
     }
 }

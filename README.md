@@ -107,10 +107,10 @@ use a3s_tui::{col, row, text};
 The prelude contains the TEA program builders, event types, layout primitives,
 element types, styling types, input routing, keymaps, focus helpers, and the
 `components` module. It also exports `AgentChrome`, a small middleware builder
-for applying a shared theme across transcript, input, status, task, and tool-log
-surfaces. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
-individual component modules remain public for advanced use, but the prelude is
-the intended starting point for semver-stable app code.
+for applying a shared theme across transcript, input, status, task, help, diff,
+log, and tool-log surfaces. Lower-level modules such as `paint`, `renderer`,
+`layout_engine`, and individual component modules remain public for advanced
+use, but the prelude is the intended starting point for semver-stable app code.
 
 Interactive list-like components also implement small shared state traits:
 
@@ -213,6 +213,17 @@ let footer = chrome
     .model("openai/gpt-5")
     .context(42_000, 128_000)
     .view(80);
+
+let plan = chrome
+    .checklist(vec![
+        chrome.checklist_item("collect evidence").done(),
+        chrome.checklist_item("verify patch").active(),
+    ])
+    .view(80, 4);
+
+let diff = chrome
+    .diff_texts("src/lib.rs", "old\n", "new\n")
+    .view(80, 8);
 
 for preset in Theme::builtins() {
     println!("{} -> {}", preset.name(), preset.label());
@@ -422,7 +433,7 @@ These components are also the preferred middleware building blocks for A3S Code
 TUI shells. Keep shell-owned state in the application, then compose a small
 adapter that passes the current `Theme` into every transcript, input, and status
 surface. `AgentChrome` also exposes themed builders for mode lines, task queues,
-subagent trackers, and tool logs:
+subagent trackers, help panels, logs, checklists, diffs, and tool logs:
 
 ```rust
 use a3s_tui::prelude::*;
@@ -446,6 +457,17 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
         .line("ok")
         .view(width);
 
+    let checklist = chrome
+        .checklist(vec![
+            chrome.checklist_item("collect evidence").done(),
+            chrome.checklist_item("verify").active(),
+        ])
+        .view(width, 4);
+
+    let diff = chrome
+        .diff_texts("src/lib.rs", "old\n", "new\n")
+        .view(width, 4);
+
     let border = chrome
         .input_border()
         .context("42% context used")
@@ -457,7 +479,7 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
         .text("summarize changes")
         .view();
 
-    [status, tabs, output, border, prompt].join("\n")
+    [status, tabs, output, checklist, diff, border, prompt].join("\n")
 }
 ```
 

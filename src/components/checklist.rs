@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_CHECKLIST_INDENT: usize = u16::MAX as usize;
 
@@ -175,6 +176,15 @@ impl Checklist {
 
     pub fn strikethrough_done(mut self, enabled: bool) -> Self {
         self.strikethrough_done = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.pending_color = theme.color(ThemeRole::Muted);
+        self.active_color = theme.color(ThemeRole::Warning);
+        self.done_color = theme.color(ThemeRole::Success);
+        self.error_color = theme.color(ThemeRole::Error);
+        self.text_color = theme.color(ThemeRole::Foreground);
         self
     }
 
@@ -485,5 +495,17 @@ mod tests {
         assert!(text.contains("one"));
         assert!(text.contains("two"));
         assert!(!text.contains("three"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let checklist = Checklist::empty().with_theme(&theme);
+
+        assert_eq!(checklist.pending_color, theme.color(ThemeRole::Muted));
+        assert_eq!(checklist.active_color, theme.color(ThemeRole::Warning));
+        assert_eq!(checklist.done_color, theme.color(ThemeRole::Success));
+        assert_eq!(checklist.error_color, theme.color(ThemeRole::Error));
+        assert_eq!(checklist.text_color, theme.color(ThemeRole::Foreground));
     }
 }

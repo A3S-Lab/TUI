@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 const MAX_HELP_PANEL_GAP: usize = u16::MAX as usize;
 const MAX_HELP_PANEL_INDENT: usize = u16::MAX as usize;
@@ -164,6 +165,15 @@ impl HelpPanel {
 
     pub fn footer_color(mut self, color: Color) -> Self {
         self.footer_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.section_color = theme.color(ThemeRole::Primary);
+        self.key_color = theme.color(ThemeRole::Foreground);
+        self.description_color = theme.color(ThemeRole::Muted);
+        self.footer_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -477,5 +487,17 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = HelpPanel::new("Help").with_theme(&theme);
+
+        assert_eq!(panel.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(panel.section_color, theme.color(ThemeRole::Primary));
+        assert_eq!(panel.key_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.description_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.footer_color, theme.color(ThemeRole::Muted));
     }
 }

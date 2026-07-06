@@ -3,6 +3,7 @@ use crate::style::{
     fit_visible, next_display_cell_boundary, pad_visible, truncate_visible, visible_len, Color,
     Style,
 };
+use crate::theme::{Theme, ThemeRole};
 use similar::{ChangeTag, TextDiff};
 
 const MAX_DIFF_VIEW_CONTEXT_LINES: usize = u16::MAX as usize;
@@ -325,6 +326,19 @@ impl DiffView {
 
     pub fn delete_color(mut self, color: Color) -> Self {
         self.delete_fg = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_color = theme.color(ThemeRole::Primary);
+        self.meta_color = theme.color(ThemeRole::Muted);
+        self.hunk_color = theme.color(ThemeRole::Info);
+        self.context_color = theme.color(ThemeRole::Foreground);
+        self.insert_fg = theme.color(ThemeRole::Success);
+        self.insert_bg = Some(theme.color(ThemeRole::Surface));
+        self.delete_fg = theme.color(ThemeRole::Error);
+        self.delete_bg = Some(theme.color(ThemeRole::Surface));
+        self.separator_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -875,5 +889,21 @@ mod tests {
         assert!(column.children[1]
             .text_content()
             .is_some_and(|text| text.contains("diff truncated")));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let diff = DiffView::default().with_theme(&theme);
+
+        assert_eq!(diff.header_color, theme.color(ThemeRole::Primary));
+        assert_eq!(diff.meta_color, theme.color(ThemeRole::Muted));
+        assert_eq!(diff.hunk_color, theme.color(ThemeRole::Info));
+        assert_eq!(diff.context_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(diff.insert_fg, theme.color(ThemeRole::Success));
+        assert_eq!(diff.insert_bg, Some(theme.color(ThemeRole::Surface)));
+        assert_eq!(diff.delete_fg, theme.color(ThemeRole::Error));
+        assert_eq!(diff.delete_bg, Some(theme.color(ThemeRole::Surface)));
+        assert_eq!(diff.separator_color, theme.color(ThemeRole::Border));
     }
 }
