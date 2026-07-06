@@ -433,7 +433,8 @@ These components are also the preferred middleware building blocks for A3S Code
 TUI shells. Keep shell-owned state in the application, then compose a small
 adapter that passes the current `Theme` into every transcript, input, and status
 surface. `AgentChrome` also exposes themed builders for mode lines, task queues,
-subagent trackers, help panels, logs, checklists, diffs, and tool logs:
+subagent trackers, titled or untitled help panels, logs, checklists, diffs, and
+tool logs:
 
 ```rust
 use a3s_tui::prelude::*;
@@ -457,6 +458,11 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
         .line("ok")
         .view(width);
 
+    let help = chrome
+        .help_panel_without_title()
+        .section(components::HelpSection::new("Keys").row("Esc", "close"))
+        .view(width, 4);
+
     let checklist = chrome
         .checklist(vec![
             chrome.checklist_item("collect evidence").done(),
@@ -479,7 +485,7 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
         .text("summarize changes")
         .view();
 
-    [status, tabs, output, checklist, diff, border, prompt].join("\n")
+    [status, tabs, output, help, checklist, diff, border, prompt].join("\n")
 }
 ```
 

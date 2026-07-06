@@ -83,6 +83,10 @@ impl<'a> AgentChrome<'a> {
         HelpPanel::new(title).with_theme(self.theme)
     }
 
+    pub fn help_panel_without_title(&self) -> HelpPanel {
+        HelpPanel::without_title().with_theme(self.theme)
+    }
+
     pub fn checklist(&self, items: Vec<ChecklistItem>) -> Checklist {
         Checklist::new(items).with_theme(self.theme)
     }
@@ -354,6 +358,18 @@ mod tests {
             panic!("expected help title");
         };
         assert_eq!(help_title.style.fg, Some(theme.color(ThemeRole::Primary)));
+
+        let Element::Box(help_untitled) = chrome
+            .help_panel_without_title()
+            .section(crate::components::HelpSection::new("Keys").row("Esc", "close"))
+            .element::<()>()
+        else {
+            panic!("expected untitled help column");
+        };
+        let Element::Text(help_section) = &help_untitled.children[0] else {
+            panic!("expected help section");
+        };
+        assert_eq!(help_section.style.fg, Some(theme.color(ThemeRole::Primary)));
 
         let Element::Box(checklist) = chrome
             .checklist(vec![
