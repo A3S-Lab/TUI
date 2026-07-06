@@ -63,6 +63,7 @@
 //! }
 //! ```
 
+pub mod chrome;
 pub mod cmd;
 pub mod components;
 pub mod diff;
@@ -94,6 +95,7 @@ pub mod terminal;
 pub mod theme;
 
 pub use animation::{Easing, FrameAnimation, Transition};
+pub use chrome::AgentChrome;
 pub use cmd::Cmd;
 pub use element::{
     AlignItems, BorderStyle, BoxElement, BoxStyle, Dimension, Edges, Element, FlexDirection,

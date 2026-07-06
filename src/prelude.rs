@@ -4,6 +4,7 @@
 //! the types most applications need to define a TEA-style terminal program,
 //! build element trees, style text, and work with common events.
 
+pub use crate::chrome::AgentChrome;
 pub use crate::cmd::{self, Cmd};
 pub use crate::components;
 pub use crate::element::{

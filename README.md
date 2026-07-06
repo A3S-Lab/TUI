@@ -106,9 +106,11 @@ use a3s_tui::{col, row, text};
 
 The prelude contains the TEA program builders, event types, layout primitives,
 element types, styling types, input routing, keymaps, focus helpers, and the
-`components` module. Lower-level modules such as `paint`, `renderer`, `layout_engine`, and
-individual component modules remain public for advanced use, but the prelude is
-the intended starting point for semver-stable app code.
+`components` module. It also exports `AgentChrome`, a small middleware builder
+for applying a shared theme across transcript, input, and status surfaces.
+Lower-level modules such as `paint`, `renderer`, `layout_engine`, and individual
+component modules remain public for advanced use, but the prelude is the
+intended starting point for semver-stable app code.
 
 Interactive list-like components also implement small shared state traits:
 
@@ -194,18 +196,23 @@ let menu = components::MenuPanel::new("Command palette")
 let table = components::DataTable::new(vec![components::DataColumn::new("Name")])
     .with_theme(&theme);
 
-let transcript = components::OutputBlock::new("Ran command")
+let chrome = AgentChrome::new(&theme);
+
+let transcript = chrome
+    .output("Ran command")
     .line("tests passed")
-    .with_theme(&theme);
+    .view(80);
 
-let prompt = components::PromptLine::new("❯ ")
+let prompt = chrome
+    .prompt("❯ ")
     .text("/model gpt-5")
-    .with_theme(&theme);
+    .view();
 
-let footer = components::SessionStatus::new("/workspace/a3s")
+let footer = chrome
+    .session_status("/workspace/a3s")
     .model("openai/gpt-5")
     .context(42_000, 128_000)
-    .with_theme(&theme);
+    .view(80);
 
 for preset in Theme::builtins() {
     println!("{} -> {}", preset.name(), preset.label());
@@ -420,31 +427,33 @@ surface:
 use a3s_tui::prelude::*;
 
 fn render_agent_chrome(theme: &Theme, width: u16) -> String {
-    let status = components::StatusBar::new()
+    let chrome = AgentChrome::new(theme);
+
+    let status = chrome
+        .status_bar()
         .left("A3S Code")
         .right("live")
-        .with_theme(theme)
         .view(width);
 
-    let tabs = components::Tabs::new(vec!["Chat", "Tools", "Memory"])
-        .with_theme(theme)
+    let tabs = chrome
+        .tabs(vec!["Chat", "Tools", "Memory"])
         .view(width);
 
-    let output = components::OutputBlock::new("Ran")
+    let output = chrome
+        .output("Ran")
         .detail("cargo test")
         .line("ok")
-        .with_theme(theme)
         .view(width);
 
-    let border = components::InputBorder::new()
+    let border = chrome
+        .input_border()
         .context("42% context used")
         .label("◇ high")
-        .with_theme(theme)
         .view(width);
 
-    let prompt = components::PromptLine::new("❯ ")
+    let prompt = chrome
+        .prompt("❯ ")
         .text("summarize changes")
-        .with_theme(theme)
         .view();
 
     [status, tabs, output, border, prompt].join("\n")
