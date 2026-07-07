@@ -9,7 +9,12 @@ use futures_util::StreamExt;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
+
+fn signal_quit(quit: &Arc<AtomicBool>, quit_notify: &Arc<Notify>) {
+    quit.store(true, Ordering::Relaxed);
+    quit_notify.notify_one();
+}
 
 pub struct ProgramBuilder<M: Model> {
     model: M,
@@ -84,9 +89,10 @@ impl Program {
 
         let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<M::Msg>();
         let quit_flag = Arc::new(AtomicBool::new(false));
+        let quit_notify = Arc::new(Notify::new());
 
         if let Some(cmd) = model.init() {
-            Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+            Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
         }
 
         let mut event_stream = EventStream::new();
@@ -123,7 +129,7 @@ impl Program {
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
-                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
                             }
                             dirty = true;
                         }
@@ -133,9 +139,11 @@ impl Program {
                 }
                 Some(msg) = msg_rx.recv() => {
                     if let Some(cmd) = model.update(msg) {
-                        Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                        Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
                     }
                     dirty = true;
+                }
+                _ = quit_notify.notified() => {
                 }
                 _ = tokio::time::sleep(renderer.time_until_next_frame()), if dirty => {
                 }
@@ -173,12 +181,13 @@ impl Program {
         cmd: Cmd<M>,
         tx: mpsc::UnboundedSender<M>,
         quit: Arc<AtomicBool>,
+        quit_notify: Arc<Notify>,
     ) {
         tokio::spawn(async move {
             let result = cmd.await;
             match result {
                 CmdResult::Quit => {
-                    quit.store(true, Ordering::Relaxed);
+                    signal_quit(&quit, &quit_notify);
                 }
                 CmdResult::Msg(m) => {
                     let _ = tx.send(m);
@@ -187,11 +196,12 @@ impl Program {
                     for c in cmds {
                         let tx2 = tx.clone();
                         let quit2 = quit.clone();
+                        let quit_notify2 = quit_notify.clone();
                         tokio::spawn(async move {
                             let r = c.await;
                             match r {
                                 CmdResult::Quit => {
-                                    quit2.store(true, Ordering::Relaxed);
+                                    signal_quit(&quit2, &quit_notify2);
                                 }
                                 CmdResult::Msg(m) => {
                                     let _ = tx2.send(m);
@@ -200,11 +210,12 @@ impl Program {
                                     for ic in inner_cmds {
                                         let tx3 = tx2.clone();
                                         let quit3 = quit2.clone();
+                                        let quit_notify3 = quit_notify2.clone();
                                         tokio::spawn(async move {
                                             let r = ic.await;
                                             match r {
                                                 CmdResult::Quit => {
-                                                    quit3.store(true, Ordering::Relaxed);
+                                                    signal_quit(&quit3, &quit_notify3);
                                                 }
                                                 CmdResult::Msg(m) => {
                                                     let _ = tx3.send(m);
@@ -222,5 +233,24 @@ impl Program {
                 CmdResult::None => {}
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn signal_quit_sets_flag_and_wakes_late_waiter() {
+        let quit = Arc::new(AtomicBool::new(false));
+        let notify = Arc::new(Notify::new());
+
+        signal_quit(&quit, &notify);
+
+        assert!(quit.load(Ordering::Relaxed));
+        tokio::time::timeout(Duration::from_millis(50), notify.notified())
+            .await
+            .expect("quit notification should be retained until the runner awaits it");
     }
 }

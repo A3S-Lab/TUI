@@ -4,10 +4,11 @@ use crate::style::{fit_visible, repeat_visible_char, truncate_visible, visible_l
 const MAX_PANEL_FRAME_ROWS: usize = u16::MAX as usize;
 
 /// Border style used by [`PanelFrame`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelFrameBorder {
     Single,
     Double,
+    #[default]
     Rounded,
     Thick,
 }
@@ -48,12 +49,6 @@ impl PanelFrameBorder {
                 v: '┃',
             },
         }
-    }
-}
-
-impl Default for PanelFrameBorder {
-    fn default() -> Self {
-        Self::Rounded
     }
 }
 

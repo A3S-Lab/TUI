@@ -18,7 +18,12 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
+
+fn signal_quit(quit: &Arc<AtomicBool>, quit_notify: &Arc<Notify>) {
+    quit.store(true, Ordering::Relaxed);
+    quit_notify.notify_one();
+}
 
 fn frame_delay(last_render: Instant, frame_duration: Duration) -> Duration {
     frame_duration.saturating_sub(last_render.elapsed())
@@ -128,11 +133,12 @@ impl ElementProgram {
 
         let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<M::Msg>();
         let quit_flag = Arc::new(AtomicBool::new(false));
+        let quit_notify = Arc::new(Notify::new());
         let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
         let mut dirty = false;
 
         if let Some(cmd) = model.init() {
-            Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+            Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
         }
 
         let mut event_stream = EventStream::new();
@@ -165,7 +171,7 @@ impl ElementProgram {
                             let ev: Event = ct_event.into();
                             let msg: M::Msg = ev.into();
                             if let Some(cmd) = model.update(msg) {
-                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
                             }
                             dirty = true;
                         }
@@ -175,9 +181,11 @@ impl ElementProgram {
                 }
                 Some(msg) = msg_rx.recv() => {
                     if let Some(cmd) = model.update(msg) {
-                        Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                        Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
                     }
                     dirty = true;
+                }
+                _ = quit_notify.notified() => {
                 }
                 _ = tokio::time::sleep(frame_delay(last_render, frame_duration)), if dirty => {
                 }
@@ -207,12 +215,13 @@ impl ElementProgram {
         cmd: Cmd<M>,
         tx: mpsc::UnboundedSender<M>,
         quit: Arc<AtomicBool>,
+        quit_notify: Arc<Notify>,
     ) {
         tokio::spawn(async move {
             let result = cmd.await;
             match result {
                 CmdResult::Quit => {
-                    quit.store(true, Ordering::Relaxed);
+                    signal_quit(&quit, &quit_notify);
                 }
                 CmdResult::Msg(m) => {
                     let _ = tx.send(m);
@@ -221,10 +230,11 @@ impl ElementProgram {
                     for c in cmds {
                         let tx2 = tx.clone();
                         let quit2 = quit.clone();
+                        let quit_notify2 = quit_notify.clone();
                         tokio::spawn(async move {
                             let r = c.await;
                             match r {
-                                CmdResult::Quit => quit2.store(true, Ordering::Relaxed),
+                                CmdResult::Quit => signal_quit(&quit2, &quit_notify2),
                                 CmdResult::Msg(m) => {
                                     let _ = tx2.send(m);
                                 }
