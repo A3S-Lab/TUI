@@ -121,17 +121,18 @@ impl Program {
                 event = event_stream.next() => {
                     match event {
                         Some(Ok(ct_event)) => {
-                            immediate = true;
                             // A resize shifts every row — force a full clear+redraw.
                             if matches!(ct_event, crossterm::event::Event::Resize(_, _)) {
                                 renderer.invalidate();
                             }
-                            let ev: Event = ct_event.into();
-                            let msg: M::Msg = ev.into();
-                            if let Some(cmd) = model.update(msg) {
-                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
+                            if let Some(ev) = Event::from_crossterm(ct_event) {
+                                immediate = true;
+                                let msg: M::Msg = ev.into();
+                                if let Some(cmd) = model.update(msg) {
+                                    Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone(), quit_notify.clone());
+                                }
+                                dirty = true;
                             }
-                            dirty = true;
                         }
                         Some(Err(_)) => break,
                         None => break,
