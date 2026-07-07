@@ -1,5 +1,8 @@
 use crate::components::Sparkline;
-use crate::style::{truncate_visible, visible_len, Color};
+use crate::style::{fit_visible, right_visible, truncate_visible, visible_len, Color};
+
+const MAX_METRIC_TREND_WIDTH: usize = u16::MAX as usize;
+const MAX_METRIC_TREND_SPARKLINE_WIDTH: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone)]
 pub struct MetricTrend {
@@ -31,18 +34,25 @@ impl MetricTrend {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.clamp(1, MAX_METRIC_TREND_WIDTH);
         self
     }
 
     pub fn trend_width(mut self, width: usize) -> Self {
-        self.trend_width = width.max(1);
+        self.trend_width = width.clamp(1, MAX_METRIC_TREND_SPARKLINE_WIDTH);
         self
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.min = min;
-        self.max = max.max(min);
+        if min.is_finite() && max.is_finite() {
+            if min <= max {
+                self.min = min;
+                self.max = max;
+            } else {
+                self.min = max;
+                self.max = min;
+            }
+        }
         self
     }
 
@@ -74,11 +84,7 @@ impl MetricTrend {
             .view();
         let cell = format!("{label} {trend}");
 
-        if visible_len(&cell) < self.width {
-            format!("{cell}{}", " ".repeat(self.width - visible_len(&cell)))
-        } else {
-            cell
-        }
+        fit_visible(&cell, self.width)
     }
 
     pub fn plain(&self) -> String {
@@ -88,7 +94,7 @@ impl MetricTrend {
     fn value_label(&self) -> String {
         self.value
             .map(|value| format!("{value:>5.1}%"))
-            .unwrap_or_else(|| format!("{:>6}", self.missing))
+            .unwrap_or_else(|| right_visible(&self.missing, 6))
     }
 }
 
@@ -116,9 +122,56 @@ mod tests {
     }
 
     #[test]
+    fn missing_metric_placeholder_uses_display_width() {
+        let cell = MetricTrend::new(None, Vec::<f64>::new())
+            .missing("暂无")
+            .width(15)
+            .plain();
+
+        assert_eq!(visible_len(&cell), 15);
+        assert!(cell.starts_with("  暂无 "));
+        assert!(cell.contains("····"));
+    }
+
+    #[test]
     fn truncates_to_narrow_width() {
         let cell = MetricTrend::new(Some(123.4), [100.0]).width(5).plain();
 
         assert_eq!(visible_len(&cell), 5);
+    }
+
+    #[test]
+    fn ignores_non_finite_range_bounds() {
+        let cell = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .range(f64::NAN, f64::INFINITY)
+            .width(15)
+            .plain();
+
+        assert_eq!(visible_len(&cell), 15);
+        assert!(cell.starts_with(" 50.0% "));
+        assert!(cell.ends_with('█'));
+    }
+
+    #[test]
+    fn reversed_range_bounds_are_sorted() {
+        let cell = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .range(100.0, 0.0)
+            .width(10)
+            .trend_width(3)
+            .plain();
+
+        assert!(cell.ends_with("▁▅█"));
+    }
+
+    #[test]
+    fn oversized_widths_are_clamped() {
+        let trend = MetricTrend::new(Some(50.0), [0.0, 50.0, 100.0])
+            .width(usize::MAX)
+            .trend_width(usize::MAX);
+        let cell = trend.plain();
+
+        assert_eq!(trend.width, MAX_METRIC_TREND_WIDTH);
+        assert_eq!(trend.trend_width, MAX_METRIC_TREND_SPARKLINE_WIDTH);
+        assert_eq!(visible_len(&cell), MAX_METRIC_TREND_WIDTH);
     }
 }

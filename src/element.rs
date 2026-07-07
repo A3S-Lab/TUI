@@ -167,6 +167,7 @@ pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
     pub dim: bool,
     pub strikethrough: bool,
 }
@@ -365,6 +366,11 @@ impl<Msg> BoxElement<Msg> {
         self
     }
 
+    pub fn flex_basis(mut self, d: Dimension) -> Self {
+        self.style.flex_basis = d;
+        self
+    }
+
     pub fn width(mut self, d: Dimension) -> Self {
         self.style.width = d;
         self
@@ -382,6 +388,16 @@ impl<Msg> BoxElement<Msg> {
 
     pub fn max_width(mut self, d: Dimension) -> Self {
         self.style.max_width = d;
+        self
+    }
+
+    pub fn min_height(mut self, d: Dimension) -> Self {
+        self.style.min_height = d;
+        self
+    }
+
+    pub fn max_height(mut self, d: Dimension) -> Self {
+        self.style.max_height = d;
         self
     }
 
@@ -446,6 +462,11 @@ impl TextElement {
         self
     }
 
+    pub fn reverse(mut self) -> Self {
+        self.style.reverse = true;
+        self
+    }
+
     pub fn dim(mut self) -> Self {
         self.style.dim = true;
         self
@@ -489,11 +510,13 @@ mod tests {
         let t = TextElement::new("hello")
             .bold()
             .italic()
+            .reverse()
             .fg(Color::Red)
             .bg(Color::Blue);
         assert_eq!(t.content, "hello");
         assert!(t.style.bold);
         assert!(t.style.italic);
+        assert!(t.style.reverse);
         assert_eq!(t.style.fg, Some(Color::Red));
         assert_eq!(t.style.bg, Some(Color::Blue));
     }
@@ -527,11 +550,21 @@ mod tests {
         let b = BoxElement::<()>::new()
             .flex_grow(2.0)
             .flex_shrink(0.5)
+            .flex_basis(Dimension::Points(20.0))
             .width(Dimension::Points(100.0))
-            .height(Dimension::Percent(50.0));
+            .height(Dimension::Percent(50.0))
+            .min_width(Dimension::Points(10.0))
+            .max_width(Dimension::Points(120.0))
+            .min_height(Dimension::Points(4.0))
+            .max_height(Dimension::Points(60.0));
         assert_eq!(b.style.flex_grow, 2.0);
         assert_eq!(b.style.flex_shrink, 0.5);
+        assert_eq!(b.style.flex_basis, Dimension::Points(20.0));
         assert_eq!(b.style.width, Dimension::Points(100.0));
         assert_eq!(b.style.height, Dimension::Percent(50.0));
+        assert_eq!(b.style.min_width, Dimension::Points(10.0));
+        assert_eq!(b.style.max_width, Dimension::Points(120.0));
+        assert_eq!(b.style.min_height, Dimension::Points(4.0));
+        assert_eq!(b.style.max_height, Dimension::Points(60.0));
     }
 }

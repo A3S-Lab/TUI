@@ -1,12 +1,12 @@
 use a3s_tui::components::{
     highlight_selection, selected_text, ActivityBlock, CellAlign, Chip, ChipStrip, ChoicePrompt,
-    ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable, DetailPanel, DiffView, GitPanel,
-    GitStatusFile, GutterBlock, HelpPanel, HelpSection, InputBorder, LevelSlider, LogView,
-    LogViewState, MenuItem, MenuPanel, ModeLine, OutputBlock, PreviewItem, PreviewPanel,
-    PromptLine, QueuedTask, Scrollbar, SessionStatus, SessionStatusChip, ShimmerText,
-    SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow, SubagentTracker, TabSegment,
-    TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection,
-    Timeline, TimelineItem, ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner,
+    ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable, DetailPanel, DiffView, GutterBlock,
+    HelpPanel, HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem, MenuPanel,
+    ModeLine, OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar,
+    SectionHeader, SessionStatus, SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel,
+    SplitPane, StatusBar, SubagentRow, SubagentTracker, TabSegment, TabbedMenuItem,
+    TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection, Timeline,
+    TimelineItem, ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner,
     WrappedPrefixBlock,
 };
 use a3s_tui::markdown::Markdown;
@@ -129,6 +129,11 @@ fn bench_components(c: &mut Criterion) {
         b.iter(|| details.view(black_box(100), black_box(12)))
     });
 
+    let section_header = sample_section_header();
+    c.bench_function("components/section_header_view", |b| {
+        b.iter(|| section_header.view(black_box(100), black_box(4)))
+    });
+
     let timeline = sample_timeline();
     c.bench_function("components/timeline_view", |b| {
         b.iter(|| timeline.view(black_box(52), black_box(16)))
@@ -162,11 +167,6 @@ fn bench_components(c: &mut Criterion) {
     let side_note = sample_side_note_panel();
     c.bench_function("components/side_note_panel_view", |b| {
         b.iter(|| side_note.view(black_box(88), black_box(16)))
-    });
-
-    let git_panel = sample_git_panel();
-    c.bench_function("components/git_panel_view", |b| {
-        b.iter(|| git_panel.view(black_box(120), black_box(32)))
     });
 
     let tabs = sample_tabs();
@@ -502,6 +502,12 @@ fn sample_detail_panel() -> DetailPanel {
         .fill_height(true)
 }
 
+fn sample_section_header() -> SectionHeader {
+    SectionHeader::new("agent view codex · pid 4242")
+        .metadata("ppid 42 · elapsed 00:03:42 · children 7 · subtree cpu 94.1% mem 21.4%")
+        .metadata("cwd /Users/roylin/code/a3s/crates/tui · 状态 healthy")
+}
+
 fn sample_timeline() -> Timeline {
     let mut timeline = Timeline::new().fill_height(true);
     for day in ["today", "yesterday", "2026-06-28"] {
@@ -688,54 +694,6 @@ fn sample_side_note_panel() -> SideNotePanel {
         )
         .footer("side-channel · background")
         .max_body_lines(10)
-        .fill_height(true)
-}
-
-fn sample_git_panel() -> GitPanel {
-    let mut diff = Vec::new();
-    diff.push("diff --git a/src/components/git_panel.rs b/src/components/git_panel.rs".to_string());
-    diff.push("index 1111111..2222222 100644".to_string());
-    diff.push("@@ -1,4 +1,6 @@".to_string());
-    for idx in 0..120 {
-        if idx % 7 == 0 {
-            diff.push(format!(
-                "+added reusable git row {idx} with 中文 payload and detailed suffix"
-            ));
-        } else if idx % 11 == 0 {
-            diff.push(format!(
-                "-removed inline cli renderer {idx} with legacy status text"
-            ));
-        } else {
-            diff.push(format!(" context line {idx} with stable git diff output"));
-        }
-    }
-
-    let mut files = Vec::new();
-    for idx in 0..64 {
-        let (x, y) = match idx % 4 {
-            0 => ('M', ' '),
-            1 => (' ', 'M'),
-            2 => ('A', ' '),
-            _ => ('?', '?'),
-        };
-        files.push(GitStatusFile::new(
-            x,
-            y,
-            format!("src/module_{idx}/git_panel_component.rs"),
-        ));
-    }
-
-    let log = (0..30)
-        .map(|idx| format!("{idx:07x} extract reusable tui component {idx}"))
-        .collect::<Vec<_>>();
-
-    GitPanel::new("a3s-cli-v0.5.13")
-        .files(files)
-        .selected_file(24)
-        .log_entries(log)
-        .diff_lines(diff)
-        .diff_scroll(18)
-        .note("ready")
         .fill_height(true)
 }
 

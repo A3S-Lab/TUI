@@ -1,12 +1,13 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 pub struct StatusBar {
     left: String,
     center: String,
     right: String,
     fg: Color,
-    bg: Color,
+    bg: Option<Color>,
     bold: bool,
 }
 
@@ -17,7 +18,7 @@ impl StatusBar {
             center: String::new(),
             right: String::new(),
             fg: Color::White,
-            bg: Color::BrightBlack,
+            bg: Some(Color::BrightBlack),
             bold: false,
         }
     }
@@ -43,12 +44,23 @@ impl StatusBar {
     }
 
     pub fn bg(mut self, color: Color) -> Self {
-        self.bg = color;
+        self.bg = Some(color);
+        self
+    }
+
+    pub fn no_bg(mut self) -> Self {
+        self.bg = None;
         self
     }
 
     pub fn bold(mut self, enabled: bool) -> Self {
         self.bold = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.fg = theme.color(ThemeRole::Foreground);
+        self.bg = Some(theme.color(ThemeRole::Surface));
         self
     }
 
@@ -70,12 +82,11 @@ impl StatusBar {
             children.push(Element::Text(self.text_element(&self.right)));
         }
 
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Row)
-                .bg(self.bg)
-                .children(children),
-        )
+        let mut row = BoxElement::new().direction(FlexDirection::Row);
+        if let Some(bg) = self.bg {
+            row = row.bg(bg);
+        }
+        Element::Box(row.children(children))
     }
 
     pub fn view(&self, width: u16) -> String {
@@ -91,9 +102,18 @@ impl StatusBar {
         let center_width = visible_len(&center);
         let center_start = (w.saturating_sub(center_width)) / 2;
         let left_full_width = visible_len(&self.left);
-        let center_fits = center_width > 0
-            && center_start > left_full_width
-            && center_start + center_width < right_start;
+        let center_end = center_start.saturating_add(center_width);
+        let left_clear = if left_full_width == 0 {
+            center_start >= left_full_width
+        } else {
+            center_start > left_full_width
+        };
+        let right_clear = if right_width == 0 {
+            center_end <= right_start
+        } else {
+            center_end < right_start
+        };
+        let center_fits = center_width > 0 && left_clear && right_clear;
 
         let line = if center_fits {
             let left_budget = center_start.saturating_sub(1);
@@ -127,7 +147,10 @@ impl StatusBar {
     }
 
     fn style(&self) -> Style {
-        let mut style = Style::new().fg(self.fg).bg(self.bg);
+        let mut style = Style::new().fg(self.fg);
+        if let Some(bg) = self.bg {
+            style = style.bg(bg);
+        }
         if self.bold {
             style = style.bold();
         }
@@ -181,6 +204,16 @@ mod tests {
     }
 
     #[test]
+    fn center_only_renders_when_it_fills_width() {
+        let sb = StatusBar::new().center("mid");
+        let view = sb.view(3);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(plain, "mid");
+        assert_eq!(visible_len(&plain), 3);
+    }
+
+    #[test]
     fn hides_center_when_it_would_touch_left_or_right() {
         let sb = StatusBar::new()
             .left("left side is fairly long")
@@ -222,6 +255,37 @@ mod tests {
 
         assert_eq!(visible_len(&view), 18);
         assert!(plain.ends_with("运行中"));
+    }
+
+    #[test]
+    fn no_bg_keeps_foreground_without_background() {
+        let sb = StatusBar::new()
+            .left("left")
+            .right("right")
+            .fg(Color::Cyan)
+            .no_bg();
+        let view = sb.view(20);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(visible_len(&view), 20);
+        assert!(plain.starts_with("left"));
+        assert!(plain.ends_with("right"));
+        assert!(view.contains("\x1b[36m"));
+        assert!(!view.contains("\x1b[46m"));
+
+        let Element::Box(row) = sb.element::<()>() else {
+            panic!("expected row");
+        };
+        assert_eq!(row.style.bg, None);
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let bar = StatusBar::new().no_bg().with_theme(&theme);
+
+        assert_eq!(bar.fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(bar.bg, Some(theme.color(ThemeRole::Surface)));
     }
 
     #[test]

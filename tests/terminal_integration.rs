@@ -1,18 +1,20 @@
 use a3s_tui::components::{
-    highlight_selection, selected_text, ActivityBlock, Checklist, ChecklistItem, Chip, ChipStrip,
-    ChoicePrompt, ConnectorBlock, CursorLine, DetailPanel, DiffView, GitPanel, GitStatusFile,
-    GutterBlock, HelpPanel, HelpSection, InputBorder, LevelSlider, LogView, LogViewState, MenuItem,
-    MenuPanel, ModeLine, OutputBlock, PreviewItem, PreviewPanel, PromptLine, QueuedTask, Scrollbar,
-    SessionStatus, SessionStatusChip, ShimmerText, SideNotePanel, SliderLevel, SplitPane,
-    StatusBar, SubagentRow, SubagentTracker, TabSegment, TabbedMenuItem, TabbedMenuPanel,
-    TabbedMenuTab, Tabs, TaskQueue, TextOverlay, TextSelection, Timeline, TimelineItem,
-    ToolLogRecord, ToolLogView, TreePicker, TreePickerItem, WelcomeBanner, WrappedPrefixBlock,
+    highlight_selection, selected_text, ActivityBlock, CellAlign, Checklist, ChecklistItem, Chip,
+    ChipStrip, ChoicePrompt, ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable,
+    DetailPanel, DiffView, GutterBlock, HelpPanel, HelpSection, InputBorder, LevelSlider, LogView,
+    LogViewState, MenuItem, MenuPanel, ModeLine, OutputBlock, PreviewItem, PreviewPanel,
+    PromptLine, QueuedTask, Scrollbar, SessionStatus, SessionStatusChip, ShimmerText,
+    SideNotePanel, SliderLevel, SplitPane, StatusBar, SubagentRow, SubagentTracker, TabSegment,
+    TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab, Tabs, TaskQueue, TextInput, TextOverlay,
+    TextSelection, Timeline, TimelineItem, ToolLogRecord, ToolLogView, TreePicker, TreePickerItem,
+    WelcomeBanner, WrappedPrefixBlock,
 };
 use a3s_tui::element::{
     BorderStyle, BoxElement, Dimension, Element, FlexDirection, TextElement, TextWrap,
 };
 use a3s_tui::grid::Grid;
 use a3s_tui::layout_engine::LayoutEngine;
+use a3s_tui::markdown::Markdown;
 use a3s_tui::paint;
 use a3s_tui::style::{strip_ansi, visible_len, Color, Style};
 
@@ -97,8 +99,8 @@ fn truncating_text_is_clipped_during_terminal_paint() {
     let grid = render(&element, 8, 2);
     let plain = plain(&grid);
 
-    assert!(plain.starts_with("abcdefgh"));
-    assert!(!plain.contains("ijk"));
+    assert!(plain.starts_with("abcdefg…"));
+    assert!(!plain.contains("hijk"));
     assert_eq!(visible_len(plain.lines().next().unwrap()), 8);
 }
 
@@ -203,6 +205,29 @@ fn chip_strip_renders_colored_active_chip_through_layout_and_paint() {
 }
 
 #[test]
+fn data_table_renders_selected_row_through_layout_and_paint() {
+    let element: Element<()> = DataTable::new(vec![
+        DataColumn::new("Name").width(8),
+        DataColumn::new("CPU").width(5).align(CellAlign::Right),
+    ])
+    .row(DataRow::new(vec!["codex", "12.4"]))
+    .row(DataRow::new(vec!["a3s", "1.0"]).selected(Color::Black, Color::Cyan))
+    .selected(Some(1))
+    .element(24, 4);
+    let grid = render(&element, 24, 4);
+    let plain = plain(&grid);
+
+    assert!(plain.contains("Name"), "{plain:?}");
+    assert!(plain.contains("CPU"), "{plain:?}");
+    assert!(plain.contains("codex"), "{plain:?}");
+    assert!(plain.contains("a3s"), "{plain:?}");
+    assert_eq!(grid.get(0, 3).ch, 'a');
+    assert_eq!(grid.get(0, 3).fg, Some(Color::Black));
+    assert_eq!(grid.get(0, 3).bg, Some(Color::Cyan));
+    assert!(grid.get(0, 3).bold);
+}
+
+#[test]
 fn activity_block_renders_running_tool_tail_through_layout_and_paint() {
     let element: Element<()> = ActivityBlock::new("Running")
         .detail("cargo test")
@@ -246,6 +271,53 @@ fn cursor_line_renders_block_cursor_through_layout_and_paint() {
     assert_eq!(grid.get(4, 0).ch, 'c');
     assert_eq!(grid.get(5, 0).ch, 'd');
     assert!(ansi.contains("\x1b[30;107m好\x1b[0m"), "{ansi:?}");
+}
+
+#[test]
+fn text_input_renders_cursor_through_layout_and_paint() {
+    let mut input = TextInput::new().with_prefix("> ");
+    input.set_value("abc");
+    input.handle_key(&a3s_tui::event::KeyEvent {
+        code: crossterm::event::KeyCode::Home,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    input.handle_key(&a3s_tui::event::KeyEvent {
+        code: crossterm::event::KeyCode::Right,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+
+    let grid = render(&input.element::<()>(), 8, 1);
+
+    assert_eq!(grid.get(0, 0).ch, '>');
+    assert_eq!(grid.get(3, 0).ch, 'b');
+    assert!(grid.get(3, 0).reverse);
+}
+
+#[test]
+fn markdown_heading_style_paints_through_element_tree() {
+    let element: Element<()> = Markdown::new().render_element("# Hello");
+    let grid = render(&element, 20, 2);
+
+    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert!(grid.get(0, 0).bold);
+    assert_eq!(grid.get(0, 0).fg, Some(Color::Rgb(122, 162, 247)));
+}
+
+#[test]
+fn markdown_trailing_blank_row_offsets_following_sibling() {
+    let element: Element<()> = Element::Box(
+        BoxElement::new()
+            .direction(FlexDirection::Column)
+            .children(vec![
+                Markdown::new().render_element("# Hello"),
+                Element::Text(TextElement::new("Next")),
+            ]),
+    );
+    let grid = render(&element, 20, 3);
+
+    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert_eq!(grid.get(0, 1).ch, ' ');
+    assert_eq!(grid.get(0, 2).ch, 'N');
 }
 
 #[test]
@@ -498,40 +570,6 @@ fn side_note_panel_renders_btw_overlay_through_layout_and_paint() {
 }
 
 #[test]
-fn git_panel_renders_status_overlay_through_layout_and_paint() {
-    let element: Element<()> = GitPanel::new("main")
-        .files(vec![
-            GitStatusFile::new('M', ' ', "src/lib.rs"),
-            GitStatusFile::new('?', '?', "tests/git_panel.rs"),
-        ])
-        .selected_file(0)
-        .log_entries(vec!["1234567 initial commit", "cafebabe add git panel"])
-        .diff_lines(vec![
-            "diff --git a/src/lib.rs b/src/lib.rs",
-            "@@ -1,2 +1,3 @@",
-            "+pub mod git_panel;",
-            "-inline git renderer",
-        ])
-        .note("ready")
-        .fill_height(true)
-        .element(72, 8);
-    let grid = render(&element, 72, 8);
-    let plain = plain(&grid);
-    let ansi = grid.render_to_string();
-
-    assert!(plain.contains("git · main"), "{plain:?}");
-    assert!(plain.contains("Status"), "{plain:?}");
-    assert!(plain.contains("Log (2)"), "{plain:?}");
-    assert!(plain.contains("src/lib.rs"), "{plain:?}");
-    assert!(plain.contains("pub mod git_panel"), "{plain:?}");
-    assert!(plain.contains("Space/s stage"), "{plain:?}");
-    assert_eq!(grid.get(2, 0).ch, 'g');
-    assert_eq!(grid.get(2, 0).fg, Some(Color::Cyan));
-    assert!(grid.get(2, 0).bold);
-    assert!(ansi.contains("\x1b["));
-}
-
-#[test]
 fn session_status_renders_agent_footer_through_layout_and_paint() {
     let element: Element<()> = SessionStatus::new("/Users/roylin/code/a3s")
         .branch("main")
@@ -681,7 +719,7 @@ fn wrapped_prefix_block_renders_reasoning_rows_through_layout_and_paint() {
     let ansi = grid.render_to_string();
     let rows = plain.lines().collect::<Vec<_>>();
 
-    assert!(rows[0].starts_with("  💭  alpha"), "{plain:?}");
+    assert!(rows[0].starts_with("  💭 alpha"), "{plain:?}");
     assert!(rows[1].starts_with("     beta"), "{plain:?}");
     assert!(rows[2].starts_with("     gamma"), "{plain:?}");
     assert_eq!(grid.get(2, 0).ch, '💭');

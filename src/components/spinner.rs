@@ -35,7 +35,10 @@ impl Spinner {
     }
 
     pub fn with_frames(mut self, frames: Vec<&'static str>) -> Self {
-        self.frames = frames;
+        if !frames.is_empty() {
+            self.frames = frames;
+            self.clamp_current();
+        }
         self
     }
 
@@ -45,8 +48,13 @@ impl Spinner {
     }
 
     pub fn tick(&mut self) {
-        if self.active {
-            self.current = (self.current + 1) % self.frames.len();
+        if self.active && !self.frames.is_empty() {
+            let current = self.normalized_current();
+            self.current = if current + 1 == self.frames.len() {
+                0
+            } else {
+                current + 1
+            };
         }
     }
 
@@ -68,7 +76,7 @@ impl Spinner {
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         if self.active {
-            let text = format!("{} {}", self.frames[self.current], self.title);
+            let text = format!("{} {}", self.current_frame(), self.title);
             Element::Text(TextElement::new(text).fg(self.color))
         } else {
             Element::Text(TextElement::new(&self.title))
@@ -77,10 +85,30 @@ impl Spinner {
 
     pub fn view(&self) -> String {
         if self.active {
-            format!("{} {}", self.frames[self.current], self.title)
+            format!("{} {}", self.current_frame(), self.title)
         } else {
             self.title.clone()
         }
+    }
+
+    fn current_frame(&self) -> &str {
+        self.frames
+            .get(self.normalized_current())
+            .or_else(|| self.frames.first())
+            .copied()
+            .unwrap_or("")
+    }
+
+    fn normalized_current(&self) -> usize {
+        if self.frames.is_empty() {
+            0
+        } else {
+            self.current % self.frames.len()
+        }
+    }
+
+    fn clamp_current(&mut self) {
+        self.current = self.normalized_current();
     }
 }
 
@@ -116,6 +144,52 @@ mod tests {
             s.tick();
         }
         assert_eq!(s.current, 0);
+    }
+
+    #[test]
+    fn empty_custom_frames_are_ignored() {
+        let mut s = Spinner::new().with_frames(Vec::new());
+
+        s.tick();
+
+        assert!(!s.frames.is_empty());
+        assert_eq!(s.current, 1);
+        assert!(!s.view().is_empty());
+    }
+
+    #[test]
+    fn custom_frames_clamp_current_frame() {
+        let mut s = Spinner::new();
+        s.current = 9;
+        let s = s.with_frames(vec!["a"]);
+
+        assert_eq!(s.current, 0);
+        assert_eq!(s.view(), "a ");
+    }
+
+    #[test]
+    fn current_frame_normalizes_stale_current_frame() {
+        let mut s = Spinner::new().with_frames(vec!["a", "b", "c"]);
+        s.current = usize::MAX;
+
+        assert_eq!(
+            s.view(),
+            format!("{} ", s.frames[usize::MAX % s.frames.len()])
+        );
+    }
+
+    #[test]
+    fn tick_normalizes_stale_current_frame() {
+        let mut s = Spinner::new().with_frames(vec!["a", "b", "c"]);
+        s.current = usize::MAX;
+
+        s.tick();
+
+        assert!(s.current < s.frames.len());
+        assert_eq!(
+            s.current,
+            (usize::MAX % s.frames.len() + 1) % s.frames.len()
+        );
     }
 
     #[test]

@@ -1,8 +1,12 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
-use crate::style::{slice_visible_cols, strip_ansi, visible_len, Style};
+use crate::style::{
+    next_display_cell_boundary, slice_visible_cols, strip_ansi, truncate_visible, visible_len,
+    Style,
+};
 
 pub struct Viewport {
+    content: String,
     lines: Vec<String>,
     offset: usize,
     width: u16,
@@ -104,6 +108,7 @@ impl SelectionRange {
 impl Viewport {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
+            content: String::new(),
             lines: Vec::new(),
             offset: 0,
             width,
@@ -123,21 +128,24 @@ impl Viewport {
     }
 
     pub fn set_content(&mut self, content: &str) {
-        self.lines = self.wrap_content(content);
+        self.content.clear();
+        self.content.push_str(content);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
     }
 
     pub fn append(&mut self, content: &str) {
-        let new_lines = self.wrap_content(content);
-        self.lines.extend(new_lines);
+        self.content.push_str(content);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
     }
 
     pub fn clear(&mut self) {
+        self.content.clear();
         self.lines.clear();
         self.offset = 0;
     }
@@ -145,8 +153,7 @@ impl Viewport {
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
-        let raw: String = self.lines.join("\n");
-        self.lines = self.wrap_content(&raw);
+        self.rewrap_content();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
@@ -158,13 +165,16 @@ impl Viewport {
                 self.offset = self.offset.saturating_sub(n);
             }
             ViewportMsg::ScrollDown(n) => {
-                self.offset = (self.offset + n).min(self.max_offset());
+                self.offset = self.offset.saturating_add(n).min(self.max_offset());
             }
             ViewportMsg::PageUp => {
                 self.offset = self.offset.saturating_sub(self.height as usize);
             }
             ViewportMsg::PageDown => {
-                self.offset = (self.offset + self.height as usize).min(self.max_offset());
+                self.offset = self
+                    .offset
+                    .saturating_add(self.height as usize)
+                    .min(self.max_offset());
             }
             ViewportMsg::Top => {
                 self.offset = 0;
@@ -191,7 +201,8 @@ impl Viewport {
         if max == 0 {
             return 100;
         }
-        ((self.offset as f64 / max as f64) * 100.0) as u8
+        let offset = self.offset.min(max);
+        ((offset as u128 * 100) / max as u128) as u8
     }
 
     pub fn at_bottom(&self) -> bool {
@@ -213,23 +224,14 @@ impl Viewport {
 
     pub fn view(&self) -> String {
         let h = self.height as usize;
-        // Clamp the offset: after a resize re-wraps to fewer lines, a stale
-        // offset would slice past the end and blank the whole transcript.
-        let max_off = self.lines.len().saturating_sub(h);
-        let offset = self.offset.min(max_off);
-        let end = (offset + h).min(self.lines.len());
-        let visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
+        let (offset, end) = self.visible_range();
+        let mut visible: Vec<&str> = self.lines[offset..end].iter().map(|s| s.as_str()).collect();
 
-        let mut result = visible.join("\n");
-
-        let visible_count = end - offset;
-        if visible_count < h {
-            for _ in 0..(h - visible_count) {
-                result.push('\n');
-            }
+        while visible.len() < h {
+            visible.push("");
         }
 
-        result
+        visible.join("\n")
     }
 
     /// Return plain text selected from the currently visible rows.
@@ -245,14 +247,14 @@ impl Viewport {
     /// Render visible lines as an Element tree.
     pub fn element<Msg>(&self) -> Element<Msg> {
         let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
+        let (offset, end) = self.visible_range();
 
-        let mut children: Vec<Element<Msg>> = self.lines[self.offset..end]
+        let mut children: Vec<Element<Msg>> = self.lines[offset..end]
             .iter()
             .map(|line| Element::Text(TextElement::new(line.as_str())))
             .collect();
 
-        let visible_count = end - self.offset;
+        let visible_count = end - offset;
         for _ in visible_count..h {
             children.push(Element::Text(TextElement::new("")));
         }
@@ -268,30 +270,44 @@ impl Viewport {
         self.lines.len().saturating_sub(self.height as usize)
     }
 
-    fn wrap_content(&self, content: &str) -> Vec<String> {
-        let w = self.width as usize;
-        let mut result = Vec::new();
-
-        for line in content.lines() {
-            if w == 0 {
-                result.push(line.to_string());
-                continue;
-            }
-            let vis = visible_len(line);
-            if vis <= w {
-                result.push(line.to_string());
-            } else {
-                let wrapped = wrap_line(line, w);
-                result.extend(wrapped);
-            }
-        }
-
-        if content.ends_with('\n') && !content.is_empty() {
-            result.push(String::new());
-        }
-
-        result
+    fn visible_range(&self) -> (usize, usize) {
+        let h = self.height as usize;
+        // Clamp the offset: after a resize re-wraps to fewer lines, a stale
+        // offset must not slice past the end and blank or panic in either
+        // string or Element rendering.
+        let max_off = self.lines.len().saturating_sub(h);
+        let offset = self.offset.min(max_off);
+        let end = offset.saturating_add(h).min(self.lines.len());
+        (offset, end)
     }
+
+    fn rewrap_content(&mut self) {
+        self.lines = wrap_content(&self.content, self.width as usize);
+    }
+}
+
+fn wrap_content(content: &str, width: usize) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        if width == 0 {
+            result.push(line.to_string());
+            continue;
+        }
+        let vis = visible_len(line);
+        if vis <= width {
+            result.push(line.to_string());
+        } else {
+            let wrapped = wrap_line(line, width);
+            result.extend(wrapped);
+        }
+    }
+
+    if content.ends_with('\n') && !content.is_empty() {
+        result.push(String::new());
+    }
+
+    result
 }
 
 /// Return plain text selected from a rendered viewport view.
@@ -392,28 +408,50 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     let mut current_width = 0;
     let mut in_escape = false;
+    let mut index = 0usize;
 
-    for c in s.chars() {
+    while index < s.len() {
+        let c = s[index..].chars().next().unwrap_or_default();
         if c == '\x1b' {
             in_escape = true;
             current.push(c);
+            index += c.len_utf8();
             continue;
         }
         if in_escape {
             current.push(c);
+            index += c.len_utf8();
             if c.is_ascii_alphabetic() {
                 in_escape = false;
             }
             continue;
         }
 
-        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
+        let cell = &s[index..end];
+        index = end;
+
+        if cw > width {
+            if current_width > 0 {
+                lines.push(current);
+                current = pad.clone();
+                current_width = indent;
+            }
+            let clipped = truncate_visible(cell, width.saturating_sub(current_width));
+            if !clipped.is_empty() {
+                current.push_str(&clipped);
+                current_width += visible_len(&clipped);
+            }
+            continue;
+        }
         if current_width + cw > width && current_width > 0 {
             lines.push(current);
             current = pad.clone();
             current_width = indent;
         }
-        current.push(c);
+        current.push_str(cell);
         current_width += cw;
     }
 
@@ -442,6 +480,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_view_has_exact_height_rows() {
+        let vp = Viewport::new(80, 3);
+        let view = vp.view();
+
+        assert_eq!(view.split('\n').collect::<Vec<_>>(), vec!["", "", ""]);
+    }
+
+    #[test]
     fn stale_offset_after_shrink_does_not_blank_or_panic() {
         // Regression: scroll up, then resize to far fewer lines. A stale offset
         // must clamp instead of slicing past the end (which blanked the screen).
@@ -456,6 +502,29 @@ mod tests {
         vp.set_content("only\ntwo"); // now far fewer lines
         let view = vp.view();
         assert!(view.contains("only"), "clamped offset still shows content");
+
+        let Element::Box(box_el) = vp.element::<()>() else {
+            panic!("expected viewport element box");
+        };
+        let Element::Text(first) = &box_el.children[0] else {
+            panic!("expected first rendered line");
+        };
+        assert_eq!(first.content, "only");
+    }
+
+    #[test]
+    fn scroll_percent_clamps_stale_offset_after_shrink() {
+        let mut vp = Viewport::new(80, 5).with_auto_scroll(false);
+        vp.set_content(
+            &(1..=50)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        vp.update(ViewportMsg::ScrollDown(40));
+        vp.set_content("only\ntwo\nthree\nfour\nfive\nsix");
+
+        assert_eq!(vp.scroll_percent(), 100);
     }
 
     #[test]
@@ -472,6 +541,35 @@ mod tests {
     }
 
     #[test]
+    fn wraps_wide_glyphs_to_one_column_width() {
+        let mut vp = Viewport::new(1, 3);
+        vp.set_content("中文");
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+
+        assert!(rows.iter().all(|row| visible_len(row) <= 1));
+        assert_eq!(rows[0], "…");
+        assert_eq!(rows[1], "…");
+    }
+
+    #[test]
+    fn wrap_line_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_line("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_line_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_line("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
+    }
+
+    #[test]
     fn scroll_down() {
         let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
         vp.set_content("a\nb\nc\nd\ne");
@@ -479,6 +577,17 @@ mod tests {
         vp.update(ViewportMsg::ScrollDown(2));
         let view = vp.view();
         assert!(view.contains("c"));
+    }
+
+    #[test]
+    fn huge_scroll_down_saturates_at_bottom() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("a\nb\nc\nd\ne");
+
+        vp.update(ViewportMsg::ScrollDown(usize::MAX));
+
+        assert_eq!(vp.offset, vp.max_offset());
+        assert!(vp.at_bottom());
     }
 
     #[test]
@@ -530,6 +639,32 @@ mod tests {
     }
 
     #[test]
+    fn append_content_without_newline_extends_current_line() {
+        let mut vp = Viewport::new(80, 2);
+        vp.set_content("first");
+        vp.append(" second");
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+
+        assert_eq!(rows[0], "first second");
+    }
+
+    #[test]
+    fn resize_rewraps_from_raw_content() {
+        let mut vp = Viewport::new(5, 3);
+        vp.set_content("abcdef");
+        assert_eq!(vp.total_lines(), 2);
+
+        vp.resize(20, 3);
+
+        let view = vp.view();
+        let rows: Vec<&str> = view.split('\n').collect();
+        assert_eq!(rows[0], "abcdef");
+        assert_eq!(vp.total_lines(), 1);
+    }
+
+    #[test]
     fn clear_resets() {
         let mut vp = Viewport::new(80, 3);
         vp.set_content("hello\nworld");
@@ -575,6 +710,26 @@ mod tests {
         let selection = TextSelection::from_cells(0, 2, 0, 6);
 
         assert_eq!(selected_text(&view, selection), "你好");
+    }
+
+    #[test]
+    fn selected_text_keeps_zero_width_marks_with_base_glyph() {
+        let view = "e\u{301}x";
+        let selection = TextSelection::from_cells(0, 0, 0, 1);
+
+        assert_eq!(selected_text(view, selection), "e\u{301}");
+    }
+
+    #[test]
+    fn highlight_selection_keeps_zero_width_marks_with_base_glyph() {
+        let view = "e\u{301}x";
+        let selection = TextSelection::from_cells(0, 0, 0, 1);
+        let style = Style::new().bg(crate::style::Color::Blue);
+
+        let out = highlight_selection(view, selection, &style);
+
+        assert_eq!(strip_ansi(&out), "e\u{301}x");
+        assert!(out.contains("\x1b[44me\u{301}\x1b[0mx"));
     }
 
     #[test]

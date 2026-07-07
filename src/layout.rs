@@ -1,4 +1,6 @@
-use crate::style::visible_len;
+use crate::style::{
+    next_display_cell_boundary, split_lines_preserving_trailing_blank, visible_len,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Constraint {
@@ -62,8 +64,11 @@ impl Layout {
                     remaining = remaining.saturating_sub(sizes[i]);
                 }
                 Constraint::Percentage(p) => {
-                    let s = (total as u32 * *p as u32 / 100) as u16;
-                    sizes[i] = s.min(remaining);
+                    let s = (total as usize)
+                        .saturating_mul(*p as usize)
+                        .saturating_div(100)
+                        .min(remaining as usize) as u16;
+                    sizes[i] = s;
                     remaining = remaining.saturating_sub(sizes[i]);
                 }
                 Constraint::Min(n) => {
@@ -82,10 +87,12 @@ impl Layout {
         }
 
         if !fill_indices.is_empty() {
-            let share = remaining / fill_indices.len() as u16;
-            let extra = remaining % fill_indices.len() as u16;
+            let fill_count = fill_indices.len();
+            let share = remaining as usize / fill_count;
+            let extra = remaining as usize % fill_count;
             for (j, &idx) in fill_indices.iter().enumerate() {
-                sizes[idx] += share + if j == 0 { extra } else { 0 };
+                let add = share + if j == 0 { extra } else { 0 };
+                sizes[idx] = sizes[idx].saturating_add(add as u16);
             }
         }
 
@@ -97,7 +104,7 @@ impl Layout {
 
         for (i, (content, _)) in self.items.iter().enumerate() {
             let height = sizes[i] as usize;
-            let lines: Vec<&str> = content.lines().collect();
+            let lines = split_lines_preserving_trailing_blank(content);
 
             for row in 0..height {
                 if row < lines.len() {
@@ -115,7 +122,7 @@ impl Layout {
         let max_height = self
             .items
             .iter()
-            .map(|(content, _)| content.lines().count().max(1))
+            .map(|(content, _)| split_lines_preserving_trailing_blank(content).len())
             .max()
             .unwrap_or(1);
 
@@ -125,7 +132,7 @@ impl Layout {
             .enumerate()
             .map(|(i, (content, _))| {
                 let width = sizes[i] as usize;
-                let lines: Vec<&str> = content.lines().collect();
+                let lines = split_lines_preserving_trailing_blank(content);
                 (0..max_height)
                     .map(|row| {
                         if row < lines.len() {
@@ -160,29 +167,40 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
 fn truncate_to_width(s: &str, width: usize) -> String {
     let mut out = String::new();
     let mut current_width = 0;
-    let mut in_escape = false;
+    let mut saw_escape = false;
+    let mut truncated = false;
+    let mut index = 0usize;
 
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
-            out.push(c);
-            continue;
-        }
-        if in_escape {
-            out.push(c);
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
+    while index < s.len() {
+        if s[index..].starts_with("\x1b[") {
+            saw_escape = true;
+            let escape_start = index;
+            index += "\x1b[".len();
+            for next in s[index..].chars() {
+                index += next.len_utf8();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
             }
+            out.push_str(&s[escape_start..index]);
             continue;
         }
-        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
         if current_width + cw > width {
+            truncated = true;
             break;
         }
         current_width += cw;
-        out.push(c);
+        out.push_str(&s[index..end]);
+        index = end;
     }
 
+    if truncated && saw_escape {
+        out.push_str("\x1b[0m");
+    }
     if current_width < width {
         out.push_str(&" ".repeat(width - current_width));
     }
@@ -212,6 +230,16 @@ mod tests {
     }
 
     #[test]
+    fn oversized_percentage_clamps_to_remaining_space() {
+        let layout = Layout::horizontal()
+            .item("A", Constraint::Percentage(u16::MAX))
+            .item("B", Constraint::Fill);
+        let sizes = layout.resolve_sizes(u16::MAX);
+
+        assert_eq!(sizes, vec![u16::MAX, 0]);
+    }
+
+    #[test]
     fn fill_distributes_remaining() {
         let layout = Layout::horizontal()
             .item("A", Constraint::Fixed(20))
@@ -234,6 +262,18 @@ mod tests {
     }
 
     #[test]
+    fn many_fills_do_not_overflow_share_count() {
+        let layout = (0..u16::MAX as usize + 1).fold(Layout::horizontal(), |layout, _| {
+            layout.item("", Constraint::Fill)
+        });
+        let sizes = layout.resolve_sizes(3);
+
+        assert_eq!(sizes.iter().copied().map(u32::from).sum::<u32>(), 3);
+        assert_eq!(sizes[0], 3);
+        assert!(sizes[1..].iter().all(|size| *size == 0));
+    }
+
+    #[test]
     fn render_horizontal_basic() {
         let layout = Layout::horizontal()
             .item("left", Constraint::Fixed(6))
@@ -241,6 +281,15 @@ mod tests {
         let output = layout.render(12);
         assert!(output.contains("left"));
         assert!(output.contains("right"));
+    }
+
+    #[test]
+    fn render_horizontal_preserves_trailing_blank_rows() {
+        let layout = Layout::horizontal()
+            .item("A\n", Constraint::Fixed(2))
+            .item("B", Constraint::Fixed(2));
+
+        assert_eq!(layout.render(4), "A B \n    ");
     }
 
     #[test]
@@ -262,5 +311,30 @@ mod tests {
     fn pad_or_truncate_truncates() {
         let result = pad_or_truncate("hello world", 5);
         assert_eq!(result.len(), 5);
+    }
+
+    #[test]
+    fn pad_or_truncate_keeps_zero_width_marks_with_base_glyph() {
+        let result = pad_or_truncate("e\u{0301}xyz", 2);
+
+        assert_eq!(result, "e\u{0301}x");
+        assert_eq!(visible_len(&result), 2);
+    }
+
+    #[test]
+    fn pad_or_truncate_resets_ansi_after_truncating_styled_text() {
+        let result = pad_or_truncate("\x1b[31mhello\x1b[0m", 3);
+
+        assert_eq!(visible_len(&result), 3);
+        assert!(result.ends_with("\x1b[0m"), "{result:?}");
+    }
+
+    #[test]
+    fn pad_or_truncate_skips_ansi_reset_between_segments() {
+        let result = pad_or_truncate("\x1b[32mok\x1b[0mabcdef", 5);
+
+        assert_eq!(visible_len(&result), 5);
+        assert_eq!(crate::style::strip_ansi(&result), "okabc");
+        assert!(result.contains("\x1b[0mabc"), "{result:?}");
     }
 }

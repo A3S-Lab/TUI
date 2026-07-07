@@ -1,5 +1,7 @@
 use crate::element::{BoxElement, Element, TextElement};
-use crate::style::{strip_ansi, visible_len, Color, Style};
+use crate::style::{next_display_cell_boundary, strip_ansi, visible_len, Color, Style};
+
+const MAX_CYCLE_GAP: usize = isize::MAX as usize - 1;
 
 /// Animated text with a soft highlight moving across its glyphs.
 ///
@@ -52,12 +54,14 @@ impl ShimmerText {
     }
 
     pub fn spread(mut self, spread: f32) -> Self {
-        self.spread = spread.max(0.1);
+        if spread.is_finite() {
+            self.spread = spread.max(0.1);
+        }
         self
     }
 
     pub fn cycle_gap(mut self, gap: usize) -> Self {
-        self.cycle_gap = gap;
+        self.cycle_gap = gap.min(MAX_CYCLE_GAP);
         self
     }
 
@@ -67,25 +71,27 @@ impl ShimmerText {
     }
 
     pub fn bold_threshold(mut self, threshold: f32) -> Self {
-        self.bold_threshold = threshold.clamp(0.0, 1.0);
+        if threshold.is_finite() {
+            self.bold_threshold = threshold.clamp(0.0, 1.0);
+        }
         self
     }
 
     pub fn view(&self) -> String {
-        self.styled_chars()
+        self.styled_glyphs()
             .into_iter()
             .map(|glyph| {
                 let mut style = Style::new().fg(glyph.color);
                 if glyph.bold {
                     style = style.bold();
                 }
-                style.render(&glyph.ch.to_string())
+                style.render(&glyph.text)
             })
             .collect()
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let glyphs = self.styled_chars();
+        let glyphs = self.styled_glyphs();
         if glyphs.is_empty() {
             return Element::Text(TextElement::new(""));
         }
@@ -95,7 +101,7 @@ impl ShimmerText {
                 glyphs
                     .into_iter()
                     .map(|glyph| {
-                        let mut text = TextElement::new(glyph.ch.to_string()).fg(glyph.color);
+                        let mut text = TextElement::new(glyph.text).fg(glyph.color);
                         if glyph.bold {
                             text = text.bold();
                         }
@@ -114,23 +120,27 @@ impl ShimmerText {
         visible_len(&self.plain())
     }
 
-    fn styled_chars(&self) -> Vec<ShimmerGlyph> {
-        let chars: Vec<char> = self.plain().chars().collect();
-        if chars.is_empty() {
+    fn styled_glyphs(&self) -> Vec<ShimmerGlyph> {
+        let plain = self.plain();
+        let glyphs = display_glyphs(&plain);
+        if glyphs.is_empty() {
             return Vec::new();
         }
 
-        let span = (chars.len() + self.cycle_gap) as isize;
-        let head = (self.phase / self.speed_divisor) as isize % span;
+        let span = glyphs
+            .len()
+            .saturating_add(self.cycle_gap)
+            .min(MAX_CYCLE_GAP);
+        let head = ((self.phase / self.speed_divisor) % span) as isize;
 
-        chars
+        glyphs
             .into_iter()
             .enumerate()
-            .map(|(idx, ch)| {
+            .map(|(idx, text)| {
                 let distance = (head - idx as isize).abs() as f32;
                 let intensity = (1.0 - distance / self.spread).clamp(0.0, 1.0);
                 ShimmerGlyph {
-                    ch,
+                    text,
                     color: mix_color(self.base_color, self.highlight_color, intensity),
                     bold: intensity > self.bold_threshold,
                 }
@@ -139,11 +149,21 @@ impl ShimmerText {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ShimmerGlyph {
-    ch: char,
+    text: String,
     color: Color,
     bold: bool,
+}
+
+fn display_glyphs(value: &str) -> Vec<String> {
+    let mut index = 0;
+    let mut glyphs = Vec::new();
+    while let Some((end, _)) = next_display_cell_boundary(value, index) {
+        glyphs.push(value[index..end].to_string());
+        index = end;
+    }
+    glyphs
 }
 
 fn mix_color(base: Color, highlight: Color, intensity: f32) -> Color {
@@ -217,6 +237,43 @@ mod tests {
     }
 
     #[test]
+    fn groups_combining_marks_with_base_glyph() {
+        let shimmer = ShimmerText::new("e\u{301}x")
+            .phase(0)
+            .speed_divisor(1)
+            .colors(Color::Rgb(0, 0, 0), Color::Rgb(100, 0, 0));
+        let rendered = shimmer.view();
+        let highlighted = Style::new()
+            .fg(Color::Rgb(100, 0, 0))
+            .bold()
+            .render("e\u{301}");
+
+        assert_eq!(strip_ansi(&rendered), "e\u{301}x");
+        assert_eq!(shimmer.visible_width(), 2);
+        assert!(rendered.contains(&highlighted), "{rendered:?}");
+
+        let element: Element<()> = shimmer.element();
+        match element {
+            Element::Box(row) => {
+                assert_eq!(row.children.len(), 2);
+                match &row.children[0] {
+                    Element::Text(text) => {
+                        assert_eq!(text.content, "e\u{301}");
+                        assert_eq!(text.style.fg, Some(Color::Rgb(100, 0, 0)));
+                        assert!(text.style.bold);
+                    }
+                    _ => panic!("expected text element"),
+                }
+                match &row.children[1] {
+                    Element::Text(text) => assert_eq!(text.content, "x"),
+                    _ => panic!("expected text element"),
+                }
+            }
+            _ => panic!("expected row element"),
+        }
+    }
+
+    #[test]
     fn element_uses_structured_text_segments() {
         let element: Element<()> = ShimmerText::new("go")
             .phase(0)
@@ -238,5 +295,41 @@ mod tests {
             }
             _ => panic!("expected row element"),
         }
+    }
+
+    #[test]
+    fn ignores_non_finite_animation_settings() {
+        let shimmer = ShimmerText::new("go")
+            .spread(f32::INFINITY)
+            .bold_threshold(f32::NAN);
+
+        assert_eq!(shimmer.spread, 5.0);
+        assert_eq!(shimmer.bold_threshold, 0.65);
+        assert_eq!(strip_ansi(&shimmer.view()), "go");
+    }
+
+    #[test]
+    fn clamps_oversized_cycle_gap() {
+        let shimmer = ShimmerText::new("go").cycle_gap(usize::MAX);
+
+        assert_eq!(shimmer.cycle_gap, MAX_CYCLE_GAP);
+        assert_eq!(strip_ansi(&shimmer.view()), "go");
+    }
+
+    #[test]
+    fn oversized_phase_wraps_within_cycle() {
+        let rendered = ShimmerText::new("go")
+            .phase(usize::MAX)
+            .cycle_gap(1)
+            .speed_divisor(1)
+            .view();
+        let expected = ShimmerText::new("go")
+            .phase(usize::MAX % 3)
+            .cycle_gap(1)
+            .speed_divisor(1)
+            .view();
+
+        assert_eq!(rendered, expected);
+        assert_eq!(strip_ansi(&rendered), "go");
     }
 }

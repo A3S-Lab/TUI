@@ -1,5 +1,7 @@
 use crate::style::fit_visible;
 
+const MAX_TEXT_OVERLAY_WIDTH: usize = u16::MAX as usize;
+
 /// Where overlay rows are placed in a rendered text frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextOverlayPosition {
@@ -63,12 +65,12 @@ impl TextOverlay {
 
     /// Fit every overlay row to the provided display-column width.
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_TEXT_OVERLAY_WIDTH));
         self
     }
 
     pub fn apply(&self, frame: &str) -> String {
-        if self.rows.is_empty() {
+        if frame.is_empty() || self.rows.is_empty() {
             return frame.to_string();
         }
 
@@ -170,6 +172,13 @@ mod tests {
     }
 
     #[test]
+    fn empty_frame_stays_empty() {
+        let rendered = TextOverlay::new(["menu"]).top().apply("");
+
+        assert_eq!(rendered, "");
+    }
+
+    #[test]
     fn width_fits_styled_and_wide_rows() {
         let styled = Style::new().fg(Color::Cyan).render("中文abcdef");
         let rendered = TextOverlay::new([styled]).width(8).top().apply(&frame(2));
@@ -178,5 +187,15 @@ mod tests {
         assert_eq!(visible_len(first), 8);
         assert!(strip_ansi(first).contains("中文"));
         assert!(first.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let overlay = TextOverlay::new(["menu"]).width(usize::MAX);
+        let rendered = overlay.apply(&frame(1));
+        let first = rendered.lines().next().unwrap();
+
+        assert_eq!(overlay.width, Some(MAX_TEXT_OVERLAY_WIDTH));
+        assert_eq!(visible_len(first), MAX_TEXT_OVERLAY_WIDTH);
     }
 }

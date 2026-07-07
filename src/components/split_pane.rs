@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Dimension, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
 
+const MAX_SPLIT_PANE_LEFT_WIDTH: usize = u16::MAX as usize;
+
 /// A two-column terminal panel for file explorers, diffs, timelines, and details.
 ///
 /// `SplitPane` extracts the common full-screen pattern used by IDE, git, memory,
@@ -85,12 +87,14 @@ impl SplitPane {
     }
 
     pub fn left_width(mut self, width: usize) -> Self {
-        self.left_width = Some(width);
+        self.left_width = Some(width.min(MAX_SPLIT_PANE_LEFT_WIDTH));
         self
     }
 
     pub fn left_ratio(mut self, ratio: f32) -> Self {
-        self.left_ratio = ratio.clamp(0.1, 0.9);
+        if ratio.is_finite() {
+            self.left_ratio = ratio.clamp(0.1, 0.9);
+        }
         self
     }
 
@@ -169,7 +173,7 @@ impl SplitPane {
 
         let mut left = BoxElement::new()
             .direction(FlexDirection::Column)
-            .width(Dimension::Percent(self.left_ratio * 100.0));
+            .width(self.left_dimension_for_element());
         if let Some(title) = self.left_title.as_deref().filter(|title| !title.is_empty()) {
             left = left.child(Element::Text(
                 TextElement::new(title).fg(self.pane_title_color).bold(),
@@ -216,6 +220,111 @@ impl SplitPane {
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if children.len() < height {
+            if let Some(subtitle) = self
+                .subtitle
+                .as_deref()
+                .filter(|subtitle| !subtitle.is_empty())
+            {
+                children.push(Element::Text(
+                    TextElement::new(subtitle).fg(self.subtitle_color),
+                ));
+            }
+        }
+
+        let footer_rows = usize::from(self.footer.as_ref().is_some_and(|f| !f.is_empty()));
+        let body_height = height.saturating_sub(children.len() + footer_rows);
+        if body_height > 0 && self.should_render_body() {
+            children.push(self.bounded_body_element(body_height));
+        }
+
+        if children.len() < height {
+            if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+                children.push(Element::Text(
+                    TextElement::new(footer).fg(self.footer_color),
+                ));
+            }
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    fn bounded_body_element<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut left = BoxElement::new()
+            .direction(FlexDirection::Column)
+            .width(self.left_dimension_for_element());
+        self.push_bounded_pane_children(&mut left, self.left_title.as_deref(), &self.left, height);
+
+        let mut right = BoxElement::new()
+            .direction(FlexDirection::Column)
+            .flex_grow(1.0);
+        self.push_bounded_pane_children(
+            &mut right,
+            self.right_title.as_deref(),
+            &self.right,
+            height,
+        );
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .child(Element::Box(left))
+                .child(Element::Text(
+                    TextElement::new(self.separator.as_str()).fg(self.separator_color),
+                ))
+                .child(Element::Box(right)),
+        )
+    }
+
+    fn push_bounded_pane_children<Msg>(
+        &self,
+        pane: &mut BoxElement<Msg>,
+        title: Option<&str>,
+        lines: &[String],
+        height: usize,
+    ) {
+        if height == 0 {
+            return;
+        }
+
+        let has_pane_titles = self.has_pane_titles();
+        if has_pane_titles {
+            if let Some(title) = title.filter(|title| !title.is_empty()) {
+                pane.children.push(Element::Text(
+                    TextElement::new(title).fg(self.pane_title_color).bold(),
+                ));
+            } else {
+                pane.children.push(Element::Text(TextElement::new("")));
+            }
+        }
+
+        let line_slots = height.saturating_sub(usize::from(has_pane_titles));
+        let row_count = if self.fill_height {
+            line_slots
+        } else {
+            line_slots.min(lines.len())
+        };
+        for index in 0..row_count {
+            let line = lines.get(index).map(String::as_str).unwrap_or_default();
+            pane.children.push(Element::Text(TextElement::new(line)));
+        }
     }
 
     fn render_lines(&self, width: usize, height: usize) -> Vec<String> {
@@ -326,6 +435,29 @@ impl SplitPane {
 
         (left, right, separator)
     }
+
+    fn has_pane_titles(&self) -> bool {
+        self.left_title
+            .as_ref()
+            .is_some_and(|title| !title.is_empty())
+            || self
+                .right_title
+                .as_ref()
+                .is_some_and(|title| !title.is_empty())
+    }
+
+    fn should_render_body(&self) -> bool {
+        self.fill_height
+            || self.has_pane_titles()
+            || !self.left.is_empty()
+            || !self.right.is_empty()
+    }
+
+    fn left_dimension_for_element(&self) -> Dimension {
+        self.left_width
+            .map(|width| Dimension::Points(width.clamp(1, MAX_SPLIT_PANE_LEFT_WIDTH) as f32))
+            .unwrap_or_else(|| Dimension::Percent(self.left_ratio * 100.0))
+    }
 }
 
 impl Default for SplitPane {
@@ -394,6 +526,32 @@ mod tests {
     }
 
     #[test]
+    fn ignores_non_finite_left_ratio() {
+        let pane = SplitPane::new(vec!["left"], vec!["right"])
+            .left_ratio(0.5)
+            .left_ratio(f32::NAN);
+        let rendered = strip_ansi(&pane.view(24, 1));
+        let row = rendered.lines().next().unwrap();
+
+        assert!(row.starts_with("left"));
+        assert!(row.contains("│"));
+        assert_eq!(visible_len(row), 24);
+    }
+
+    #[test]
+    fn oversized_left_width_is_clamped_to_render_width() {
+        let pane = SplitPane::new(vec!["left"], vec!["right"]).left_width(usize::MAX);
+        let rendered = pane.view(24, 1);
+        let (left_width, right_width, separator) = pane.column_widths(24);
+
+        assert_eq!(pane.left_width, Some(MAX_SPLIT_PANE_LEFT_WIDTH));
+        assert_eq!(left_width, 15);
+        assert_eq!(right_width, 6);
+        assert_eq!(visible_len(&separator), 3);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
     fn element_produces_column_with_row_body() {
         let el: Element<()> = SplitPane::new(vec!["left"], vec!["right"])
             .title("Title")
@@ -412,5 +570,124 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_uses_fixed_left_width_when_configured() {
+        let el: Element<()> = SplitPane::new(vec!["left"], vec!["right"])
+            .left_ratio(0.9)
+            .left_width(12)
+            .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row body");
+        };
+        let Element::Box(left) = &row.children[0] else {
+            panic!("expected left pane");
+        };
+
+        assert_eq!(left.style.width, Dimension::Points(12.0));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = SplitPane::new(vec!["left"], vec!["right"]).element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_reserves_header_body_and_footer_rows() {
+        let el: Element<()> = SplitPane::new(vec!["l1", "l2"], vec!["r1", "r2"])
+            .title("Title")
+            .subtitle("Sub")
+            .pane_titles("Left", "Right")
+            .footer("Footer")
+            .element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 4);
+        assert_eq!(column.children[0].text_content(), Some("Title"));
+        assert_eq!(column.children[1].text_content(), Some("Sub"));
+        assert_eq!(column.children[3].text_content(), Some("Footer"));
+
+        let Element::Box(row) = &column.children[2] else {
+            panic!("expected row body");
+        };
+        let Element::Box(left) = &row.children[0] else {
+            panic!("expected left pane");
+        };
+        let Element::Box(right) = &row.children[2] else {
+            panic!("expected right pane");
+        };
+        assert_eq!(left.children.len(), 1);
+        assert_eq!(right.children.len(), 1);
+        assert_eq!(left.children[0].text_content(), Some("Left"));
+        assert_eq!(right.children[0].text_content(), Some("Right"));
+    }
+
+    #[test]
+    fn element_with_height_limits_body_lines_below_pane_titles() {
+        let el: Element<()> = SplitPane::new(vec!["l1", "l2", "l3"], vec!["r1", "r2", "r3"])
+            .pane_titles("Left", "Right")
+            .element_with_height(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row body");
+        };
+        let Element::Box(left) = &row.children[0] else {
+            panic!("expected left pane");
+        };
+        let Element::Box(right) = &row.children[2] else {
+            panic!("expected right pane");
+        };
+        assert_eq!(left.children.len(), 2);
+        assert_eq!(right.children.len(), 2);
+        assert_eq!(left.children[0].text_content(), Some("Left"));
+        assert_eq!(left.children[1].text_content(), Some("l1"));
+        assert_eq!(right.children[0].text_content(), Some("Right"));
+        assert_eq!(right.children[1].text_content(), Some("r1"));
+        assert!(!left
+            .children
+            .iter()
+            .any(|child| child.text_content() == Some("l2")));
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_pane_rows() {
+        let el: Element<()> = SplitPane::new(vec!["left"], Vec::<String>::new())
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 1);
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row body");
+        };
+        let Element::Box(left) = &row.children[0] else {
+            panic!("expected left pane");
+        };
+        let Element::Box(right) = &row.children[2] else {
+            panic!("expected right pane");
+        };
+        assert_eq!(left.children.len(), 3);
+        assert_eq!(right.children.len(), 3);
+        assert_eq!(left.children[0].text_content(), Some("left"));
+        assert_eq!(left.children[1].text_content(), Some(""));
+        assert_eq!(right.children[0].text_content(), Some(""));
     }
 }

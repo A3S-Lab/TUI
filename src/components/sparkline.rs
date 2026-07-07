@@ -1,6 +1,7 @@
-use crate::style::{visible_len, Color, Style};
+use crate::style::{repeat_visible_char, visible_len, Color, Style};
 
 const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+const MAX_SPARKLINE_WIDTH: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone)]
 pub struct Sparkline {
@@ -25,13 +26,33 @@ impl Sparkline {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.clamp(1, MAX_SPARKLINE_WIDTH);
         self
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
-        self.min = Some(min);
-        self.max = Some(max);
+        match (min.is_finite(), max.is_finite()) {
+            (true, true) if min <= max => {
+                self.min = Some(min);
+                self.max = Some(max);
+            }
+            (true, true) => {
+                self.min = Some(max);
+                self.max = Some(min);
+            }
+            (true, false) => {
+                self.min = Some(min);
+                self.max = None;
+            }
+            (false, true) => {
+                self.min = None;
+                self.max = Some(max);
+            }
+            (false, false) => {
+                self.min = None;
+                self.max = None;
+            }
+        }
         self
     }
 
@@ -60,7 +81,7 @@ impl Sparkline {
             return String::new();
         }
         if self.values.is_empty() {
-            return self.empty.to_string().repeat(self.width);
+            return repeat_visible_char(self.empty, self.width);
         }
 
         let values = self.window_values();
@@ -81,7 +102,11 @@ impl Sparkline {
 
         let len = visible_len(&out);
         if len < self.width {
-            out = format!("{}{}", self.empty.to_string().repeat(self.width - len), out);
+            out = format!(
+                "{}{}",
+                repeat_visible_char(self.empty, self.width - len),
+                out
+            );
         }
         out
     }
@@ -108,6 +133,20 @@ mod tests {
     }
 
     #[test]
+    fn custom_wide_empty_glyph_respects_display_width() {
+        let empty = Sparkline::new(Vec::<f64>::new())
+            .width(3)
+            .empty('界')
+            .plain();
+        let padded = Sparkline::new([1.0]).width(4).empty('界').plain();
+
+        assert_eq!(visible_len(&empty), 3);
+        assert_eq!(empty, "界 ");
+        assert_eq!(visible_len(&padded), 4);
+        assert_eq!(padded, "界 █");
+    }
+
+    #[test]
     fn renders_fixed_width() {
         let line = Sparkline::new([0.0, 25.0, 50.0, 100.0])
             .width(4)
@@ -131,5 +170,35 @@ mod tests {
         let line = Sparkline::new([1.0]).width(1).view();
 
         assert_ne!(strip_ansi(&line), line);
+    }
+
+    #[test]
+    fn non_finite_range_falls_back_to_observed_values() {
+        let line = Sparkline::new([0.0, 50.0, 100.0])
+            .width(3)
+            .range(f64::NAN, f64::INFINITY)
+            .plain();
+
+        assert_eq!(visible_len(&line), 3);
+        assert!(line.ends_with('█'));
+    }
+
+    #[test]
+    fn reversed_range_bounds_are_sorted() {
+        let line = Sparkline::new([0.0, 50.0, 100.0])
+            .width(3)
+            .range(100.0, 0.0)
+            .plain();
+
+        assert_eq!(line, "▁▅█");
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let sparkline = Sparkline::new(Vec::<f64>::new()).width(usize::MAX);
+        let line = sparkline.plain();
+
+        assert_eq!(sparkline.width, MAX_SPARKLINE_WIDTH);
+        assert_eq!(visible_len(&line), MAX_SPARKLINE_WIDTH);
     }
 }

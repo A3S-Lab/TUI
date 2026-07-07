@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_CHECKLIST_INDENT: usize = u16::MAX as usize;
 
 /// Status for a checklist row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,8 @@ pub struct ChecklistItem {
     status: ChecklistStatus,
     glyph: Option<char>,
     color: Option<Color>,
+    glyph_color: Option<Color>,
+    text_color: Option<Color>,
 }
 
 impl ChecklistItem {
@@ -37,6 +42,8 @@ impl ChecklistItem {
             status: ChecklistStatus::Pending,
             glyph: None,
             color: None,
+            glyph_color: None,
+            text_color: None,
         }
     }
 
@@ -67,6 +74,16 @@ impl ChecklistItem {
         self
     }
 
+    pub fn glyph_color(mut self, color: Color) -> Self {
+        self.glyph_color = Some(color);
+        self
+    }
+
+    pub fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
+        self
+    }
+
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -91,6 +108,7 @@ pub struct Checklist {
     done_color: Color,
     error_color: Color,
     text_color: Color,
+    strikethrough_done: bool,
 }
 
 impl Checklist {
@@ -104,6 +122,7 @@ impl Checklist {
             done_color: Color::BrightBlack,
             error_color: Color::Red,
             text_color: Color::White,
+            strikethrough_done: true,
         }
     }
 
@@ -121,7 +140,7 @@ impl Checklist {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_CHECKLIST_INDENT);
         self
     }
 
@@ -155,6 +174,20 @@ impl Checklist {
         self
     }
 
+    pub fn strikethrough_done(mut self, enabled: bool) -> Self {
+        self.strikethrough_done = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.pending_color = theme.color(ThemeRole::Muted);
+        self.active_color = theme.color(ThemeRole::Warning);
+        self.done_color = theme.color(ThemeRole::Success);
+        self.error_color = theme.color(ThemeRole::Error);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self
+    }
+
     pub fn items(&self) -> &[ChecklistItem] {
         &self.items
     }
@@ -175,13 +208,18 @@ impl Checklist {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(self.items.len())
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
         let children = self
             .items
             .iter()
+            .take(height)
             .enumerate()
             .map(|(index, item)| {
                 let mut label = TextElement::new(item.label.clone()).fg(self.item_text_color(item));
-                if item.status == ChecklistStatus::Done {
+                if self.strikethrough_done && item.status == ChecklistStatus::Done {
                     label = label.strikethrough();
                 }
 
@@ -211,22 +249,24 @@ impl Checklist {
     }
 
     fn render_line(&self, item: &ChecklistItem, index: usize, width: usize) -> String {
-        let prefix = self.render_prefix(item, index);
+        let prefix = self.render_prefix(item, index, width);
         let gap = " ";
-        let label_width = width.saturating_sub(visible_len(&prefix) + visible_len(gap));
+        let label_width =
+            width.saturating_sub(visible_len(&prefix).saturating_add(visible_len(gap)));
         let label = truncate_visible(&item.label, label_width);
         let mut style = Style::new().fg(self.item_text_color(item));
-        if item.status == ChecklistStatus::Done {
+        if self.strikethrough_done && item.status == ChecklistStatus::Done {
             style = style.strikethrough();
         }
         fit_visible(&format!("{prefix}{gap}{}", style.render(&label)), width)
     }
 
-    fn render_prefix(&self, item: &ChecklistItem, index: usize) -> String {
+    fn render_prefix(&self, item: &ChecklistItem, index: usize, width: usize) -> String {
         let glyph = item.glyph.unwrap_or_else(|| item.status.glyph());
+        let indent = self.indent_for_width(item, index, width);
         format!(
             "{}{}{}",
-            " ".repeat(self.indent),
+            " ".repeat(indent),
             self.connector_prefix(index),
             Style::new()
                 .fg(self.glyph_color(item))
@@ -237,7 +277,7 @@ impl Checklist {
     fn plain_prefix(&self, index: usize) -> String {
         format!(
             "{}{}",
-            " ".repeat(self.indent),
+            " ".repeat(self.indent_for_element()),
             self.connector_prefix(index)
         )
     }
@@ -253,21 +293,42 @@ impl Checklist {
     }
 
     fn glyph_color(&self, item: &ChecklistItem) -> Color {
-        item.color.unwrap_or(match item.status {
-            ChecklistStatus::Pending => self.pending_color,
+        item.glyph_color
+            .or(item.color)
+            .unwrap_or(match item.status {
+                ChecklistStatus::Pending => self.pending_color,
+                ChecklistStatus::Active => self.active_color,
+                ChecklistStatus::Done => self.done_color,
+                ChecklistStatus::Error => self.error_color,
+            })
+    }
+
+    fn item_text_color(&self, item: &ChecklistItem) -> Color {
+        item.text_color.or(item.color).unwrap_or(match item.status {
+            ChecklistStatus::Pending => self.text_color,
             ChecklistStatus::Active => self.active_color,
             ChecklistStatus::Done => self.done_color,
             ChecklistStatus::Error => self.error_color,
         })
     }
 
-    fn item_text_color(&self, item: &ChecklistItem) -> Color {
-        item.color.unwrap_or(match item.status {
-            ChecklistStatus::Pending => self.text_color,
-            ChecklistStatus::Active => self.active_color,
-            ChecklistStatus::Done => self.done_color,
-            ChecklistStatus::Error => self.error_color,
-        })
+    fn indent_for_width(&self, item: &ChecklistItem, index: usize, width: usize) -> usize {
+        let glyph_width = visible_len(
+            &item
+                .glyph
+                .unwrap_or_else(|| item.status.glyph())
+                .to_string(),
+        );
+        let fixed_width = visible_len(self.connector_prefix(index))
+            .saturating_add(glyph_width)
+            .saturating_add(1);
+        self.indent
+            .min(width.saturating_sub(fixed_width))
+            .min(MAX_CHECKLIST_INDENT)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_CHECKLIST_INDENT)
     }
 }
 
@@ -333,11 +394,63 @@ mod tests {
     }
 
     #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("one")])
+            .indent(usize::MAX)
+            .connector(true);
+        let rendered = checklist.view(8, 1);
+        let prefix = checklist.render_prefix(&checklist.items[0], 0, 8);
+
+        assert_eq!(checklist.indent, MAX_CHECKLIST_INDENT);
+        assert!(visible_len(&prefix) <= 7);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = checklist.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row element");
+        };
+        let Element::Text(prefix) = &row.children[0] else {
+            panic!("expected prefix text");
+        };
+        assert_eq!(
+            visible_len(&prefix.content),
+            MAX_CHECKLIST_INDENT + visible_len("⎿  ")
+        );
+    }
+
+    #[test]
     fn done_rows_are_struck_through() {
         let checklist = Checklist::new(vec![ChecklistItem::new("complete").done()]);
         let rendered = checklist.view(30, 1);
 
         assert!(rendered.contains("\x1b[9;"));
+    }
+
+    #[test]
+    fn row_color_still_tints_glyph_and_label() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("tinted").color(Color::Yellow)]);
+        let rendered = checklist.view(30, 1);
+
+        assert!(rendered.contains("\x1b[33m◻\x1b[0m"));
+        assert!(rendered.contains("\x1b[33mtinted\x1b[0m"));
+    }
+
+    #[test]
+    fn glyph_and_text_colors_can_differ_without_done_strike() {
+        let checklist = Checklist::new(vec![ChecklistItem::new("agent result")
+            .done()
+            .glyph('✓')
+            .glyph_color(Color::Green)
+            .text_color(Color::BrightBlack)])
+        .strikethrough_done(false);
+        let rendered = checklist.view(40, 1);
+
+        assert_eq!(strip_ansi(&rendered).trim_end(), "✓ agent result");
+        assert!(rendered.contains("\x1b[32m✓\x1b[0m"));
+        assert!(rendered.contains("\x1b[90magent result\x1b[0m"));
+        assert!(!rendered.contains("\x1b[9;"));
     }
 
     #[test]
@@ -352,5 +465,47 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let checklist = Checklist::empty()
+            .item(ChecklistItem::new("one"))
+            .item(ChecklistItem::new("two").active())
+            .item(ChecklistItem::new("three").done());
+
+        let Element::Box(column) = checklist.element_with_height::<()>(2) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .flat_map(|row| match row {
+                Element::Box(row) => row
+                    .children
+                    .iter()
+                    .filter_map(Element::text_content)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("one"));
+        assert!(text.contains("two"));
+        assert!(!text.contains("three"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let checklist = Checklist::empty().with_theme(&theme);
+
+        assert_eq!(checklist.pending_color, theme.color(ThemeRole::Muted));
+        assert_eq!(checklist.active_color, theme.color(ThemeRole::Warning));
+        assert_eq!(checklist.done_color, theme.color(ThemeRole::Success));
+        assert_eq!(checklist.error_color, theme.color(ThemeRole::Error));
+        assert_eq!(checklist.text_color, theme.color(ThemeRole::Foreground));
     }
 }

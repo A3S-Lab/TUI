@@ -154,7 +154,12 @@ impl FrameAnimation {
                 self.last_tick = Some(now);
             }
             Some(last) if now.duration_since(last) >= self.interval => {
-                self.current = (self.current + 1) % self.frames.len();
+                let current = self.normalized_current();
+                self.current = if current + 1 == self.frames.len() {
+                    0
+                } else {
+                    current + 1
+                };
                 self.last_tick = Some(now);
             }
             _ => {}
@@ -163,12 +168,15 @@ impl FrameAnimation {
 
     /// Get the current frame content.
     pub fn frame(&self) -> &str {
-        &self.frames[self.current]
+        self.frames
+            .get(self.normalized_current())
+            .map(String::as_str)
+            .unwrap_or("")
     }
 
     /// Get the current frame index.
     pub fn index(&self) -> usize {
-        self.current
+        self.normalized_current()
     }
 
     pub fn start(&mut self) {
@@ -187,6 +195,14 @@ impl FrameAnimation {
     pub fn reset(&mut self) {
         self.current = 0;
         self.last_tick = None;
+    }
+
+    fn normalized_current(&self) -> usize {
+        if self.frames.is_empty() {
+            0
+        } else {
+            self.current % self.frames.len()
+        }
     }
 }
 
@@ -310,6 +326,43 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         anim.tick();
         assert_eq!(anim.frame(), "y");
+    }
+
+    #[test]
+    fn frame_animation_empty_frames_do_not_panic() {
+        let mut anim = FrameAnimation::new(Vec::<&str>::new(), Duration::from_millis(1));
+        assert_eq!(anim.frame(), "");
+        assert_eq!(anim.index(), 0);
+        assert!(anim.is_active());
+
+        anim.tick();
+        anim.stop();
+        anim.start();
+        anim.reset();
+
+        assert_eq!(anim.frame(), "");
+        assert_eq!(anim.index(), 0);
+    }
+
+    #[test]
+    fn frame_animation_normalizes_stale_index_for_reads() {
+        let mut anim = FrameAnimation::new(vec!["a", "b", "c"], Duration::from_millis(1));
+        anim.current = usize::MAX;
+
+        assert_eq!(anim.index(), usize::MAX % 3);
+        assert_eq!(anim.frame(), anim.frames[usize::MAX % 3]);
+    }
+
+    #[test]
+    fn frame_animation_tick_normalizes_stale_index() {
+        let mut anim = FrameAnimation::new(vec!["a", "b", "c"], Duration::from_millis(1));
+        anim.current = usize::MAX;
+        anim.last_tick = Some(Instant::now() - Duration::from_millis(5));
+
+        anim.tick();
+
+        assert!(anim.current < anim.frames.len());
+        assert_eq!(anim.index(), (usize::MAX % 3 + 1) % 3);
     }
 
     #[test]

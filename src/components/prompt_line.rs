@@ -1,5 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_PROMPT_LINE_CONTINUATION_INDENT: usize = u16::MAX as usize;
+const MAX_PROMPT_LINE_MARGIN: usize = u16::MAX as usize;
+const MAX_PROMPT_LINE_WIDTH: usize = u16::MAX as usize;
 
 /// Prompt-prefixed input text with aligned continuation rows.
 ///
@@ -36,18 +41,18 @@ impl PromptLine {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_PROMPT_LINE_MARGIN);
         self
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_PROMPT_LINE_WIDTH));
         self
     }
 
     /// Set the total display-column indent for continuation rows.
     pub fn continuation_indent(mut self, indent: usize) -> Self {
-        self.continuation_indent = Some(indent);
+        self.continuation_indent = Some(indent.min(MAX_PROMPT_LINE_CONTINUATION_INDENT));
         self
     }
 
@@ -68,6 +73,12 @@ impl PromptLine {
 
     pub fn text_color(mut self, color: Color) -> Self {
         self.text_style = Some(Style::new().fg(color));
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.prompt_style = Some(theme.foreground_style(ThemeRole::Primary).bold());
+        self.text_style = Some(theme.foreground_style(ThemeRole::Foreground));
         self
     }
 
@@ -104,6 +115,8 @@ impl PromptLine {
     }
 
     fn render_lines(&self) -> Vec<String> {
+        let margin = self.margin_for_render();
+        let continuation_indent = self.continuation_indent_for_render();
         self.text_lines()
             .into_iter()
             .enumerate()
@@ -114,11 +127,11 @@ impl PromptLine {
                         None => self.prompt.clone(),
                     };
                     let text = self.render_text(&line);
-                    format!("{}{prompt}{text}", " ".repeat(self.margin))
+                    format!("{}{prompt}{text}", " ".repeat(margin))
                 } else {
                     format!(
                         "{}{}",
-                        " ".repeat(self.continuation_indent_width()),
+                        " ".repeat(continuation_indent),
                         self.render_text(&line)
                     )
                 }
@@ -141,7 +154,9 @@ impl PromptLine {
             Element::Box(
                 BoxElement::new()
                     .direction(FlexDirection::Row)
-                    .child(Element::Text(TextElement::new(" ".repeat(self.margin))))
+                    .child(Element::Text(TextElement::new(
+                        " ".repeat(self.margin_for_render()),
+                    )))
                     .child(Element::Text(prompt))
                     .child(Element::Text(text)),
             )
@@ -155,7 +170,7 @@ impl PromptLine {
                 BoxElement::new()
                     .direction(FlexDirection::Row)
                     .child(Element::Text(TextElement::new(
-                        " ".repeat(self.continuation_indent_width()),
+                        " ".repeat(self.continuation_indent_for_render()),
                     )))
                     .child(Element::Text(text)),
             )
@@ -184,7 +199,23 @@ impl PromptLine {
 
     fn continuation_indent_width(&self) -> usize {
         self.continuation_indent
-            .unwrap_or_else(|| self.margin + visible_len(&self.prompt))
+            .unwrap_or_else(|| self.margin.saturating_add(visible_len(&self.prompt)))
+            .min(MAX_PROMPT_LINE_CONTINUATION_INDENT)
+    }
+
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_PROMPT_LINE_MARGIN)
+    }
+
+    fn continuation_indent_for_render(&self) -> usize {
+        let indent = self.continuation_indent_width();
+        self.width
+            .map(|width| indent.min(width))
+            .unwrap_or(indent)
+            .min(MAX_PROMPT_LINE_CONTINUATION_INDENT)
     }
 }
 
@@ -215,6 +246,9 @@ fn apply_text_style(mut text: TextElement, style: &Style) -> TextElement {
     }
     if style.is_strikethrough() {
         text = text.strikethrough();
+    }
+    if style.is_reverse() {
+        text = text.reverse();
     }
     text
 }
@@ -256,6 +290,24 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_styles() {
+        let theme = Theme::tokyo_night();
+        let line = PromptLine::new("❯ ").with_theme(&theme);
+        let prompt_style = line.prompt_style.as_ref().expect("prompt style");
+        let text_style = line.text_style.as_ref().expect("text style");
+
+        assert_eq!(
+            prompt_style.foreground(),
+            Some(theme.color(ThemeRole::Primary))
+        );
+        assert!(prompt_style.is_bold());
+        assert_eq!(
+            text_style.foreground(),
+            Some(theme.color(ThemeRole::Foreground))
+        );
+    }
+
+    #[test]
     fn custom_continuation_indent_overrides_prompt_width() {
         let rendered = PromptLine::new("> ")
             .text("one\ntwo")
@@ -280,11 +332,58 @@ mod tests {
     }
 
     #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let line = PromptLine::new("> ")
+            .text("hello\nworld")
+            .margin(usize::MAX)
+            .continuation_indent(usize::MAX)
+            .width(8);
+        let rendered = line.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(line.margin, MAX_PROMPT_LINE_MARGIN);
+        assert_eq!(
+            line.continuation_indent,
+            Some(MAX_PROMPT_LINE_CONTINUATION_INDENT)
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 8));
+
+        let Element::Box(column) = line.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(first_row) = &column.children[0] else {
+            panic!("expected first row");
+        };
+        let Element::Text(margin) = &first_row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+
+        let Element::Box(second_row) = &column.children[1] else {
+            panic!("expected second row");
+        };
+        let Element::Text(indent) = &second_row.children[0] else {
+            panic!("expected continuation indent text");
+        };
+        assert_eq!(indent.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let line = PromptLine::new("> ").text("hello").width(usize::MAX);
+        let rendered = line.view();
+
+        assert_eq!(line.width, Some(MAX_PROMPT_LINE_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_PROMPT_LINE_WIDTH);
+    }
+
+    #[test]
     fn element_produces_structured_rows() {
         let element: Element<()> = PromptLine::new("❯ ")
             .text("alpha\nbeta")
             .margin(2)
-            .prompt_color(Color::Cyan)
+            .prompt_style(Style::new().fg(Color::Cyan).bold().reverse())
             .text_color(Color::BrightWhite)
             .element();
 
@@ -299,6 +398,7 @@ mod tests {
                                 assert_eq!(prompt.content, "❯ ");
                                 assert_eq!(prompt.style.fg, Some(Color::Cyan));
                                 assert!(prompt.style.bold);
+                                assert!(prompt.style.reverse);
                             }
                             _ => panic!("expected prompt text"),
                         }

@@ -1,5 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, pad_visible, visible_len, Color, Style};
+
+const MAX_WELCOME_ART_OFFSET: usize = u16::MAX as usize;
+const MAX_WELCOME_GAP: usize = u16::MAX as usize;
+const MAX_WELCOME_MARGIN: usize = u16::MAX as usize;
 
 /// First-run welcome surface with paired mascot/art rows and startup metadata.
 ///
@@ -76,17 +80,17 @@ impl WelcomeBanner {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_WELCOME_MARGIN);
         self
     }
 
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_WELCOME_GAP);
         self
     }
 
     pub fn art_offset(mut self, offset: usize) -> Self {
-        self.art_offset = offset;
+        self.art_offset = offset.min(MAX_WELCOME_ART_OFFSET);
         self
     }
 
@@ -158,36 +162,20 @@ impl WelcomeBanner {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
-        let mut children = Vec::new();
-        for row in self.logo_rows() {
-            children.push(self.logo_row_element(row));
-        }
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(self.element_children()),
+        )
+    }
 
-        if !self.logo_rows().is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
-            children.push(Element::Text(TextElement::new("")));
-        }
-
-        for line in &self.metadata {
-            children.push(Element::Text(
-                TextElement::new(self.indented(line)).fg(self.metadata_color),
-            ));
-        }
-        for line in &self.tips {
-            children.push(Element::Text(
-                TextElement::new(self.indented(line))
-                    .fg(self.tip_color)
-                    .italic(),
-            ));
-        }
-        if let Some(notice) = self.notice.as_deref().filter(|notice| !notice.is_empty()) {
-            if !self.metadata.is_empty() || !self.tips.is_empty() {
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = self.element_children();
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
                 children.push(Element::Text(TextElement::new("")));
             }
-            children.push(Element::Text(
-                TextElement::new(self.indented(notice))
-                    .fg(self.notice_color)
-                    .bold(),
-            ));
         }
 
         Element::Box(
@@ -197,10 +185,47 @@ impl WelcomeBanner {
         )
     }
 
+    fn element_children<Msg>(&self) -> Vec<Element<Msg>> {
+        let mut children = Vec::new();
+        let logo_rows = self.logo_rows();
+        for row in logo_rows.iter().cloned() {
+            children.push(self.logo_row_element(row));
+        }
+
+        if !logo_rows.is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
+            children.push(Element::Text(TextElement::new("")));
+        }
+
+        for line in &self.metadata {
+            children.push(Element::Text(
+                TextElement::new(self.indented_for_element(line)).fg(self.metadata_color),
+            ));
+        }
+        for line in &self.tips {
+            children.push(Element::Text(
+                TextElement::new(self.indented_for_element(line))
+                    .fg(self.tip_color)
+                    .italic(),
+            ));
+        }
+        if let Some(notice) = self.notice.as_deref().filter(|notice| !notice.is_empty()) {
+            if !self.metadata.is_empty() || !self.tips.is_empty() {
+                children.push(Element::Text(TextElement::new("")));
+            }
+            children.push(Element::Text(
+                TextElement::new(self.indented_for_element(notice))
+                    .fg(self.notice_color)
+                    .bold(),
+            ));
+        }
+
+        children
+    }
+
     fn render_lines(&self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         for row in self.logo_rows() {
-            lines.push(self.render_logo_row(row));
+            lines.push(self.render_logo_row(row, width));
         }
 
         if !lines.is_empty() && (!self.metadata.is_empty() || !self.tips.is_empty()) {
@@ -211,7 +236,7 @@ impl WelcomeBanner {
             lines.push(
                 Style::new()
                     .fg(self.metadata_color)
-                    .render(&fit_visible(&self.indented(line), width)),
+                    .render(&fit_visible(&self.indented_for_width(line, width), width)),
             );
         }
         for line in &self.tips {
@@ -219,7 +244,7 @@ impl WelcomeBanner {
                 Style::new()
                     .fg(self.tip_color)
                     .italic()
-                    .render(&fit_visible(&self.indented(line), width)),
+                    .render(&fit_visible(&self.indented_for_width(line, width), width)),
             );
         }
         if let Some(notice) = self.notice.as_deref().filter(|notice| !notice.is_empty()) {
@@ -230,15 +255,15 @@ impl WelcomeBanner {
                 Style::new()
                     .fg(self.notice_color)
                     .bold()
-                    .render(&fit_visible(&self.indented(notice), width)),
+                    .render(&fit_visible(&self.indented_for_width(notice, width), width)),
             );
         }
 
         lines
     }
 
-    fn render_logo_row(&self, row: LogoRow) -> String {
-        let mut line = " ".repeat(self.margin);
+    fn render_logo_row(&self, row: LogoRow, width: usize) -> String {
+        let mut line = " ".repeat(self.margin_for_width(width));
         if !row.mascot.is_empty() {
             line.push_str(
                 &Style::new()
@@ -248,21 +273,25 @@ impl WelcomeBanner {
             );
         }
         if !row.art.is_empty() {
-            line.push_str(&" ".repeat(self.gap));
+            line.push_str(&" ".repeat(self.gap_for_width(width)));
             line.push_str(&Style::new().fg(self.art_color).bold().render(&row.art));
         }
         line
     }
 
     fn logo_row_element<Msg>(&self, row: LogoRow) -> Element<Msg> {
-        let mut children = vec![Element::Text(TextElement::new(" ".repeat(self.margin)))];
+        let mut children = vec![Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        ))];
         if !row.mascot.is_empty() {
             children.push(Element::Text(
                 TextElement::new(row.mascot).fg(self.mascot_color).bold(),
             ));
         }
         if !row.art.is_empty() {
-            children.push(Element::Text(TextElement::new(" ".repeat(self.gap))));
+            children.push(Element::Text(TextElement::new(
+                " ".repeat(self.gap_for_element()),
+            )));
             children.push(Element::Text(
                 TextElement::new(row.art).fg(self.art_color).bold(),
             ));
@@ -281,16 +310,18 @@ impl WelcomeBanner {
             .map(|line| visible_len(line))
             .max()
             .unwrap_or(0);
-        let row_count = self
-            .mascot_lines
-            .len()
-            .max(self.art_offset.saturating_add(self.art_lines.len()));
+        let art_row_count = if self.art_lines.is_empty() {
+            0
+        } else {
+            self.art_offset.saturating_add(self.art_lines.len())
+        };
+        let row_count = self.mascot_lines.len().max(art_row_count);
         let mut rows = Vec::with_capacity(row_count);
         for index in 0..row_count {
             let mascot = self
                 .mascot_lines
                 .get(index)
-                .map(|line| pad_to_width(line, mascot_width))
+                .map(|line| pad_visible(line, mascot_width))
                 .unwrap_or_else(|| " ".repeat(mascot_width));
             let art = index
                 .checked_sub(self.art_offset)
@@ -302,8 +333,28 @@ impl WelcomeBanner {
         rows
     }
 
-    fn indented(&self, value: &str) -> String {
-        format!("{}{}", " ".repeat(self.margin), value)
+    fn indented_for_width(&self, value: &str, width: usize) -> String {
+        format!("{}{}", " ".repeat(self.margin_for_width(width)), value)
+    }
+
+    fn indented_for_element(&self, value: &str) -> String {
+        format!("{}{}", " ".repeat(self.margin_for_element()), value)
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_WELCOME_MARGIN)
+    }
+
+    fn gap_for_width(&self, width: usize) -> usize {
+        self.gap.min(width).min(MAX_WELCOME_GAP)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_WELCOME_MARGIN)
+    }
+
+    fn gap_for_element(&self) -> usize {
+        self.gap.min(MAX_WELCOME_GAP)
     }
 }
 
@@ -317,15 +368,6 @@ impl Default for WelcomeBanner {
 struct LogoRow {
     mascot: String,
     art: String,
-}
-
-fn pad_to_width(value: &str, width: usize) -> String {
-    let len = visible_len(value);
-    if len >= width {
-        value.to_string()
-    } else {
-        format!("{value}{}", " ".repeat(width - len))
-    }
 }
 
 #[cfg(test)]
@@ -398,6 +440,48 @@ mod tests {
     }
 
     #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let banner = WelcomeBanner::new()
+            .margin(usize::MAX)
+            .gap(usize::MAX)
+            .mascot_lines(vec!["M"])
+            .art_lines(vec!["A"])
+            .metadata("meta");
+        let rendered = banner.view(8, 3);
+
+        assert_eq!(banner.margin, MAX_WELCOME_MARGIN);
+        assert_eq!(banner.gap, MAX_WELCOME_GAP);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = banner.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(logo) = &column.children[0] else {
+            panic!("expected logo row");
+        };
+        let Element::Text(margin) = &logo.children[0] else {
+            panic!("expected margin text");
+        };
+        let Element::Text(gap) = &logo.children[2] else {
+            panic!("expected gap text");
+        };
+        assert_eq!(margin.content.len(), MAX_WELCOME_MARGIN);
+        assert_eq!(gap.content.len(), MAX_WELCOME_GAP);
+    }
+
+    #[test]
+    fn oversized_art_offset_is_clamped_without_empty_art_rows() {
+        let banner = WelcomeBanner::new()
+            .art_offset(usize::MAX)
+            .mascot_lines(vec!["M"]);
+        let rendered = banner.view(8, 4);
+
+        assert_eq!(banner.art_offset, MAX_WELCOME_ART_OFFSET);
+        assert_eq!(rendered.lines().count(), 1);
+        assert_eq!(visible_len(&rendered), 8);
+    }
+
+    #[test]
     fn element_produces_column() {
         let el: Element<()> = sample().element();
 
@@ -408,5 +492,51 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows_before_metadata() {
+        let el: Element<()> = sample().element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 4);
+        assert!(matches!(column.children[0], Element::Box(_)));
+        assert!(matches!(column.children[1], Element::Box(_)));
+        assert!(matches!(column.children[2], Element::Box(_)));
+        assert_eq!(column.children[3].text_content(), Some(""));
+        assert!(!column.children.iter().any(|child| child
+            .text_content()
+            .is_some_and(|text| text.contains("a3s-code"))));
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = WelcomeBanner::new()
+            .metadata("meta")
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 3);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("meta")));
+        assert_eq!(column.children[1].text_content(), Some(""));
+        assert_eq!(column.children[2].text_content(), Some(""));
     }
 }

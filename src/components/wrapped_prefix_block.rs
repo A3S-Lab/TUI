@@ -1,6 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, visible_len, wrap_words, wrap_words_compact, Color, Style};
 
+const MAX_WRAPPED_PREFIX_MARGIN: usize = u16::MAX as usize;
+const MAX_WRAPPED_PREFIX_WIDTH: usize = u16::MAX as usize;
+
 /// Wrapped text block with a first-line prefix and aligned continuation prefix.
 ///
 /// This covers transcript/callout text such as live reasoning: a left margin,
@@ -47,12 +50,12 @@ impl WrappedPrefixBlock {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_WRAPPED_PREFIX_MARGIN);
         self
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_WRAPPED_PREFIX_WIDTH));
         self
     }
 
@@ -96,11 +99,11 @@ impl WrappedPrefixBlock {
     }
 
     fn render_lines(&self) -> Vec<String> {
+        let margin = " ".repeat(self.margin_for_render());
         self.plain_lines()
             .into_iter()
             .enumerate()
             .map(|(index, line)| {
-                let margin = " ".repeat(self.margin);
                 let prefix = self.prefix_for(index);
                 let text = format!("{prefix}{line}");
                 match &self.style {
@@ -121,10 +124,15 @@ impl WrappedPrefixBlock {
     }
 
     fn content_width(&self) -> usize {
+        let margin = self.margin_for_render();
         let prefix_width =
             visible_len(&self.first_prefix).max(visible_len(&self.continuation_prefix));
         self.width
-            .map(|width| width.saturating_sub(self.margin + prefix_width).max(1))
+            .map(|width| {
+                width
+                    .saturating_sub(margin.saturating_add(prefix_width))
+                    .max(1)
+            })
             .unwrap_or(usize::MAX / 4)
     }
 
@@ -137,7 +145,7 @@ impl WrappedPrefixBlock {
     }
 
     fn element_line<Msg>(&self, index: usize, line: String) -> Element<Msg> {
-        let margin = " ".repeat(self.margin);
+        let margin = " ".repeat(self.margin_for_render());
         let prefix = self.prefix_for(index).to_string();
         let text = format!("{prefix}{line}");
         let mut text_el = TextElement::new(text);
@@ -151,6 +159,13 @@ impl WrappedPrefixBlock {
                 .child(Element::Text(TextElement::new(margin)))
                 .child(Element::Text(text_el)),
         )
+    }
+
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_WRAPPED_PREFIX_MARGIN)
     }
 }
 
@@ -175,6 +190,9 @@ fn apply_text_style(mut text: TextElement, style: &Style) -> TextElement {
     }
     if style.is_strikethrough() {
         text = text.strikethrough();
+    }
+    if style.is_reverse() {
+        text = text.reverse();
     }
     text
 }
@@ -253,11 +271,47 @@ mod tests {
     }
 
     #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let block = WrappedPrefixBlock::new("alpha beta")
+            .margin(usize::MAX)
+            .width(8)
+            .prefixes("> ", "  ");
+        let rendered = block.view();
+
+        assert_eq!(block.margin, MAX_WRAPPED_PREFIX_MARGIN);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = WrappedPrefixBlock::new("alpha")
+            .prefixes("> ", "  ")
+            .width(usize::MAX);
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_WRAPPED_PREFIX_WIDTH));
+        assert!(rendered
+            .lines()
+            .all(|line| visible_len(line) == MAX_WRAPPED_PREFIX_WIDTH));
+    }
+
+    #[test]
     fn element_produces_structured_lines() {
         let element: Element<()> = WrappedPrefixBlock::new("alpha beta")
             .prefixes("> ", "  ")
             .width(8)
-            .color(Color::Cyan)
+            .style(Style::new().fg(Color::Cyan).reverse())
             .element();
 
         match element {
@@ -270,6 +324,7 @@ mod tests {
                             Element::Text(text) => {
                                 assert!(text.content.starts_with("> "));
                                 assert_eq!(text.style.fg, Some(Color::Cyan));
+                                assert!(text.style.reverse);
                             }
                             _ => panic!("expected text element"),
                         }

@@ -1,6 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 
+const MAX_DETAIL_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_DETAIL_PANEL_LABEL_WIDTH: usize = u16::MAX as usize;
+const MAX_DETAIL_PANEL_ROWS: usize = u16::MAX as usize;
+
 /// Visual role for a row inside a [`DetailPanel`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DetailRowKind {
@@ -163,7 +167,7 @@ impl DetailPanel {
     }
 
     pub fn max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows.max(1));
+        self.max_rows = Some(max_rows.clamp(1, MAX_DETAIL_PANEL_ROWS));
         self
     }
 
@@ -183,12 +187,12 @@ impl DetailPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_DETAIL_PANEL_INDENT);
         self
     }
 
     pub fn label_width(mut self, width: usize) -> Self {
-        self.label_width = Some(width);
+        self.label_width = Some(width.min(MAX_DETAIL_PANEL_LABEL_WIDTH));
         self
     }
 
@@ -265,6 +269,43 @@ impl DetailPanel {
         )
     }
 
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if self.show_separator {
+            children.push(Element::Text(
+                TextElement::new("─").fg(self.separator_color),
+            ));
+        }
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            if children.len() < height {
+                children.push(Element::Text(
+                    TextElement::new(title).fg(self.title_color).bold(),
+                ));
+            }
+        }
+
+        let available = height.saturating_sub(children.len());
+        let limit = self
+            .max_rows
+            .unwrap_or(usize::MAX)
+            .min(available)
+            .min(self.rows.len());
+        for row in self.rows.iter().take(limit) {
+            children.push(self.row_element(row));
+        }
+        children.truncate(height);
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
     fn render_lines(&self, width: usize, height: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if self.show_separator && height > 0 {
@@ -281,7 +322,7 @@ impl DetailPanel {
                         .fg(self.title_color)
                         .bold()
                         .render(&fit_visible(
-                            &format!("{}{}", " ".repeat(self.indent), title),
+                            &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                             width,
                         )),
                 );
@@ -301,18 +342,17 @@ impl DetailPanel {
     }
 
     fn render_row(&self, row: &DetailRow, width: usize) -> String {
-        let indent = " ".repeat(self.indent);
-        let available = width.saturating_sub(self.indent);
+        let indent_width = self.indent_for_width(width);
+        let indent = " ".repeat(indent_width);
+        let available = width.saturating_sub(indent_width);
         match row.kind {
             DetailRowKind::KeyValue | DetailRowKind::Action => {
                 let label = row.label.as_deref().unwrap_or_default();
-                let label_width = self
-                    .label_width
-                    .unwrap_or_else(|| self.computed_label_width())
-                    .min(available);
+                let label_width = self.label_width_for_available(available);
                 let label_text = fit_visible(label, label_width);
-                let gap = " ";
-                let value_width = available.saturating_sub(label_width + visible_len(gap));
+                let gap = if available > label_width { " " } else { "" };
+                let value_width =
+                    available.saturating_sub(label_width.saturating_add(visible_len(gap)));
                 let value = truncate_visible(&row.value, value_width);
                 format!(
                     "{indent}{}{}{}",
@@ -394,6 +434,17 @@ impl DetailPanel {
             .max()
             .unwrap_or(0)
             .max(1)
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_DETAIL_PANEL_INDENT)
+    }
+
+    fn label_width_for_available(&self, available: usize) -> usize {
+        self.label_width
+            .unwrap_or_else(|| self.computed_label_width())
+            .min(available)
+            .min(MAX_DETAIL_PANEL_LABEL_WIDTH)
     }
 }
 
@@ -487,6 +538,35 @@ mod tests {
     }
 
     #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel = DetailPanel::new("meta")
+            .indent(usize::MAX)
+            .label_width(usize::MAX)
+            .pair("pid", "42");
+        let rendered = panel.view(8, 4);
+        let row = panel.render_row(panel.rows.first().unwrap(), 8);
+
+        assert_eq!(panel.indent, MAX_DETAIL_PANEL_INDENT);
+        assert_eq!(panel.label_width, Some(MAX_DETAIL_PANEL_LABEL_WIDTH));
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(panel.label_width_for_available(8), 8);
+        assert_eq!(visible_len(&row), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+    }
+
+    #[test]
+    fn oversized_row_limit_is_clamped() {
+        let panel = DetailPanel::new("meta")
+            .max_rows(usize::MAX)
+            .pair("pid", "42")
+            .pair("workspace", "a3s");
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_rows, Some(MAX_DETAIL_PANEL_ROWS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
     fn element_produces_column() {
         let el: Element<()> = sample().element();
 
@@ -497,5 +577,51 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_respects_separator_title_and_rows() {
+        let Element::Box(column) = sample().max_rows(3).element_with_height::<()>(4) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .flat_map(|child| match child {
+                Element::Text(text) => vec![text.content.as_str()],
+                Element::Box(row) => row
+                    .children
+                    .iter()
+                    .filter_map(Element::text_content)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 4);
+        assert!(text.contains("─"));
+        assert!(text.contains("process 42"));
+        assert!(text.contains("cpu"));
+        assert!(text.contains("mem"));
+        assert!(!text.contains("cwd"));
+    }
+
+    #[test]
+    fn element_with_height_can_hide_rows_when_header_fills_space() {
+        let Element::Box(column) = sample().element_with_height::<()>(2) else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("─"));
+        assert!(text.contains("process 42"));
+        assert!(!text.contains("cpu"));
     }
 }

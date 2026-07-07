@@ -1,7 +1,7 @@
 //! Streaming markdown renderer for real-time content (e.g., LLM token output).
 
 use crate::element::Element;
-use crate::markdown::Markdown;
+use crate::markdown::{split_rendered_lines, Markdown};
 
 pub struct StreamingMarkdown {
     buffer: String,
@@ -53,7 +53,10 @@ impl StreamingMarkdown {
 
     fn rerender(&mut self) {
         let rendered = self.md.render(&self.buffer);
-        self.rendered_lines = rendered.lines().map(|l| l.to_string()).collect();
+        self.rendered_lines = split_rendered_lines(&rendered)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
     }
 }
 
@@ -100,5 +103,14 @@ mod tests {
         sm.push("hello");
         let view = sm.view();
         assert!(!view.is_empty());
+    }
+
+    #[test]
+    fn preserves_trailing_markdown_blank_rows() {
+        let mut sm = StreamingMarkdown::new(80);
+        sm.push("# Hello");
+
+        assert_eq!(sm.line_count(), 2);
+        assert!(sm.view().ends_with('\n'));
     }
 }

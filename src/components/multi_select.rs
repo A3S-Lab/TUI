@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::KeyEvent;
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, Color, Style};
 use crossterm::event::KeyCode;
 
 pub struct MultiSelect {
@@ -40,6 +40,7 @@ impl MultiSelect {
     pub fn selected_indices(&self) -> Vec<usize> {
         self.checked
             .iter()
+            .take(self.items.len())
             .enumerate()
             .filter_map(|(i, &b)| if b { Some(i) } else { None })
             .collect()
@@ -67,6 +68,9 @@ impl MultiSelect {
     }
 
     pub fn is_checked(&self, index: usize) -> bool {
+        if index >= self.items.len() {
+            return false;
+        }
         self.checked.get(index).copied().unwrap_or(false)
     }
 
@@ -75,7 +79,7 @@ impl MultiSelect {
     }
 
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<MultiSelectMsg> {
@@ -84,25 +88,22 @@ impl MultiSelect {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.cursor = self.cursor.saturating_sub(1);
+                self.cursor = self.cursor.saturating_sub(1).min(self.max_cursor());
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < self.items.len() {
-                    self.cursor += 1;
-                }
+                self.cursor = self.cursor.saturating_add(1).min(self.max_cursor());
                 None
             }
             KeyCode::Char(' ') => {
-                self.checked[self.cursor] = !self.checked[self.cursor];
-                Some(MultiSelectMsg::Toggle(self.cursor))
+                self.cursor = self.normalized_cursor();
+                self.toggle_index(self.cursor)
             }
             KeyCode::Char(c) if self.number_shortcuts => {
                 let idx = number_shortcut_index(c)?;
                 if idx < self.items.len() {
                     self.cursor = idx;
-                    self.checked[idx] = !self.checked[idx];
-                    Some(MultiSelectMsg::Toggle(idx))
+                    self.toggle_index(idx)
                 } else {
                     None
                 }
@@ -112,39 +113,53 @@ impl MultiSelect {
         }
     }
 
+    fn toggle_index(&mut self, index: usize) -> Option<MultiSelectMsg> {
+        self.normalize_checked_len();
+        let checked = self.checked.get_mut(index)?;
+        *checked = !*checked;
+        Some(MultiSelectMsg::Toggle(index))
+    }
+
+    fn max_cursor(&self) -> usize {
+        self.items.len().saturating_sub(1)
+    }
+
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(self.max_cursor())
+    }
+
+    fn normalize_checked_len(&mut self) {
+        self.checked.resize(self.items.len(), false);
+    }
+
     pub fn view(&self, width: u16, height: usize) -> String {
         let width = width as usize;
         if width == 0 || height == 0 {
             return String::new();
         }
 
-        let start = if self.items.len() <= height {
-            0
-        } else {
-            self.cursor
-                .saturating_sub(height - 1)
-                .min(self.items.len() - height)
-        };
+        let cursor = self.normalized_cursor();
+        let range = self.visible_range(height);
 
         self.items
             .iter()
             .enumerate()
-            .skip(start)
-            .take(height)
+            .skip(range.start)
+            .take(range.len())
             .map(|(idx, item)| {
-                let cursor = if idx == self.cursor { ">" } else { " " };
-                let check = if self.checked[idx] { "[x]" } else { "[ ]" };
+                let cursor_marker = if idx == cursor { ">" } else { " " };
+                let check = if self.is_checked(idx) { "[x]" } else { "[ ]" };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
                         Some(label) => {
-                            pad_or_truncate(&format!("{cursor} {label} {check} {item}"), width)
+                            fit_visible(&format!("{cursor_marker} {label} {check} {item}"), width)
                         }
-                        None => pad_or_truncate(&format!("{cursor}   {check} {item}"), width),
+                        None => fit_visible(&format!("{cursor_marker}   {check} {item}"), width),
                     }
                 } else {
-                    pad_or_truncate(&format!("{cursor} {check} {item}"), width)
+                    fit_visible(&format!("{cursor_marker} {check} {item}"), width)
                 };
-                if idx == self.cursor && self.focused {
+                if idx == cursor && self.focused {
                     Style::new().fg(Color::Cyan).bold().render(&raw)
                 } else {
                     raw
@@ -155,13 +170,21 @@ impl MultiSelect {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(self.items.len())
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let cursor = self.normalized_cursor();
+        let range = self.visible_range(height);
         let children: Vec<Element<Msg>> = self
             .items
             .iter()
             .enumerate()
+            .skip(range.start)
+            .take(range.len())
             .map(|(i, item)| {
-                let cursor_marker = if i == self.cursor { "▸" } else { " " };
-                let check = if self.checked[i] { "[x]" } else { "[ ]" };
+                let cursor_marker = if i == cursor { "▸" } else { " " };
+                let check = if self.is_checked(i) { "[x]" } else { "[ ]" };
                 let text = if self.number_shortcuts {
                     match number_shortcut_label(i) {
                         Some(label) => format!("{cursor_marker} {label} {check} {item}"),
@@ -170,7 +193,7 @@ impl MultiSelect {
                 } else {
                     format!("{} {} {}", cursor_marker, check, item)
                 };
-                if i == self.cursor && self.focused {
+                if i == cursor && self.focused {
                     Element::Text(TextElement::new(text).bold().fg(Color::Cyan))
                 } else {
                     Element::Text(TextElement::new(text))
@@ -183,6 +206,23 @@ impl MultiSelect {
                 .direction(FlexDirection::Column)
                 .children(children),
         )
+    }
+
+    fn visible_range(&self, height: usize) -> std::ops::Range<usize> {
+        if height == 0 || self.items.is_empty() {
+            return 0..0;
+        }
+
+        let cursor = self.normalized_cursor();
+        let visible = height.min(self.items.len());
+        let start = if self.items.len() <= visible {
+            0
+        } else {
+            cursor
+                .saturating_sub(visible - 1)
+                .min(self.items.len() - visible)
+        };
+        start..start.saturating_add(visible).min(self.items.len())
     }
 }
 
@@ -202,23 +242,10 @@ fn number_shortcut_label(idx: usize) -> Option<char> {
     }
 }
 
-fn pad_or_truncate(value: &str, width: usize) -> String {
-    let truncated = truncate_to_width(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        truncated
-    } else {
-        format!("{truncated}{}", " ".repeat(width - len))
-    }
-}
-
-fn truncate_to_width(value: &str, width: usize) -> String {
-    truncate_visible(value, width)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::visible_len;
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -354,6 +381,32 @@ mod tests {
     }
 
     #[test]
+    fn element_with_height_scrolls_to_cursor() {
+        let mut ms = MultiSelect::new(vec!["one", "two", "three", "four"])
+            .with_checked(vec![false, true, false, true])
+            .with_number_shortcuts();
+        ms.handle_key(&key(KeyCode::Down));
+        ms.handle_key(&key(KeyCode::Down));
+        ms.handle_key(&key(KeyCode::Down));
+
+        let Element::Box(column) = ms.element_with_height::<()>(2) else {
+            panic!("expected box element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("  3 [ ] three"));
+        assert!(text.contains("▸ 4 [x] four"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("two"));
+    }
+
+    #[test]
     fn navigation_bounds() {
         let mut ms = MultiSelect::new(vec!["a", "b"]);
         ms.handle_key(&key(KeyCode::Up));
@@ -361,6 +414,104 @@ mod tests {
         ms.handle_key(&key(KeyCode::Down));
         ms.handle_key(&key(KeyCode::Down));
         assert_eq!(ms.cursor, 1);
+    }
+
+    #[test]
+    fn stale_cursor_navigation_clamps_to_items() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]);
+        ms.cursor = usize::MAX;
+
+        ms.handle_key(&key(KeyCode::Down));
+        assert_eq!(ms.cursor(), 1);
+
+        ms.cursor = usize::MAX;
+        ms.handle_key(&key(KeyCode::Up));
+        assert_eq!(ms.cursor(), 1);
+    }
+
+    #[test]
+    fn stale_cursor_is_normalized_for_rendering_and_toggle() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]).with_number_shortcuts();
+        ms.cursor = usize::MAX;
+
+        assert_eq!(ms.cursor(), 1);
+
+        let plain = crate::style::strip_ansi(&ms.view(20, 5));
+        assert!(plain.contains("> 2 [ ] b"));
+        assert!(!plain.contains("> 1 [ ] a"));
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected multi-select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 [ ] b");
+
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Char(' '))),
+            Some(MultiSelectMsg::Toggle(1))
+        ));
+        assert_eq!(ms.cursor(), 1);
+        assert_eq!(ms.selected_indices(), vec![1]);
+    }
+
+    #[test]
+    fn stale_extra_checked_state_is_ignored() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]);
+        ms.checked = vec![true, false, true];
+
+        assert_eq!(ms.selected_indices(), vec![0]);
+        assert!(!ms.is_checked(2));
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Enter)),
+            Some(MultiSelectMsg::Submit(selected)) if selected == vec![0]
+        ));
+    }
+
+    #[test]
+    fn stale_short_checked_state_is_extended_for_toggle() {
+        let mut ms = MultiSelect::new(vec!["a", "b"]).with_number_shortcuts();
+        ms.checked = vec![true];
+        ms.cursor = 1;
+
+        let plain = crate::style::strip_ansi(&ms.view(20, 5));
+        assert!(plain.contains("> 2 [ ] b"));
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected multi-select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 [ ] b");
+
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Char('2'))),
+            Some(MultiSelectMsg::Toggle(1))
+        ));
+        assert_eq!(ms.checked(), &[true, true]);
+        assert_eq!(ms.selected_indices(), vec![0, 1]);
+    }
+
+    #[test]
+    fn empty_multi_select_ignores_toggle_input() {
+        let mut ms = MultiSelect::new(Vec::<&str>::new()).with_number_shortcuts();
+
+        assert_eq!(ms.cursor(), 0);
+        assert!(ms.selected_indices().is_empty());
+        assert!(ms.handle_key(&key(KeyCode::Char(' '))).is_none());
+        assert!(ms.handle_key(&key(KeyCode::Char('1'))).is_none());
+        assert!(matches!(
+            ms.handle_key(&key(KeyCode::Enter)),
+            Some(MultiSelectMsg::Submit(selected)) if selected.is_empty()
+        ));
+        assert_eq!(ms.view(10, 3), "");
+
+        let Element::Box(box_el) = ms.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert!(box_el.children.is_empty());
     }
 
     #[test]

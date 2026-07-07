@@ -1,5 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, Color, Style};
+use crate::style::{fit_visible, split_nonempty_lines_preserving_trailing_blank, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 
 /// Current display state for a [`LogView`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,7 +88,10 @@ impl LogView {
     }
 
     pub fn text(mut self, text: impl AsRef<str>) -> Self {
-        self.lines = text.as_ref().lines().map(str::to_string).collect();
+        self.lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self.clamp_scroll();
         self
     }
@@ -162,12 +166,21 @@ impl LogView {
         self
     }
 
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.metadata_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.separator_color = theme.color(ThemeRole::Border);
+        self
+    }
+
     pub fn lines_value(&self) -> &[String] {
         &self.lines
     }
 
     pub fn scroll_value(&self) -> usize {
-        self.scroll
+        self.normalized_scroll()
     }
 
     pub fn state_value(&self) -> LogViewState {
@@ -224,7 +237,8 @@ impl LogView {
                             .italic(),
                     ));
                 } else {
-                    for line in self.lines.iter().skip(self.scroll) {
+                    let scroll = self.normalized_scroll();
+                    for line in self.lines.iter().skip(scroll) {
                         children.push(Element::Text(
                             TextElement::new(clean_log_line(line)).fg(self.text_color),
                         ));
@@ -238,6 +252,67 @@ impl LogView {
                 TextElement::new(footer).fg(self.metadata_color),
             ));
         }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        if let Some(title) = self.title_line() {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if self.show_separator && self.has_title() && children.len() < height {
+            children.push(Element::Text(
+                TextElement::new("─").fg(self.separator_color),
+            ));
+        }
+
+        let footer_rows = usize::from(self.footer.as_ref().is_some_and(|f| !f.is_empty()));
+        let body_height = height.saturating_sub(children.len() + footer_rows);
+        match self.state {
+            LogViewState::Loading if body_height > 0 => {
+                children.push(Element::Text(
+                    TextElement::new(self.loading_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
+            LogViewState::Ready | LogViewState::Refreshing
+                if self.lines.is_empty() && body_height > 0 =>
+            {
+                children.push(Element::Text(
+                    TextElement::new(self.empty_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
+            LogViewState::Ready | LogViewState::Refreshing => {
+                let scroll = self.normalized_scroll_for_body_height(body_height);
+                for line in self.lines.iter().skip(scroll).take(body_height) {
+                    children.push(Element::Text(
+                        TextElement::new(clean_log_line(line)).fg(self.text_color),
+                    ));
+                }
+            }
+            LogViewState::Loading => {}
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(footer).fg(self.metadata_color),
+            ));
+        }
+        children.truncate(height);
 
         Element::Box(
             BoxElement::new()
@@ -276,7 +351,8 @@ impl LogView {
                 lines.push(self.render_muted(&self.empty_text, width));
             }
             LogViewState::Ready | LogViewState::Refreshing => {
-                for line in self.lines.iter().skip(self.scroll).take(body_height) {
+                let scroll = self.normalized_scroll_for_body_height(body_height);
+                for line in self.lines.iter().skip(scroll).take(body_height) {
                     let raw = fit_visible(clean_log_line(line), width);
                     lines.push(Style::new().fg(self.text_color).render(&raw));
                 }
@@ -322,8 +398,24 @@ impl LogView {
             .render(&fit_visible(&format!(" {text}"), width))
     }
 
+    fn normalized_scroll(&self) -> usize {
+        self.scroll.min(self.lines.len().saturating_sub(1))
+    }
+
+    fn normalized_scroll_for_body_height(&self, body_height: usize) -> usize {
+        if body_height == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        self.scroll.min(
+            self.lines
+                .len()
+                .saturating_sub(body_height.min(self.lines.len())),
+        )
+    }
+
     fn clamp_scroll(&mut self) {
-        self.scroll = self.scroll.min(self.lines.len().saturating_sub(1));
+        self.scroll = self.normalized_scroll();
     }
 }
 
@@ -400,6 +492,39 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_stale_scroll_when_rendering() {
+        let mut log = sample();
+        log.scroll = usize::MAX;
+
+        assert_eq!(log.scroll_value(), 2);
+
+        let rendered = log.view(24, 4);
+        let plain = strip_ansi(&rendered);
+
+        assert!(!plain.contains("one"));
+        assert!(plain.contains("two"));
+        assert!(plain.contains("three"));
+    }
+
+    #[test]
+    fn text_preserves_trailing_blank_log_line() {
+        let log = LogView::without_title().text("one\n");
+
+        assert_eq!(log.lines_value(), ["one", ""]);
+
+        let plain = strip_ansi(&log.view(8, 2));
+        let rows = plain.split('\n').collect::<Vec<_>>();
+        assert_eq!(rows, vec!["one     ", "        "]);
+    }
+
+    #[test]
+    fn empty_text_keeps_log_empty() {
+        let log = LogView::without_title().text("");
+
+        assert!(log.lines_value().is_empty());
+    }
+
+    #[test]
     fn truncates_cjk_and_fills_height() {
         let rendered = LogView::new("logs")
             .line("中文测试内容 with a long suffix")
@@ -427,11 +552,69 @@ mod tests {
     }
 
     #[test]
+    fn element_with_height_limits_scrolled_body_rows() {
+        let el: Element<()> = LogView::without_title()
+            .lines(vec!["one", "two", "three"])
+            .scroll(1)
+            .element_with_height(1);
+
+        let Element::Box(column) = el else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 1);
+        assert_eq!(text, "two");
+    }
+
+    #[test]
+    fn element_with_height_keeps_footer_budget() {
+        let el: Element<()> = LogView::without_title()
+            .lines(vec!["one", "two", "three"])
+            .scroll(1)
+            .footer("tail")
+            .element_with_height(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected column element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("two"));
+        assert!(text.contains("tail"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("three"));
+    }
+
+    #[test]
     fn empty_title_does_not_render_header_separator() {
         let rendered = LogView::new("").line("body").view(12, 3);
         let plain = strip_ansi(&rendered);
 
         assert_eq!(plain.lines().next().unwrap().trim(), "body");
         assert!(!plain.contains('─'));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let view = LogView::new("logs").with_theme(&theme);
+
+        assert_eq!(view.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(view.metadata_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.separator_color, theme.color(ThemeRole::Border));
     }
 }

@@ -1,5 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_SUBAGENT_CHILD_INDENT: usize = u16::MAX as usize;
+const MAX_SUBAGENT_MARGIN: usize = u16::MAX as usize;
+const MAX_SUBAGENT_RUNNING_ROWS: usize = u16::MAX as usize;
 
 /// Durable status rows for parallel subagents or background workers.
 ///
@@ -60,17 +65,17 @@ impl SubagentTracker {
     }
 
     pub fn max_running_rows(mut self, max_running_rows: usize) -> Self {
-        self.max_running_rows = max_running_rows;
+        self.max_running_rows = max_running_rows.clamp(1, MAX_SUBAGENT_RUNNING_ROWS);
         self
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_SUBAGENT_MARGIN);
         self
     }
 
     pub fn child_indent(mut self, child_indent: usize) -> Self {
-        self.child_indent = child_indent;
+        self.child_indent = child_indent.min(MAX_SUBAGENT_CHILD_INDENT);
         self
     }
 
@@ -99,6 +104,14 @@ impl SubagentTracker {
 
     pub fn error_color(mut self, color: Color) -> Self {
         self.error_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.accent_color = theme.color(ThemeRole::Primary);
+        self.active_color = theme.color(ThemeRole::Secondary);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.error_color = theme.color(ThemeRole::Error);
         self
     }
 
@@ -175,7 +188,10 @@ impl SubagentTracker {
         right: String,
         width: usize,
     ) -> String {
-        let pad = width.saturating_sub(visible_len(&left) + visible_len(&right) + 1);
+        let content_width = [visible_len(&left), visible_len(&right), 1]
+            .into_iter()
+            .fold(0usize, usize::saturating_add);
+        let pad = width.saturating_sub(content_width);
         let mut left_style = Style::new().fg(left_color);
         if bold_left {
             left_style = left_style.bold();
@@ -191,7 +207,7 @@ impl SubagentTracker {
     fn summary_left(&self, width: usize, right: &str) -> String {
         let raw = format!(
             "{}{} {}  {}",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_width(width)),
             self.marker,
             self.slug_text(),
             self.title.trim()
@@ -202,7 +218,7 @@ impl SubagentTracker {
     fn child_left(&self, row: &SubagentRow, width: usize, right: &str) -> String {
         let raw = format!(
             "{}{} {}  {}",
-            " ".repeat(self.child_indent),
+            " ".repeat(self.child_indent_for_width(width)),
             self.marker,
             row.agent,
             row.description
@@ -214,7 +230,11 @@ impl SubagentTracker {
         let total = self.rows.len();
         let done = self.rows.iter().filter(|row| row.done).count();
         let running = total.saturating_sub(done);
-        let tokens = self.rows.iter().map(|row| row.tokens).sum::<u64>();
+        let tokens = self
+            .rows
+            .iter()
+            .map(|row| row.tokens)
+            .fold(0u64, u64::saturating_add);
         let elapsed = aggregate_elapsed(&self.rows);
         let status = if done == total {
             format!("{done}/{total} agents done")
@@ -251,7 +271,7 @@ impl SubagentTracker {
         let right = self.summary_status();
         let left = format!(
             "{}{} {}  {}",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_element()),
             self.marker,
             self.slug_text(),
             self.title.trim()
@@ -262,7 +282,7 @@ impl SubagentTracker {
     fn child_element<Msg>(&self, row: &SubagentRow) -> Element<Msg> {
         let left = format!(
             "{}{} {}  {}",
-            " ".repeat(self.child_indent),
+            " ".repeat(self.child_indent_for_element()),
             self.marker,
             row.agent,
             row.description
@@ -283,6 +303,22 @@ impl SubagentTracker {
             .filter(|slug| !slug.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| slugify(&self.title))
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_SUBAGENT_MARGIN)
+    }
+
+    fn child_indent_for_width(&self, width: usize) -> usize {
+        self.child_indent.min(width).min(MAX_SUBAGENT_CHILD_INDENT)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_SUBAGENT_MARGIN)
+    }
+
+    fn child_indent_for_element(&self) -> usize {
+        self.child_indent.min(MAX_SUBAGENT_CHILD_INDENT)
     }
 }
 
@@ -410,15 +446,15 @@ fn parse_elapsed_seconds(text: &str) -> Option<u64> {
     let text = text.trim();
     if let Some(raw) = text.strip_suffix("ms") {
         let millis = raw.trim().parse::<f64>().ok()?;
-        return Some((millis / 1000.0).ceil() as u64);
+        return ceil_elapsed_seconds(millis / 1000.0);
     }
     if let Some(raw) = text.strip_suffix('s') {
         let seconds = raw.trim().parse::<f64>().ok()?;
-        return Some(seconds.ceil() as u64);
+        return ceil_elapsed_seconds(seconds);
     }
     if let Some(raw) = text.strip_suffix('m') {
         let minutes = raw.trim().parse::<f64>().ok()?;
-        return Some((minutes * 60.0).ceil() as u64);
+        return ceil_elapsed_seconds(minutes * 60.0);
     }
     if let Some((minutes, seconds)) = text.split_once(':') {
         let minutes = minutes.trim().parse::<u64>().ok()?;
@@ -426,6 +462,18 @@ fn parse_elapsed_seconds(text: &str) -> Option<u64> {
         return Some(minutes.saturating_mul(60).saturating_add(seconds));
     }
     None
+}
+
+fn ceil_elapsed_seconds(seconds: f64) -> Option<u64> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    let seconds = seconds.ceil();
+    if seconds >= u64::MAX as f64 {
+        Some(u64::MAX)
+    } else {
+        Some(seconds as u64)
+    }
 }
 
 fn fmt_elapsed_seconds(seconds: u64) -> String {
@@ -548,6 +596,17 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let tracker = SubagentTracker::new("Extract").with_theme(&theme);
+
+        assert_eq!(tracker.accent_color, theme.color(ThemeRole::Primary));
+        assert_eq!(tracker.active_color, theme.color(ThemeRole::Secondary));
+        assert_eq!(tracker.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(tracker.error_color, theme.color(ThemeRole::Error));
+    }
+
+    #[test]
     fn cjk_text_is_truncated_to_width() {
         let view = SubagentTracker::new("提取通用组件并验证终端布局")
             .row(
@@ -561,6 +620,99 @@ mod tests {
         for row in plain.lines() {
             assert_eq!(visible_len(row), 36, "{row:?}");
         }
+    }
+
+    #[test]
+    fn summary_token_total_saturates_on_overflow() {
+        let tracker = SubagentTracker::new("large token counts")
+            .row(SubagentRow::new("one", "done").tokens(u64::MAX))
+            .row(SubagentRow::new("two", "done").tokens(1));
+
+        let status = tracker.summary_status();
+
+        assert!(status.contains(&format!("↓ {} tokens", fmt_tokens(u64::MAX))));
+    }
+
+    #[test]
+    fn non_finite_elapsed_values_are_ignored() {
+        assert_eq!(parse_elapsed_seconds("NaNms"), None);
+        assert_eq!(parse_elapsed_seconds("infs"), None);
+        assert_eq!(parse_elapsed_seconds("-infm"), None);
+        assert_eq!(parse_elapsed_seconds("-1s"), None);
+
+        let tracker = SubagentTracker::new("elapsed")
+            .row(SubagentRow::new("bad", "ignored").elapsed("infs"))
+            .row(SubagentRow::new("good", "used").elapsed("1.2s"));
+
+        assert!(tracker.summary_status().contains("2.0s"));
+    }
+
+    #[test]
+    fn oversized_indents_are_clamped_to_render_width() {
+        let tracker = SubagentTracker::new("Extract")
+            .margin(usize::MAX)
+            .child_indent(usize::MAX)
+            .row(SubagentRow::new("coder", "build").elapsed("1s"));
+        let view = tracker.view(8);
+
+        assert_eq!(tracker.margin, MAX_SUBAGENT_MARGIN);
+        assert_eq!(tracker.child_indent, MAX_SUBAGENT_CHILD_INDENT);
+        assert!(view.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = tracker.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(summary) = &column.children[0] else {
+            panic!("expected summary row");
+        };
+        let Element::Text(summary_left) = &summary.children[0] else {
+            panic!("expected summary text");
+        };
+        assert_eq!(leading_spaces(&summary_left.content), MAX_SUBAGENT_MARGIN);
+
+        let Element::Box(child) = &column.children[1] else {
+            panic!("expected child row");
+        };
+        let Element::Text(child_left) = &child.children[0] else {
+            panic!("expected child text");
+        };
+        assert_eq!(
+            leading_spaces(&child_left.content),
+            MAX_SUBAGENT_CHILD_INDENT
+        );
+    }
+
+    #[test]
+    fn oversized_running_row_limit_is_clamped() {
+        let tracker = SubagentTracker::new("many")
+            .max_running_rows(usize::MAX)
+            .row(SubagentRow::new("one", "first"))
+            .row(SubagentRow::new("two", "second"));
+        let view = tracker.view(40);
+
+        assert_eq!(tracker.max_running_rows, MAX_SUBAGENT_RUNNING_ROWS);
+        assert_eq!(tracker.running_rows().len(), 2);
+        assert!(view.lines().all(|line| visible_len(line) == 40));
+    }
+
+    #[test]
+    fn zero_running_row_limit_keeps_one_row_visible() {
+        let tracker = SubagentTracker::new("many")
+            .max_running_rows(0)
+            .row(SubagentRow::new("one", "first"))
+            .row(SubagentRow::new("two", "second"));
+        let view = tracker.view(40);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(tracker.max_running_rows, 1);
+        assert_eq!(tracker.running_rows().len(), 1);
+        assert!(plain.contains("one  first"));
+        assert!(!plain.contains("two  second"));
+
+        let Element::Box(column) = tracker.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 2);
     }
 
     #[test]
@@ -581,5 +733,9 @@ mod tests {
         let tracker = SubagentTracker::new("提取通用组件");
 
         assert_eq!(tracker.slug_text(), "parallel-agents");
+    }
+
+    fn leading_spaces(value: &str) -> usize {
+        value.chars().take_while(|ch| *ch == ' ').count()
     }
 }

@@ -1,5 +1,11 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, strip_ansi, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_lines_preserving_trailing_blank, strip_ansi, visible_len, Color, Style,
+};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_GUTTER_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_GUTTER_BLOCK_WIDTH: usize = u16::MAX as usize;
 
 /// Transcript-style block with a marker on the first row and aligned continuation rows.
 ///
@@ -22,9 +28,8 @@ pub struct GutterBlock {
 
 impl GutterBlock {
     pub fn new(content: impl AsRef<str>) -> Self {
-        let mut lines = content
-            .as_ref()
-            .lines()
+        let mut lines = split_lines_preserving_trailing_blank(content.as_ref())
+            .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>();
         if lines.is_empty() {
@@ -59,7 +64,7 @@ impl GutterBlock {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_GUTTER_BLOCK_MARGIN);
         self
     }
 
@@ -69,7 +74,7 @@ impl GutterBlock {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_GUTTER_BLOCK_WIDTH));
         self
     }
 
@@ -90,6 +95,12 @@ impl GutterBlock {
 
     pub fn background_color(mut self, color: Color) -> Self {
         self.background_color = Some(color);
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.marker_color = theme.color(ThemeRole::Primary);
+        self.content_color = Some(theme.color(ThemeRole::Foreground));
         self
     }
 
@@ -115,13 +126,14 @@ impl GutterBlock {
     }
 
     fn render_line(&self, index: usize, line: &str) -> String {
-        let margin = " ".repeat(self.margin);
+        let margin_width = self.margin_for_render();
+        let margin = " ".repeat(margin_width);
         let inner = self.inner_plain(index, line);
 
         if let Some(background) = self.background_color {
             let inner_width = self
                 .width
-                .map(|width| width.saturating_sub(self.margin))
+                .map(|width| width.saturating_sub(margin_width))
                 .unwrap_or_else(|| visible_len(&inner));
             let fitted = fit_visible(&inner, inner_width);
             let mut style = Style::new().bg(background);
@@ -164,7 +176,9 @@ impl GutterBlock {
             return Element::Text(text);
         }
 
-        let mut children = vec![Element::Text(TextElement::new(" ".repeat(self.margin)))];
+        let mut children = vec![Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_render()),
+        ))];
         if index == 0 {
             let mut marker = TextElement::new(self.marker.clone()).fg(self.marker_color);
             if self.marker_bold {
@@ -202,6 +216,13 @@ impl GutterBlock {
                 strip_ansi(line)
             )
         }
+    }
+
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_GUTTER_BLOCK_MARGIN)
     }
 
     fn render_content(&self, line: &str) -> String {
@@ -286,10 +307,56 @@ mod tests {
     }
 
     #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let block = GutterBlock::new("hello\nworld").margin(usize::MAX).width(8);
+        let rendered = block.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(block.margin, MAX_GUTTER_BLOCK_MARGIN);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 8));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[0] else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = GutterBlock::new("hello").width(usize::MAX);
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_GUTTER_BLOCK_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_GUTTER_BLOCK_WIDTH);
+    }
+
+    #[test]
     fn lines_constructor_keeps_one_empty_line_for_empty_input() {
         let rendered = GutterBlock::lines(Vec::<String>::new()).view();
 
         assert_eq!(strip_ansi(&rendered), "  ● ");
+    }
+
+    #[test]
+    fn new_preserves_trailing_blank_row() {
+        let block = GutterBlock::new("hello\n");
+        let rendered = block.view();
+        let plain = strip_ansi(&rendered);
+        let rows = plain.lines().collect::<Vec<_>>();
+
+        assert_eq!(rows, vec!["  ● hello", "    "]);
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        assert_eq!(column.children.len(), 2);
     }
 
     #[test]
@@ -308,5 +375,18 @@ mod tests {
             }
             _ => panic!("expected column element"),
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors_without_setting_background() {
+        let theme = Theme::tokyo_night();
+        let block = GutterBlock::new("hello").with_theme(&theme);
+
+        assert_eq!(block.marker_color, theme.color(ThemeRole::Primary));
+        assert_eq!(
+            block.content_color,
+            Some(theme.color(ThemeRole::Foreground))
+        );
+        assert_eq!(block.background_color, None);
     }
 }

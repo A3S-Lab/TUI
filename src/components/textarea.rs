@@ -1,6 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::event::KeyEvent;
-use crate::style::Color;
+use crate::event::{Event, KeyEvent};
+use crate::style::{
+    display_cell_char_span, next_display_cell_boundary, previous_display_cell_char_span, Color,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 pub struct Textarea {
@@ -66,7 +68,7 @@ impl Textarea {
 
     fn fit_height(&mut self) {
         if let Some(max) = self.auto_grow_max {
-            let n = self.lines.len() as u16;
+            let n = self.lines.len().min(u16::MAX as usize) as u16;
             self.height = n.clamp(1, max);
             // The box grew to fit every line, so the internal scroll offset (set
             // while the height was smaller, to follow the cursor) must reset —
@@ -103,14 +105,21 @@ impl Textarea {
         self.lines.join("\n")
     }
 
+    /// Current cursor position as `(row, char_column)`.
+    pub fn cursor(&self) -> (usize, usize) {
+        self.normalized_cursor()
+    }
+
     pub fn set_value(&mut self, v: &str) {
-        self.lines = v.lines().map(|l| l.to_string()).collect();
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
+        let lines = split_value_lines(v);
+        self.lines = match self.char_limit {
+            Some(limit) => clamp_lines_to_char_limit(lines, limit),
+            None => lines,
+        };
         self.cursor_row = self.lines.len() - 1;
         self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
         self.fit_height();
+        self.ensure_visible();
     }
 
     pub fn clear(&mut self) {
@@ -122,19 +131,79 @@ impl Textarea {
     }
 
     pub fn total_chars(&self) -> usize {
-        self.lines.iter().map(|l| l.chars().count()).sum::<usize>() + self.lines.len() - 1
+        self.lines
+            .iter()
+            .map(|line| line.chars().count())
+            .fold(0usize, usize::saturating_add)
+            .saturating_add(self.lines.len().saturating_sub(1))
+    }
+
+    pub fn handle_event(&mut self, event: &Event) -> Option<TextareaMsg> {
+        match event {
+            Event::Key(key) => self.handle_key(key),
+            Event::Paste(text) => self.handle_paste(text),
+            _ => None,
+        }
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TextareaMsg> {
         if !self.focused {
             return None;
         }
+        self.clamp_cursor();
 
         let result = match (key.code, key.modifiers) {
+            (KeyCode::Left, m) if word_modifier(m) => {
+                self.move_word_left();
+                None
+            }
+            (KeyCode::Right, m) if word_modifier(m) => {
+                self.move_word_right();
+                None
+            }
+            (KeyCode::Char('b'), m) if m.contains(KeyModifiers::ALT) => {
+                self.move_word_left();
+                None
+            }
+            (KeyCode::Char('f'), m) if m.contains(KeyModifiers::ALT) => {
+                self.move_word_right();
+                None
+            }
+            (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => {
+                if self.delete_word_backward() {
+                    Some(TextareaMsg::Changed(self.value()))
+                } else {
+                    None
+                }
+            }
+            (KeyCode::Backspace, m) if word_modifier(m) => {
+                if self.delete_word_backward() {
+                    Some(TextareaMsg::Changed(self.value()))
+                } else {
+                    None
+                }
+            }
+            (KeyCode::Delete, m) if word_modifier(m) => {
+                if self.delete_word_forward() {
+                    Some(TextareaMsg::Changed(self.value()))
+                } else {
+                    None
+                }
+            }
+            (KeyCode::Char('d'), m) if m.contains(KeyModifiers::ALT) => {
+                if self.delete_word_forward() {
+                    Some(TextareaMsg::Changed(self.value()))
+                } else {
+                    None
+                }
+            }
             (KeyCode::Enter, KeyModifiers::NONE) if self.submit_on_enter => {
                 Some(TextareaMsg::Submit(self.value()))
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
@@ -143,10 +212,16 @@ impl Textarea {
             (KeyCode::Enter, m)
                 if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
             {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
             (KeyCode::Char('j'), m) if m.contains(KeyModifiers::CONTROL) => {
+                if !self.can_insert_more() {
+                    return None;
+                }
                 self.insert_newline();
                 Some(TextareaMsg::Changed(self.value()))
             }
@@ -163,11 +238,9 @@ impl Textarea {
                 self.lines[self.cursor_row].truncate(off);
                 Some(TextareaMsg::Changed(self.value()))
             }
-            (KeyCode::Char(c), _) => {
-                if let Some(limit) = self.char_limit {
-                    if self.total_chars() >= limit {
-                        return None;
-                    }
+            (KeyCode::Char(c), m) if text_char_modifier(m) => {
+                if !self.can_insert_more() {
+                    return None;
                 }
                 self.insert_char(c);
                 Some(TextareaMsg::Changed(self.value()))
@@ -216,19 +289,35 @@ impl Textarea {
         result
     }
 
+    fn handle_paste(&mut self, text: &str) -> Option<TextareaMsg> {
+        if !self.focused {
+            return None;
+        }
+        if self.insert_str_changed(text) {
+            Some(TextareaMsg::Changed(self.value()))
+        } else {
+            None
+        }
+    }
+
     pub fn view(&self) -> String {
+        let h = self.height as usize;
+        if h == 0 || self.width == 0 {
+            return String::new();
+        }
+
         if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
             return format!("\x1b[2m{}\x1b[0m", self.placeholder);
         }
 
-        let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
-        let visible = &self.lines[self.offset..end];
+        let (cursor_row, _) = self.normalized_cursor();
+        let (start, end) = self.visible_range();
+        let visible = &self.lines[start..end];
 
         let mut result = Vec::new();
         for (i, line) in visible.iter().enumerate() {
-            let row = self.offset + i;
-            if row == self.cursor_row && self.focused {
+            let row = start + i;
+            if row == cursor_row && self.focused {
                 result.push(self.render_line_with_cursor(line));
             } else {
                 result.push(line.clone());
@@ -256,27 +345,25 @@ impl Textarea {
 
     /// Absolute display column of the insertion point within its line.
     fn cursor_display_col_abs(&self) -> usize {
+        let (cursor_row, cursor_col) = self.normalized_cursor();
         self.lines
-            .get(self.cursor_row)
-            .map(|line| {
-                line.chars()
-                    .take(self.cursor_col)
-                    .map(Self::char_width)
-                    .sum()
-            })
+            .get(cursor_row)
+            .map(|line| line.chars().take(cursor_col).map(Self::char_width).sum())
             .unwrap_or(0)
     }
 
     /// Display column of the insertion point relative to the visible window —
     /// what a host needs to place the real terminal cursor.
     pub fn cursor_display_col(&self) -> usize {
-        self.cursor_display_col_abs() - self.scroll_start()
+        self.cursor_display_col_abs()
+            .saturating_sub(self.scroll_start())
     }
 
     /// The cursor's row within the visible window (for multi-line input — the
     /// host places the real terminal cursor on this row).
     pub fn cursor_row(&self) -> usize {
-        self.cursor_row.saturating_sub(self.offset)
+        let (cursor_row, _) = self.normalized_cursor();
+        cursor_row.saturating_sub(self.normalized_offset_for_cursor(cursor_row))
     }
 
     /// Render the cursor's line as plain (horizontally scrolled) text; the real
@@ -284,12 +371,28 @@ impl Textarea {
     fn render_line_with_cursor(&self, line: &str) -> String {
         let width = (self.width as usize).max(1);
         let start = self.scroll_start();
+        let end = start.saturating_add(width);
 
         let mut out = String::new();
         let mut disp = 0usize; // absolute display column scanned
         let mut shown = 0usize; // visible columns emitted
-        for ch in line.chars() {
-            let w = Self::char_width(ch);
+        let mut index = 0usize;
+        while let Some((cell_end, w)) = next_display_cell_boundary(line, index) {
+            let cell = &line[index..cell_end];
+            index = cell_end;
+            if w == 0 {
+                if disp >= end {
+                    break;
+                }
+                if disp >= start {
+                    out.push_str(cell);
+                }
+                continue;
+            }
+
+            if disp >= end {
+                break;
+            }
             if disp < start {
                 disp += w; // starts before the scroll window — skip wholly
                 continue;
@@ -297,7 +400,7 @@ impl Textarea {
             if shown + w > width {
                 break; // right edge reached
             }
-            out.push(ch);
+            out.push_str(cell);
             disp += w;
             shown += w;
         }
@@ -320,13 +423,47 @@ impl Textarea {
     /// Insert a (possibly multi-line) string at the cursor — used for paste, so
     /// newlines become real line breaks instead of submitting the message.
     pub fn insert_str(&mut self, text: &str) {
+        self.insert_str_changed(text);
+    }
+
+    fn insert_str_changed(&mut self, text: &str) -> bool {
+        self.clamp_cursor();
+        let mut changed = false;
         for ch in text.chars() {
             match ch {
-                '\n' => self.insert_newline(),
                 '\r' => {} // drop CR so CRLF pastes don't double-break
-                _ => self.insert_char(ch),
+                '\n' => {
+                    if !self.can_insert_more() {
+                        break;
+                    }
+                    self.insert_newline();
+                    changed = true;
+                }
+                '\t' => {
+                    if !self.can_insert_more() {
+                        break;
+                    }
+                    self.insert_char(' ');
+                    changed = true;
+                }
+                ch if ch.is_control() => {}
+                _ => {
+                    if !self.can_insert_more() {
+                        break;
+                    }
+                    self.insert_char(ch);
+                    changed = true;
+                }
             }
         }
+        self.fit_height();
+        self.ensure_visible();
+        changed
+    }
+
+    fn can_insert_more(&self) -> bool {
+        self.char_limit
+            .is_none_or(|limit| self.total_chars() < limit)
     }
 
     fn insert_char(&mut self, c: char) {
@@ -346,9 +483,12 @@ impl Textarea {
 
     fn delete_backward(&mut self) -> bool {
         if self.cursor_col > 0 {
-            self.cursor_col -= 1;
-            let off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
-            self.lines[self.cursor_row].remove(off);
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let (start, end) = previous_display_cell_char_span(&chars, self.cursor_col);
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            self.cursor_col = start;
             true
         } else if self.cursor_row > 0 {
             let current_line = self.lines.remove(self.cursor_row);
@@ -364,8 +504,12 @@ impl Textarea {
 
     fn delete_forward(&mut self) -> bool {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
-            let off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
-            self.lines[self.cursor_row].remove(off);
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let (start, end) = display_cell_char_span(&chars, self.cursor_col);
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            self.cursor_col = start;
             true
         } else if self.cursor_row + 1 < self.lines.len() {
             let next_line = self.lines.remove(self.cursor_row + 1);
@@ -378,7 +522,8 @@ impl Textarea {
 
     fn move_left(&mut self) {
         if self.cursor_col > 0 {
-            self.cursor_col -= 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = previous_display_cell_char_span(&chars, self.cursor_col).0;
         } else if self.cursor_row > 0 {
             self.cursor_row -= 1;
             self.cursor_col = Self::char_len(&self.lines[self.cursor_row]);
@@ -388,7 +533,8 @@ impl Textarea {
 
     fn move_right(&mut self) {
         if self.cursor_col < Self::char_len(&self.lines[self.cursor_row]) {
-            self.cursor_col += 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = display_cell_char_span(&chars, self.cursor_col).1;
         } else if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
             self.cursor_col = 0;
@@ -416,14 +562,234 @@ impl Textarea {
         }
     }
 
-    fn ensure_visible(&mut self) {
-        let h = self.height as usize;
-        if self.cursor_row < self.offset {
-            self.offset = self.cursor_row;
-        } else if self.cursor_row >= self.offset + h {
-            self.offset = self.cursor_row - h + 1;
+    fn move_word_left(&mut self) {
+        if self.cursor_col > 0 {
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = previous_word_boundary(&chars, self.cursor_col);
+        } else if self.cursor_row > 0 {
+            self.cursor_row -= 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = previous_word_boundary(&chars, chars.len());
+            self.ensure_visible();
         }
     }
+
+    fn move_word_right(&mut self) {
+        let line_len = Self::char_len(&self.lines[self.cursor_row]);
+        if self.cursor_col < line_len {
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = next_word_boundary(&chars, self.cursor_col);
+        } else if self.cursor_row + 1 < self.lines.len() {
+            self.cursor_row += 1;
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            self.cursor_col = next_word_boundary(&chars, 0);
+            self.ensure_visible();
+        }
+    }
+
+    fn delete_word_backward(&mut self) -> bool {
+        if self.cursor_col > 0 {
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let start = previous_word_boundary(&chars, self.cursor_col);
+            if start == self.cursor_col {
+                return false;
+            }
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], start);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            self.cursor_col = start;
+            true
+        } else if self.cursor_row > 0 {
+            self.delete_backward()
+        } else {
+            false
+        }
+    }
+
+    fn delete_word_forward(&mut self) -> bool {
+        let line_len = Self::char_len(&self.lines[self.cursor_row]);
+        if self.cursor_col < line_len {
+            let chars = line_chars(&self.lines[self.cursor_row]);
+            let end = next_word_boundary(&chars, self.cursor_col);
+            if end == self.cursor_col {
+                return false;
+            }
+            let start_off = Self::byte_off(&self.lines[self.cursor_row], self.cursor_col);
+            let end_off = Self::byte_off(&self.lines[self.cursor_row], end);
+            self.lines[self.cursor_row].replace_range(start_off..end_off, "");
+            true
+        } else if self.cursor_row + 1 < self.lines.len() {
+            self.delete_forward()
+        } else {
+            false
+        }
+    }
+
+    fn ensure_visible(&mut self) {
+        self.clamp_cursor();
+        let h = self.height as usize;
+        if h == 0 {
+            self.offset = 0;
+            return;
+        }
+
+        if self.cursor_row < self.offset {
+            self.offset = self.cursor_row;
+        } else if self.cursor_row >= self.offset.saturating_add(h) {
+            self.offset = self.cursor_row.saturating_sub(h).saturating_add(1);
+        }
+    }
+
+    fn visible_range(&self) -> (usize, usize) {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return (0, 0);
+        }
+
+        let (cursor_row, _) = self.normalized_cursor();
+        let start = self.normalized_offset_for_cursor(cursor_row);
+        let end = start.saturating_add(h).min(self.lines.len());
+        (start, end)
+    }
+
+    fn normalized_cursor(&self) -> (usize, usize) {
+        let cursor_row = self.cursor_row.min(self.lines.len().saturating_sub(1));
+        let cursor_col = self
+            .lines
+            .get(cursor_row)
+            .map(|line| self.cursor_col.min(Self::char_len(line)))
+            .unwrap_or(0);
+        (cursor_row, cursor_col)
+    }
+
+    fn clamp_cursor(&mut self) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        let (cursor_row, cursor_col) = self.normalized_cursor();
+        self.cursor_row = cursor_row;
+        self.cursor_col = cursor_col;
+    }
+
+    fn normalized_offset(&self) -> usize {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        self.offset.min(self.lines.len().saturating_sub(h))
+    }
+
+    fn normalized_offset_for_cursor(&self, cursor_row: usize) -> usize {
+        let h = self.height as usize;
+        if h == 0 || self.lines.is_empty() {
+            return 0;
+        }
+
+        let max_start = self.lines.len().saturating_sub(h.min(self.lines.len()));
+        let mut start = self.normalized_offset();
+        if cursor_row < start {
+            start = cursor_row;
+        } else if cursor_row >= start.saturating_add(h) {
+            start = cursor_row.saturating_add(1).saturating_sub(h);
+        }
+        start.min(max_start)
+    }
+}
+
+fn split_value_lines(value: &str) -> Vec<String> {
+    let mut parts = value.split('\n').peekable();
+    let mut lines = Vec::new();
+
+    while let Some(line) = parts.next() {
+        let normalized = if parts.peek().is_some() {
+            line.strip_suffix('\r').unwrap_or(line)
+        } else {
+            line
+        };
+        lines.push(normalized.to_string());
+    }
+
+    lines
+}
+
+fn clamp_lines_to_char_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return vec![String::new()];
+    }
+
+    let line_count = lines.len();
+    let mut remaining = limit;
+    let mut out = Vec::new();
+
+    for (index, line) in lines.into_iter().enumerate() {
+        let line_len = line.chars().count();
+        if line_len > remaining {
+            out.push(line.chars().take(remaining).collect());
+            return out;
+        }
+
+        out.push(line);
+        remaining -= line_len;
+
+        let has_next_line = index + 1 < line_count;
+        if has_next_line {
+            if remaining == 0 {
+                return out;
+            }
+            remaining -= 1;
+            if remaining == 0 {
+                out.push(String::new());
+                return out;
+            }
+        }
+    }
+
+    if out.is_empty() {
+        vec![String::new()]
+    } else {
+        out
+    }
+}
+
+fn line_chars(line: &str) -> Vec<char> {
+    line.chars().collect()
+}
+
+fn text_char_modifier(modifiers: KeyModifiers) -> bool {
+    !modifiers.intersects(
+        KeyModifiers::CONTROL
+            | KeyModifiers::ALT
+            | KeyModifiers::SUPER
+            | KeyModifiers::HYPER
+            | KeyModifiers::META,
+    )
+}
+
+fn word_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
+fn previous_word_boundary(chars: &[char], cursor: usize) -> usize {
+    let mut index = cursor.min(chars.len());
+    while index > 0 && chars[index - 1].is_whitespace() {
+        index -= 1;
+    }
+    while index > 0 && !chars[index - 1].is_whitespace() {
+        index -= 1;
+    }
+    index
+}
+
+fn next_word_boundary(chars: &[char], cursor: usize) -> usize {
+    let mut index = cursor.min(chars.len());
+    while index < chars.len() && !chars[index].is_whitespace() {
+        index += 1;
+    }
+    while index < chars.len() && chars[index].is_whitespace() {
+        index += 1;
+    }
+    index
 }
 
 impl Default for Textarea {
@@ -434,6 +800,10 @@ impl Default for Textarea {
 
 impl Textarea {
     pub fn element<Msg>(&self) -> Element<Msg> {
+        if self.height == 0 || self.width == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
         if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
             return Element::Text(
                 TextElement::new(&self.placeholder)
@@ -443,13 +813,14 @@ impl Textarea {
         }
 
         let h = self.height as usize;
-        let end = (self.offset + h).min(self.lines.len());
-        let visible = &self.lines[self.offset..end];
+        let (cursor_row, _) = self.normalized_cursor();
+        let (start, end) = self.visible_range();
+        let visible = &self.lines[start..end];
 
         let mut children: Vec<Element<Msg>> = Vec::new();
         for (i, line) in visible.iter().enumerate() {
-            let row = self.offset + i;
-            if row == self.cursor_row && self.focused {
+            let row = start + i;
+            if row == cursor_row && self.focused {
                 children.push(Element::Text(TextElement::new(
                     self.render_line_with_cursor(line),
                 )));
@@ -473,163 +844,5 @@ impl Textarea {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent {
-            code,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
-
-    fn ctrl(code: KeyCode) -> KeyEvent {
-        KeyEvent {
-            code,
-            modifiers: KeyModifiers::CONTROL,
-        }
-    }
-
-    #[test]
-    fn typing_text() {
-        let mut ta = Textarea::new();
-        ta.handle_key(&key(KeyCode::Char('h')));
-        ta.handle_key(&key(KeyCode::Char('i')));
-        assert_eq!(ta.value(), "hi");
-    }
-
-    #[test]
-    fn multibyte_input_no_panic() {
-        // Regression: cursor_col mixed char/byte indexing → panic on CJK input.
-        let mut ta = Textarea::new();
-        for c in "你好abc世界".chars() {
-            ta.handle_key(&key(KeyCode::Char(c)));
-        }
-        assert_eq!(ta.value(), "你好abc世界");
-        // Move left over multibyte chars and edit — must not panic on a boundary.
-        // chars: 你 好 a b c 世 界 ; cursor at end (7), Left x4 -> col 3 (before 'b')
-        for _ in 0..4 {
-            ta.handle_key(&key(KeyCode::Left));
-        }
-        ta.handle_key(&key(KeyCode::Backspace)); // col 3->2, deletes 'a'
-        ta.handle_key(&key(KeyCode::Delete)); // deletes 'b' at col 2
-        assert_eq!(ta.value(), "你好c世界");
-        let _ = ta.view();
-    }
-
-    #[test]
-    fn cjk_cursor_stays_in_view_when_line_overflows() {
-        // Narrow box; type a long CJK line. The visible render must never exceed
-        // the width and must always include the cursor block at the end.
-        let mut ta = Textarea::new().with_width(8).with_height(1);
-        for c in "你好世界你好世界".chars() {
-            ta.handle_key(&key(KeyCode::Char(c)));
-        }
-        let line = ta.view();
-        let visible = crate::style::visible_len(&line); // ANSI-stripped display width
-        assert!(visible <= 8, "rendered width {visible} exceeds box width 8");
-        // Insertion point must stay within the visible window for the host to
-        // place the real cursor on it.
-        assert!(
-            ta.cursor_display_col() <= 8,
-            "cursor col {} out of view",
-            ta.cursor_display_col()
-        );
-    }
-
-    #[test]
-    fn newline_creates_new_line() {
-        let mut ta = Textarea::new();
-        ta.handle_key(&key(KeyCode::Char('a')));
-        ta.handle_key(&key(KeyCode::Enter));
-        ta.handle_key(&key(KeyCode::Char('b')));
-        assert_eq!(ta.value(), "a\nb");
-    }
-
-    #[test]
-    fn auto_grow_shows_all_lines_after_newline() {
-        // Regression: with auto-grow, adding a newline grew the height but left
-        // the scroll offset following the cursor, hiding the first line. The box
-        // must show BOTH lines (height grows, offset resets).
-        let mut ta = Textarea::new().with_height(1).with_auto_grow(8);
-        ta.handle_key(&key(KeyCode::Char('a')));
-        ta.handle_key(&key(KeyCode::Enter));
-        ta.handle_key(&key(KeyCode::Char('b')));
-        assert_eq!(ta.height(), 2, "box grew to two rows");
-        let view = ta.view();
-        assert!(view.contains('a'), "first line still visible");
-        assert!(view.contains('b'), "second line visible");
-    }
-
-    #[test]
-    fn backspace_joins_lines() {
-        let mut ta = Textarea::new();
-        ta.set_value("ab\ncd");
-        ta.cursor_row = 1;
-        ta.cursor_col = 0;
-        ta.handle_key(&key(KeyCode::Backspace));
-        assert_eq!(ta.value(), "abcd");
-    }
-
-    #[test]
-    fn cursor_movement() {
-        let mut ta = Textarea::new();
-        ta.set_value("hello\nworld");
-        ta.cursor_row = 1;
-        ta.cursor_col = 5;
-        ta.handle_key(&key(KeyCode::Up));
-        assert_eq!(ta.cursor_row, 0);
-        ta.handle_key(&key(KeyCode::Home));
-        assert_eq!(ta.cursor_col, 0);
-        ta.handle_key(&key(KeyCode::End));
-        assert_eq!(ta.cursor_col, 5);
-    }
-
-    #[test]
-    fn ctrl_a_and_e() {
-        let mut ta = Textarea::new();
-        ta.set_value("test");
-        ta.cursor_col = 2;
-        ta.handle_key(&ctrl(KeyCode::Char('a')));
-        assert_eq!(ta.cursor_col, 0);
-        ta.handle_key(&ctrl(KeyCode::Char('e')));
-        assert_eq!(ta.cursor_col, 4);
-    }
-
-    #[test]
-    fn ctrl_k_kills_line() {
-        let mut ta = Textarea::new();
-        ta.set_value("hello world");
-        ta.cursor_col = 5;
-        ta.handle_key(&ctrl(KeyCode::Char('k')));
-        assert_eq!(ta.value(), "hello");
-    }
-
-    #[test]
-    fn char_limit() {
-        let mut ta = Textarea::new().with_char_limit(3);
-        ta.handle_key(&key(KeyCode::Char('a')));
-        ta.handle_key(&key(KeyCode::Char('b')));
-        ta.handle_key(&key(KeyCode::Char('c')));
-        ta.handle_key(&key(KeyCode::Char('d')));
-        assert_eq!(ta.value(), "abc");
-    }
-
-    #[test]
-    fn clear_resets() {
-        let mut ta = Textarea::new();
-        ta.set_value("some\ntext");
-        ta.clear();
-        assert_eq!(ta.value(), "");
-        assert_eq!(ta.cursor_row, 0);
-        assert_eq!(ta.cursor_col, 0);
-    }
-
-    #[test]
-    fn submit_on_enter() {
-        let mut ta = Textarea::new().with_submit_on_enter(true);
-        ta.handle_key(&key(KeyCode::Char('x')));
-        let msg = ta.handle_key(&key(KeyCode::Enter));
-        assert!(matches!(msg, Some(TextareaMsg::Submit(s)) if s == "x"));
-    }
-}
+#[path = "textarea_tests.rs"]
+mod tests;

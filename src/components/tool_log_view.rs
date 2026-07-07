@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, truncate_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD: usize = u16::MAX as usize;
 
 /// One completed command/tool record in a [`ToolLogView`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,20 +130,24 @@ impl ToolLogView {
 
     pub fn record(mut self, record: ToolLogRecord) -> Self {
         self.records.push(record);
+        self.clamp_scroll();
         self
     }
 
     pub fn records(mut self, records: Vec<ToolLogRecord>) -> Self {
         self.records = records;
+        self.clamp_scroll();
         self
     }
 
     pub fn add_record(&mut self, record: ToolLogRecord) {
         self.records.push(record);
+        self.clamp_scroll();
     }
 
     pub fn scroll(mut self, scroll: usize) -> Self {
         self.scroll = scroll;
+        self.clamp_scroll();
         self
     }
 
@@ -155,7 +162,8 @@ impl ToolLogView {
     }
 
     pub fn max_output_lines_per_record(mut self, max: usize) -> Self {
-        self.max_output_lines_per_record = Some(max.max(1));
+        self.max_output_lines_per_record = Some(max.clamp(1, MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD));
+        self.clamp_scroll();
         self
     }
 
@@ -185,12 +193,22 @@ impl ToolLogView {
         self
     }
 
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_color = theme.color(ThemeRole::Foreground);
+        self.ok_color = theme.color(ThemeRole::Success);
+        self.error_color = theme.color(ThemeRole::Error);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.output_color = theme.color(ThemeRole::Foreground);
+        self.title_color = theme.color(ThemeRole::Primary);
+        self
+    }
+
     pub fn records_value(&self) -> &[ToolLogRecord] {
         &self.records
     }
 
     pub fn scroll_value(&self) -> usize {
-        self.scroll
+        self.normalized_scroll()
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -216,6 +234,10 @@ impl ToolLogView {
 
     pub fn element<Msg>(&self, height: usize) -> Element<Msg> {
         let mut children = Vec::new();
+        if height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
         if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
             children.push(Element::Text(
                 TextElement::new(title).fg(self.title_color).bold(),
@@ -223,13 +245,18 @@ impl ToolLogView {
         }
 
         if self.records.is_empty() {
-            children.push(Element::Text(
-                TextElement::new(self.empty_text.as_str())
-                    .fg(self.muted_color)
-                    .italic(),
-            ));
+            if children.len() < height {
+                children.push(Element::Text(
+                    TextElement::new(self.empty_text.as_str())
+                        .fg(self.muted_color)
+                        .italic(),
+                ));
+            }
         } else {
-            let visible = self.plain_rows().into_iter().skip(self.scroll).take(height);
+            let available = height.saturating_sub(children.len());
+            let rows = self.plain_rows();
+            let scroll = self.normalized_scroll_for_window(rows.len(), available);
+            let visible = rows.into_iter().skip(scroll).take(available);
             for row in visible {
                 children.push(row.element(
                     self.header_color,
@@ -237,6 +264,13 @@ impl ToolLogView {
                     self.muted_color,
                     self.output_color,
                 ));
+            }
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
             }
         }
 
@@ -271,12 +305,9 @@ impl ToolLogView {
         }
 
         let available = height.saturating_sub(lines.len());
-        for row in self
-            .plain_rows()
-            .into_iter()
-            .skip(self.scroll)
-            .take(available)
-        {
+        let rows = self.plain_rows();
+        let scroll = self.normalized_scroll_for_window(rows.len(), available);
+        for row in rows.into_iter().skip(scroll).take(available) {
             lines.push(row.render(
                 width,
                 self.header_color,
@@ -320,6 +351,27 @@ impl ToolLogView {
             }
         }
         rows
+    }
+
+    fn normalized_scroll(&self) -> usize {
+        self.normalized_scroll_for_len(self.plain_rows().len())
+    }
+
+    fn normalized_scroll_for_len(&self, row_count: usize) -> usize {
+        self.scroll.min(row_count.saturating_sub(1))
+    }
+
+    fn normalized_scroll_for_window(&self, row_count: usize, window_height: usize) -> usize {
+        if row_count == 0 || window_height == 0 {
+            return 0;
+        }
+
+        self.scroll
+            .min(row_count.saturating_sub(window_height.min(row_count)))
+    }
+
+    fn clamp_scroll(&mut self) {
+        self.scroll = self.normalized_scroll();
     }
 
     fn status_color(&self, status: ToolLogStatus) -> Color {
@@ -505,6 +557,58 @@ mod tests {
     }
 
     #[test]
+    fn scroll_past_rows_clamps_to_visible_tail_window() {
+        let rendered = sample().scroll(usize::MAX).view(40, 3);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#2 · bash · exit 2"));
+        assert_eq!(rendered.lines().count(), 3);
+    }
+
+    #[test]
+    fn records_reclamp_stale_scroll_after_rows_shrink() {
+        let rendered = sample()
+            .scroll(usize::MAX)
+            .records(vec![ToolLogRecord::ok("only")])
+            .view(40, 2);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#1 · only · ok"));
+    }
+
+    #[test]
+    fn normalizes_stale_scroll_when_rendering() {
+        let mut view = sample();
+        let last_row = view.plain_rows().len().saturating_sub(1);
+        view.scroll = usize::MAX;
+
+        assert_eq!(view.scroll_value(), last_row);
+
+        let rendered = view.view(40, 3);
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains("#2 · bash · exit 2"));
+        assert!(!plain.contains("#1 · read"));
+        assert_eq!(rendered.lines().count(), 3);
+    }
+
+    #[test]
+    fn element_normalizes_stale_scroll_when_rendering() {
+        let mut view = sample();
+        view.scroll = usize::MAX;
+
+        let element = view.element::<()>(2);
+        let text = element_text(&element);
+
+        assert!(text.contains("#2 · bash · exit 2"));
+        assert!(!text.contains("#1 · read"));
+        match element {
+            Element::Box(column) => assert_eq!(column.children.len(), 2),
+            _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
     fn limits_output_tail_per_record() {
         let rendered = ToolLogView::new()
             .record(ToolLogRecord::ok("test").output("one\ntwo\nthree\nfour"))
@@ -516,6 +620,19 @@ mod tests {
         assert!(!plain.contains("one"));
         assert!(plain.contains("three"));
         assert!(plain.contains("four"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let view = ToolLogView::new().with_theme(&theme);
+
+        assert_eq!(view.header_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.ok_color, theme.color(ThemeRole::Success));
+        assert_eq!(view.error_color, theme.color(ThemeRole::Error));
+        assert_eq!(view.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(view.output_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(view.title_color, theme.color(ThemeRole::Primary));
     }
 
     #[test]
@@ -548,6 +665,21 @@ mod tests {
     }
 
     #[test]
+    fn oversized_output_line_limit_is_clamped() {
+        let view = ToolLogView::new()
+            .record(ToolLogRecord::ok("test").output("one\ntwo"))
+            .max_output_lines_per_record(usize::MAX);
+        let rendered = view.view(24, 4);
+
+        assert_eq!(
+            view.max_output_lines_per_record,
+            Some(MAX_TOOL_LOG_OUTPUT_LINES_PER_RECORD)
+        );
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+        assert_eq!(view.plain_rows().len(), 4);
+    }
+
+    #[test]
     fn zero_size_renders_empty_string() {
         assert_eq!(sample().view(0, 4), "");
         assert_eq!(sample().view(40, 0), "");
@@ -563,6 +695,90 @@ mod tests {
                 assert!(!column.children.is_empty());
             }
             _ => panic!("expected Box"),
+        }
+    }
+
+    #[test]
+    fn element_zero_height_returns_empty_column() {
+        let el: Element<()> = sample().element(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_title_counts_against_height_budget() {
+        let el: Element<()> = sample().element(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .map(element_text)
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("/output"), "{text:?}");
+        assert!(text.contains("#1 · read · ok"), "{text:?}");
+        assert!(!text.contains("args:"), "{text:?}");
+    }
+
+    #[test]
+    fn element_empty_state_respects_title_height_budget() {
+        let el: Element<()> = ToolLogView::new()
+            .title("/output")
+            .empty_text("nothing yet")
+            .element(1);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .map(element_text)
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert_eq!(column.children.len(), 1);
+        assert!(text.contains("/output"), "{text:?}");
+        assert!(!text.contains("nothing yet"), "{text:?}");
+    }
+
+    #[test]
+    fn element_fill_height_pads_empty_rows() {
+        let el: Element<()> = ToolLogView::new()
+            .record(ToolLogRecord::failed("patch"))
+            .fill_height(true)
+            .element(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column.children.iter().map(element_text).collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], "#1 · patch · failed");
+        assert_eq!(rows[1], "");
+        assert_eq!(rows[2], "");
+        assert_eq!(rows[3], "");
+    }
+
+    fn element_text(element: &Element<()>) -> String {
+        match element {
+            Element::Text(text) => text.content.clone(),
+            Element::Box(box_element) => box_element
+                .children
+                .iter()
+                .map(element_text)
+                .collect::<Vec<_>>()
+                .join(""),
+            Element::Spacer | Element::_Phantom(_) => String::new(),
         }
     }
 }

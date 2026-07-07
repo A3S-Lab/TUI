@@ -1,8 +1,14 @@
 use super::chip_strip::{Chip, ChipStrip};
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Activatable, Scrollable, Selectable, Tabbed};
 use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
+
+const MAX_TABBED_MENU_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_TABBED_MENU_PANEL_ITEMS: usize = u16::MAX as usize;
+const MAX_TABBED_MENU_PANEL_TAB_GAP: usize = u16::MAX as usize;
 
 /// One selectable row in a [`TabbedMenuPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,7 +133,7 @@ pub enum TabbedMenuPanelMsg {
 
 /// Colored tab strip plus a scroll-aware selectable list.
 ///
-/// This extracts the model/relay picker pattern from the CLI: colored source
+/// This extracts the tabbed picker pattern from the CLI: colored source
 /// chips, optional title and hint rows, active-tab switching, and a selected
 /// list whose window follows the cursor.
 #[derive(Debug, Clone)]
@@ -219,7 +225,7 @@ impl TabbedMenuPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.clamp(1, MAX_TABBED_MENU_PANEL_ITEMS));
         self
     }
 
@@ -244,12 +250,12 @@ impl TabbedMenuPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_TABBED_MENU_PANEL_INDENT);
         self
     }
 
     pub fn tab_gap(mut self, gap: usize) -> Self {
-        self.tab_gap = gap;
+        self.tab_gap = gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP);
         self
     }
 
@@ -294,6 +300,18 @@ impl TabbedMenuPanel {
         self
     }
 
+    /// Apply semantic colors from a theme while preserving tab brand colors.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = Some(theme.color(ThemeRole::Primary));
+        self.hint_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = Some(theme.color(ThemeRole::Highlight));
+        self.disabled_color = theme.color(ThemeRole::Muted);
+        self
+    }
+
     pub fn set_y_offset(&mut self, y: u16) {
         self.y_offset = y;
     }
@@ -303,11 +321,11 @@ impl TabbedMenuPanel {
     }
 
     pub fn active_tab_value(&self) -> usize {
-        self.active_tab
+        self.normalized_active_tab()
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn active_items(&self) -> &[TabbedMenuItem] {
@@ -317,7 +335,7 @@ impl TabbedMenuPanel {
     }
 
     pub fn selected_item(&self) -> Option<&TabbedMenuItem> {
-        self.active_items().get(self.selected)
+        self.active_items().get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<TabbedMenuPanelMsg> {
@@ -325,27 +343,32 @@ impl TabbedMenuPanel {
             KeyCode::Left | KeyCode::Char('h') => self.move_tab_left(),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => self.move_tab_right(),
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.selected + 1 < self.active_items().len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.active_items().len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::PageUp => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = self.selected.saturating_sub(step);
+                self.selected = self.normalized_selected().saturating_sub(step);
                 self.keep_selected_visible(step);
                 None
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected =
-                    (self.selected + step).min(self.active_items().len().saturating_sub(1));
+                self.selected = self
+                    .normalized_selected()
+                    .saturating_add(step)
+                    .min(self.active_items().len().saturating_sub(1));
                 self.keep_selected_visible(step);
                 None
             }
@@ -368,7 +391,16 @@ impl TabbedMenuPanel {
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<TabbedMenuPanelMsg> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+                if self.should_show_tabs() && local_row == self.tab_row() {
+                    let tab = self.tab_index_at_column(mouse.column)?;
+                    if tab != self.normalized_active_tab() {
+                        self.active_tab = tab;
+                        self.selected = 0;
+                        self.scroll = 0;
+                    }
+                    return Some(TabbedMenuPanelMsg::TabChanged(tab));
+                }
                 let item_row = local_row.checked_sub(self.item_start_row())?;
                 let item_count = self.visible_item_count_for_height(usize::MAX);
                 if item_row >= item_count {
@@ -429,23 +461,81 @@ impl TabbedMenuPanel {
             children.push(Element::Text(TextElement::new(hint).fg(self.hint_color)));
         }
 
-        for (index, item) in self.active_items().iter().enumerate() {
-            let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == self.selected {
-                text = text
-                    .fg(self.selected_fg)
-                    .bg(self.selected_bg.unwrap_or(active_tab.color))
-                    .bold();
-            } else if item.disabled {
-                text = text.fg(self.disabled_color);
-            } else {
-                text = text.fg(self.item_color(item, active_tab));
-            }
-            children.push(Element::Text(text));
+        let selected = self.normalized_selected();
+        for index in self.element_item_range() {
+            children.push(Element::Text(
+                self.item_text_element(index, active_tab, selected),
+            ));
         }
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        let Some(active_tab) = self.current_tab() else {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        };
+
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title)
+                    .fg(self.title_color.unwrap_or(active_tab.color))
+                    .bold(),
+            ));
+        }
+
+        if self.should_show_tabs() {
+            children.push(self.tabs_element());
+        }
+
+        if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
+            children.push(Element::Text(TextElement::new(hint).fg(self.hint_color)));
+        }
+
+        let items = self.active_items();
+        if items.is_empty() {
+            if children.len() < height {
+                let text = active_tab.empty_text.as_deref().unwrap_or("no items");
+                children.push(Element::Text(TextElement::new(text).fg(self.muted_color)));
+            }
+        } else {
+            let visible_items = self.visible_item_count_for_height(height);
+            let start = self.window_start(visible_items);
+            let end = start.saturating_add(visible_items).min(items.len());
+            let selected = self.normalized_selected();
+            for index in start..end {
+                children.push(Element::Text(
+                    self.item_text_element(index, active_tab, selected),
+                ));
+            }
+
+            if self.show_scroll && items.len() > visible_items && visible_items > 0 {
+                children.push(Element::Text(self.scroll_footer_element(
+                    start,
+                    end,
+                    items.len(),
+                )));
+            }
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
         }
 
         Element::Box(
@@ -467,7 +557,7 @@ impl TabbedMenuPanel {
                     .fg(self.title_color.unwrap_or(active_tab.color))
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -479,7 +569,7 @@ impl TabbedMenuPanel {
 
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
             lines.push(Style::new().fg(self.hint_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), hint),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), hint),
                 width,
             )));
         }
@@ -489,7 +579,7 @@ impl TabbedMenuPanel {
             if lines.len() < height {
                 let text = active_tab.empty_text.as_deref().unwrap_or("no items");
                 lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                    &format!("{}{}", " ".repeat(self.indent), text),
+                    &format!("{}{}", " ".repeat(self.indent_for_width(width)), text),
                     width,
                 )));
             }
@@ -508,7 +598,7 @@ impl TabbedMenuPanel {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -523,9 +613,9 @@ impl TabbedMenuPanel {
             .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
-            .active(self.active_tab)
-            .margin(self.indent)
-            .gap(self.tab_gap)
+            .active(self.normalized_active_tab())
+            .margin(self.indent_for_width(width))
+            .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .view(width as u16)
     }
 
@@ -536,16 +626,37 @@ impl TabbedMenuPanel {
             .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
             .collect::<Vec<_>>();
         ChipStrip::new(chips)
-            .active(self.active_tab)
-            .margin(self.indent)
-            .gap(self.tab_gap)
+            .active(self.normalized_active_tab())
+            .margin(self.indent_for_element())
+            .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
             .element()
+    }
+
+    fn item_text_element(
+        &self,
+        index: usize,
+        active_tab: &TabbedMenuTab,
+        selected: usize,
+    ) -> TextElement {
+        let item = &active_tab.items[index];
+        let mut text = TextElement::new(self.plain_item_line(index, None));
+        if index == selected {
+            text = text
+                .fg(self.selected_fg)
+                .bg(self.selected_bg.unwrap_or(active_tab.color))
+                .bold();
+        } else if item.disabled {
+            text = text.fg(self.disabled_color);
+        } else {
+            text = text.fg(self.item_color(item, active_tab));
+        }
+        text
     }
 
     fn render_item(&self, index: usize, width: usize, active_tab: &TabbedMenuTab) -> String {
         let raw = fit_visible(&self.plain_item_line(index, Some(width)), width);
         let item = &active_tab.items[index];
-        if index == self.selected {
+        if index == self.normalized_selected() {
             Style::new()
                 .fg(self.selected_fg)
                 .bg(self.selected_bg.unwrap_or(active_tab.color))
@@ -563,11 +674,10 @@ impl TabbedMenuPanel {
         let Some(item) = self.active_items().get(index) else {
             return String::new();
         };
-        let mut prefix = " ".repeat(self.indent);
-        if let Some(marker) = item.prefix.as_deref().filter(|prefix| !prefix.is_empty()) {
-            prefix.push_str(marker);
-            prefix.push(' ');
-        }
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(item, width),
+            None => self.item_prefix_for_element(item),
+        };
         let mut label = item.label.clone();
         if let Some(description) = item
             .description
@@ -589,42 +699,60 @@ impl TabbedMenuPanel {
         Style::new().fg(self.muted_color).render(&fit_visible(
             &format!(
                 "{}{up}{down} {}/{}",
-                " ".repeat(self.indent),
-                self.selected.saturating_add(1).min(total),
+                " ".repeat(self.indent_for_width(width)),
+                self.normalized_selected().saturating_add(1).min(total),
                 total
             ),
             width,
         ))
     }
 
+    fn scroll_footer_element(&self, start: usize, end: usize, total: usize) -> TextElement {
+        let up = if start > 0 { "↑" } else { " " };
+        let down = if end < total { "↓" } else { " " };
+        TextElement::new(format!(
+            "{}{up}{down} {}/{}",
+            " ".repeat(self.indent_for_element()),
+            self.normalized_selected().saturating_add(1).min(total),
+            total
+        ))
+        .fg(self.muted_color)
+    }
+
     fn move_tab_left(&mut self) -> Option<TabbedMenuPanelMsg> {
-        if self.active_tab == 0 {
+        let active = self.normalized_active_tab();
+        if active == 0 {
+            self.active_tab = active;
             return None;
         }
-        self.active_tab -= 1;
+        self.active_tab = active - 1;
         self.selected = 0;
         self.scroll = 0;
         Some(TabbedMenuPanelMsg::TabChanged(self.active_tab))
     }
 
     fn move_tab_right(&mut self) -> Option<TabbedMenuPanelMsg> {
-        if self.active_tab + 1 >= self.tabs.len() {
+        let active = self.normalized_active_tab();
+        if active.saturating_add(1) >= self.tabs.len() {
+            self.active_tab = active;
             return None;
         }
-        self.active_tab += 1;
+        self.active_tab = active + 1;
         self.selected = 0;
         self.scroll = 0;
         Some(TabbedMenuPanelMsg::TabChanged(self.active_tab))
     }
 
     fn selected_msg(&self) -> Option<TabbedMenuPanelMsg> {
-        let item = self.active_items().get(self.selected)?;
+        let active_tab = self.normalized_active_tab();
+        let selected = self.normalized_selected();
+        let item = self.active_items().get(selected)?;
         if item.disabled {
             None
         } else {
             Some(TabbedMenuPanelMsg::Selected {
-                tab: self.active_tab,
-                item: self.selected,
+                tab: active_tab,
+                item: selected,
             })
         }
     }
@@ -651,12 +779,21 @@ impl TabbedMenuPanel {
         }
         let max_start = item_count.saturating_sub(visible_items);
         let mut start = self.scroll.min(max_start);
-        if self.selected < start {
-            start = self.selected;
-        } else if self.selected >= start + visible_items {
-            start = self.selected + 1 - visible_items;
+        let selected = self.normalized_selected();
+        if selected < start {
+            start = selected;
+        } else if selected >= start + visible_items {
+            start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let item_count = self.active_items().len();
+        let visible_items = self.max_items.unwrap_or(item_count).min(item_count);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(item_count);
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -670,12 +807,30 @@ impl TabbedMenuPanel {
             + usize::from(self.hint.as_ref().is_some_and(|hint| !hint.is_empty()))
     }
 
+    fn tab_row(&self) -> usize {
+        usize::from(self.title.as_ref().is_some_and(|title| !title.is_empty()))
+    }
+
+    fn tab_index_at_column(&self, column: u16) -> Option<usize> {
+        let click_x = usize::from(column);
+        let mut x = self.indent_for_element();
+        let gap = self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP);
+        for (index, tab) in self.tabs.iter().enumerate() {
+            let tab_width = visible_len(tab.label()) + 2;
+            if click_x >= x && click_x < x.saturating_add(tab_width) {
+                return Some(index);
+            }
+            x = x.saturating_add(tab_width).saturating_add(gap);
+        }
+        None
+    }
+
     fn should_show_tabs(&self) -> bool {
         self.tabs.len() > 1 || (self.show_tabs_when_single && !self.tabs.is_empty())
     }
 
     fn current_tab(&self) -> Option<&TabbedMenuTab> {
-        self.tabs.get(self.active_tab)
+        self.tabs.get(self.normalized_active_tab())
     }
 
     fn item_color(&self, item: &TabbedMenuItem, active_tab: &TabbedMenuTab) -> Color {
@@ -692,10 +847,96 @@ impl TabbedMenuPanel {
     }
 
     fn clamp_state(&mut self) {
-        self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
-        self.selected = self
-            .selected
-            .min(self.active_items().len().saturating_sub(1));
+        self.active_tab = self.normalized_active_tab();
+        self.selected = self.normalized_selected();
+    }
+
+    fn normalized_active_tab(&self) -> usize {
+        self.active_tab.min(self.tabs.len().saturating_sub(1))
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected
+            .min(self.active_items().len().saturating_sub(1))
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_TABBED_MENU_PANEL_INDENT)
+    }
+
+    fn item_prefix_for_width(&self, item: &TabbedMenuItem, width: usize) -> String {
+        let tail = truncate_visible(&self.item_prefix_tail(item), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        format!("{}{}", " ".repeat(indent), tail)
+    }
+
+    fn item_prefix_for_element(&self, item: &TabbedMenuItem) -> String {
+        format!(
+            "{}{}",
+            " ".repeat(self.indent_for_element()),
+            self.item_prefix_tail(item)
+        )
+    }
+
+    fn item_prefix_tail(&self, item: &TabbedMenuItem) -> String {
+        item.prefix
+            .as_deref()
+            .filter(|prefix| !prefix.is_empty())
+            .map(|prefix| format!("{prefix} "))
+            .unwrap_or_default()
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_TABBED_MENU_PANEL_INDENT)
+    }
+}
+
+impl Selectable for TabbedMenuPanel {
+    fn item_count(&self) -> usize {
+        self.active_items().len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.active_items().is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_state();
+    }
+}
+
+impl Scrollable for TabbedMenuPanel {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.active_items().len().saturating_sub(1));
+    }
+}
+
+impl Tabbed for TabbedMenuPanel {
+    fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    fn active_tab_index(&self) -> Option<usize> {
+        (!self.tabs.is_empty()).then(|| self.normalized_active_tab())
+    }
+
+    fn set_active_tab_index(&mut self, index: usize) {
+        self.active_tab = index;
+        self.clamp_state();
+    }
+}
+
+impl Activatable for TabbedMenuPanel {
+    fn is_item_disabled(&self, index: usize) -> bool {
+        self.active_items()
+            .get(index)
+            .is_some_and(TabbedMenuItem::is_disabled)
     }
 }
 
@@ -728,6 +969,19 @@ mod tests {
             code,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = sample().with_theme(&theme);
+
+        assert_eq!(panel.title_color, Some(theme.color(ThemeRole::Primary)));
+        assert_eq!(panel.hint_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.selected_bg, Some(theme.color(ThemeRole::Highlight)));
+        assert_eq!(panel.disabled_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.tabs[0].color_value(), Color::Cyan);
     }
 
     #[test]
@@ -791,6 +1045,55 @@ mod tests {
     }
 
     #[test]
+    fn oversized_spacing_is_clamped_to_render_width() {
+        let panel =
+            TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+                .item(TabbedMenuItem::new("gpt-5").prefix("●"))])
+            .title("Models")
+            .hint("hint")
+            .indent(usize::MAX)
+            .tab_gap(usize::MAX)
+            .show_tabs_when_single(true)
+            .footer("footer")
+            .fill_height(true);
+        let rendered = panel.view(8, 5);
+        let item = panel.active_items().first().unwrap();
+        let prefix = panel.item_prefix_for_width(item, 8);
+        let line = panel.plain_item_line(0, Some(8));
+
+        assert_eq!(panel.indent, MAX_TABBED_MENU_PANEL_INDENT);
+        assert_eq!(panel.tab_gap, MAX_TABBED_MENU_PANEL_TAB_GAP);
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(visible_len(&prefix), 8);
+        assert_eq!(visible_len(&line), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(item) = &column.children[3] else {
+            panic!("expected item text");
+        };
+        assert_eq!(
+            visible_len(&item.content),
+            MAX_TABBED_MENU_PANEL_INDENT + visible_len("● gpt-5")
+        );
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let panel = TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+            .item(TabbedMenuItem::new("gpt-5"))
+            .item(TabbedMenuItem::new("gpt-5-mini"))])
+        .show_tabs_when_single(true)
+        .max_items(usize::MAX);
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_items, Some(MAX_TABBED_MENU_PANEL_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
     fn key_handling_switches_tabs_moves_and_selects() {
         let mut panel = sample();
         assert_eq!(panel.active_tab_value(), 1);
@@ -813,10 +1116,121 @@ mod tests {
     }
 
     #[test]
+    fn stale_active_tab_index_is_clamped_during_navigation() {
+        let mut panel = sample();
+        panel.active_tab = usize::MAX;
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Right)), None);
+        assert_eq!(panel.active_tab_value(), 1);
+
+        assert_eq!(
+            panel.handle_key(&key(KeyCode::Left)),
+            Some(TabbedMenuPanelMsg::TabChanged(0))
+        );
+        assert_eq!(panel.active_tab_value(), 0);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_rendering_and_input() {
+        let mut panel = TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan)
+            .item(TabbedMenuItem::new("one"))
+            .item(TabbedMenuItem::new("two"))])
+        .show_tabs_when_single(true)
+        .max_items(1);
+        panel.selected = usize::MAX;
+
+        assert_eq!(panel.selected_index(), 1);
+        assert_eq!(
+            panel.selected_item().map(TabbedMenuItem::label),
+            Some("two")
+        );
+        assert_eq!(
+            panel.handle_key(&key(KeyCode::Enter)),
+            Some(TabbedMenuPanelMsg::Selected { tab: 0, item: 1 })
+        );
+
+        let plain = strip_ansi(&panel.view(24, 4));
+        assert!(plain.contains("two"), "{plain:?}");
+        assert!(!plain.contains("one"), "{plain:?}");
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        assert_eq!(column.children.len(), 2);
+        let Element::Text(selected_item) = &column.children[1] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(selected_item.content, "  two");
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Down)), None);
+        assert_eq!(panel.selected_index(), 1);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::Up)), None);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn huge_page_down_saturates_selection() {
+        let mut panel = sample().active_tab(0).selected(1).max_items(usize::MAX);
+
+        assert_eq!(panel.handle_key(&key(KeyCode::PageDown)), None);
+
+        assert_eq!(panel.selected_index(), panel.active_items().len() - 1);
+    }
+
+    #[test]
     fn disabled_item_does_not_select() {
         let mut panel = sample().selected(1);
 
         assert_eq!(panel.handle_key(&key(KeyCode::Enter)), None);
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut panel = sample();
+        panel.set_y_offset(4);
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_click_on_tab_switches_active_tab() {
+        let mut panel = sample();
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, Some(TabbedMenuPanelMsg::TabChanged(0)));
+        assert_eq!(panel.active_tab_value(), 0);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_click_between_tabs_is_ignored() {
+        let mut panel = sample();
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.active_tab_value(), 1);
     }
 
     #[test]
@@ -837,5 +1251,97 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let items = (0..5)
+            .map(|idx| TabbedMenuItem::new(format!("session-{idx}")))
+            .collect::<Vec<_>>();
+        let el: Element<()> =
+            TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan).items(items)])
+                .show_tabs_when_single(true)
+                .selected(3)
+                .scroll(1)
+                .max_items(3)
+                .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("session-1"));
+        assert!(text.contains("session-2"));
+        assert!(text.contains("session-3"));
+        assert!(!text.contains("session-0"));
+        assert!(!text.contains("session-4"));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_items_and_keeps_scroll_footer() {
+        let items = (0..6)
+            .map(|idx| TabbedMenuItem::new(format!("session-{idx}")))
+            .collect::<Vec<_>>();
+        let el: Element<()> =
+            TabbedMenuPanel::new(vec![TabbedMenuTab::new("Codex", Color::Cyan).items(items)])
+                .show_tabs_when_single(true)
+                .selected(4)
+                .scroll(2)
+                .element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 4);
+        assert!(text.contains("session-3"), "{text:?}");
+        assert!(text.contains("session-4"), "{text:?}");
+        assert!(text.contains("5/6"), "{text:?}");
+        assert!(!text.contains("session-0"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_empty_tab_renders_empty_state_and_padding() {
+        let el: Element<()> = TabbedMenuPanel::new(vec![
+            TabbedMenuTab::new("Codex", Color::Cyan).empty_text("(no models)")
+        ])
+        .show_tabs_when_single(true)
+        .fill_height(true)
+        .element_with_height(4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 4);
+        assert!(text.contains("(no models)"), "{text:?}");
     }
 }

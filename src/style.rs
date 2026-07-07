@@ -95,7 +95,7 @@ impl Color {
     pub fn lighten(&self, amount: f64) -> Self {
         match self {
             Color::Rgb(r, g, b) => {
-                let factor = amount.clamp(0.0, 1.0);
+                let factor = normalized_color_amount(amount);
                 Color::Rgb(
                     (*r as f64 + (255.0 - *r as f64) * factor) as u8,
                     (*g as f64 + (255.0 - *g as f64) * factor) as u8,
@@ -110,7 +110,7 @@ impl Color {
     pub fn darken(&self, amount: f64) -> Self {
         match self {
             Color::Rgb(r, g, b) => {
-                let factor = 1.0 - amount.clamp(0.0, 1.0);
+                let factor = 1.0 - normalized_color_amount(amount);
                 Color::Rgb(
                     (*r as f64 * factor) as u8,
                     (*g as f64 * factor) as u8,
@@ -134,6 +134,14 @@ impl Color {
     /// Create a color from ANSI 256 palette index.
     pub fn ansi(n: u8) -> Self {
         Color::Ansi256(n)
+    }
+}
+
+fn normalized_color_amount(amount: f64) -> f64 {
+    if amount.is_finite() {
+        amount.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -382,15 +390,22 @@ impl Style {
     }
 
     pub fn render(&self, content: &str) -> String {
-        let lines: Vec<&str> = content.lines().collect();
-        let lines = if lines.is_empty() { vec![""] } else { lines };
+        let lines = split_lines_preserving_trailing_blank(content);
+        let content_height = self.content_height(lines.len());
+        let mut content_lines = lines
+            .iter()
+            .copied()
+            .take(content_height)
+            .collect::<Vec<_>>();
+        while content_lines.len() < content_height {
+            content_lines.push("");
+        }
 
-        let content_width = self.content_width(&lines);
+        let content_width = self.content_width(&content_lines);
         let pad_left = self.padding[3] as usize;
         let pad_right = self.padding[1] as usize;
         let inner_width = content_width + pad_left + pad_right;
 
-        let has_border = self.border != Border::None;
         let border_chars = self.border.chars();
 
         let mut result = Vec::new();
@@ -401,32 +416,33 @@ impl Style {
         }
 
         let margin_left = " ".repeat(self.margin[3] as usize);
+        let margin_right = " ".repeat(self.margin[1] as usize);
 
         // Top border
         if let Some(ref bc) = border_chars {
             let border_line = format!(
-                "{}{}{}{}",
+                "{}{}{}{}{}",
                 margin_left,
                 bc.tl,
                 str::repeat(&bc.h.to_string(), inner_width),
-                bc.tr
+                bc.tr,
+                margin_right
             );
             result.push(self.apply_border_style(&border_line));
         }
 
         // Top padding
         for _ in 0..self.padding[0] {
-            let pad_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
-            } else {
-                format!("{}{}", margin_left, " ".repeat(inner_width))
-            };
-            result.push(self.apply_border_style(&pad_line));
+            result.push(self.apply_padding_line_style(
+                border_chars.as_ref(),
+                &margin_left,
+                inner_width,
+                &margin_right,
+            ));
         }
 
         // Content lines
-        for line in &lines {
+        for line in &content_lines {
             let visible_width = visible_len(line);
             let aligned = self.align_text(line, visible_width, content_width);
             let padded = format!(
@@ -436,35 +452,42 @@ impl Style {
                 " ".repeat(pad_right)
             );
 
-            let full_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, padded, bc.v)
-            } else {
-                format!("{}{}", margin_left, padded)
+            let styled_line = match &border_chars {
+                Some(bc) => self.apply_bordered_content_style(
+                    &margin_left,
+                    bc.v,
+                    &padded,
+                    bc.v,
+                    &margin_right,
+                ),
+                None => {
+                    let full_line = format!("{}{}{}", margin_left, padded, margin_right);
+                    self.apply_text_style(&full_line)
+                }
             };
 
-            result.push(self.apply_line_style(&full_line, has_border));
+            result.push(styled_line);
         }
 
         // Bottom padding
         for _ in 0..self.padding[2] {
-            let pad_line = if has_border {
-                let bc = border_chars.as_ref().unwrap();
-                format!("{}{}{}{}", margin_left, bc.v, " ".repeat(inner_width), bc.v)
-            } else {
-                format!("{}{}", margin_left, " ".repeat(inner_width))
-            };
-            result.push(self.apply_border_style(&pad_line));
+            result.push(self.apply_padding_line_style(
+                border_chars.as_ref(),
+                &margin_left,
+                inner_width,
+                &margin_right,
+            ));
         }
 
         // Bottom border
         if let Some(ref bc) = border_chars {
             let border_line = format!(
-                "{}{}{}{}",
+                "{}{}{}{}{}",
                 margin_left,
                 bc.bl,
                 str::repeat(&bc.h.to_string(), inner_width),
-                bc.br
+                bc.br,
+                margin_right
             );
             result.push(self.apply_border_style(&border_line));
         }
@@ -472,6 +495,14 @@ impl Style {
         // Bottom margin
         for _ in 0..self.margin[2] {
             result.push(String::new());
+        }
+
+        if let Some(height) = self.height {
+            let height = height as usize;
+            result.truncate(height);
+            while result.len() < height {
+                result.push(String::new());
+            }
         }
 
         result.join("\n")
@@ -488,32 +519,81 @@ impl Style {
         }
     }
 
+    fn content_height(&self, line_count: usize) -> usize {
+        if let Some(h) = self.height {
+            let border_cost = if self.border != Border::None { 2 } else { 0 };
+            let pad_cost = self.padding[0] as usize + self.padding[2] as usize;
+            let margin_cost = self.margin[0] as usize + self.margin[2] as usize;
+            (h as usize).saturating_sub(border_cost + pad_cost + margin_cost)
+        } else {
+            line_count
+        }
+    }
+
     fn align_text(&self, text: &str, text_width: usize, target_width: usize) -> String {
         if text_width >= target_width {
-            return text.to_string();
+            return truncate_visible(text, target_width);
         }
-        let gap = target_width - text_width;
         match self.align {
-            Align::Left => format!("{}{}", text, " ".repeat(gap)),
-            Align::Right => format!("{}{}", " ".repeat(gap), text),
-            Align::Center => {
-                let left = gap / 2;
-                let right = gap - left;
-                format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
+            Align::Left => pad_visible(text, target_width),
+            Align::Right => right_visible(text, target_width),
+            Align::Center => center_visible(text, target_width),
+        }
+    }
+
+    fn apply_bordered_content_style(
+        &self,
+        margin_left: &str,
+        left_border: char,
+        content: &str,
+        right_border: char,
+        margin_right: &str,
+    ) -> String {
+        let left_border = left_border.to_string();
+        let right_border = right_border.to_string();
+
+        format!(
+            "{}{}{}{}{}",
+            self.apply_text_style_nonempty(margin_left),
+            self.apply_border_style(&left_border),
+            self.apply_text_style(content),
+            self.apply_border_style(&right_border),
+            self.apply_text_style_nonempty(margin_right)
+        )
+    }
+
+    fn apply_padding_line_style(
+        &self,
+        border_chars: Option<&BorderChars>,
+        margin_left: &str,
+        inner_width: usize,
+        margin_right: &str,
+    ) -> String {
+        let content = " ".repeat(inner_width);
+        match border_chars {
+            Some(bc) => {
+                self.apply_bordered_content_style(margin_left, bc.v, &content, bc.v, margin_right)
+            }
+            None => {
+                let line = format!("{margin_left}{content}{margin_right}");
+                self.apply_text_style(&line)
             }
         }
     }
 
-    fn apply_line_style(&self, line: &str, has_border: bool) -> String {
-        if !has_border {
-            return self.apply_text_style(line);
+    fn apply_text_style_nonempty(&self, text: &str) -> String {
+        if text.is_empty() {
+            String::new()
+        } else {
+            self.apply_text_style(text)
         }
-        // For bordered content, apply border style to border chars
-        // and text style to inner content
-        self.apply_text_style(line)
     }
 
     fn apply_text_style(&self, text: &str) -> String {
+        if text.is_empty() {
+            return String::new();
+        }
+
         let mut codes = Vec::new();
         if self.bold {
             codes.push("1".to_string());
@@ -548,12 +628,18 @@ impl Style {
     }
 
     fn apply_border_style(&self, text: &str) -> String {
-        if let Some(ref c) = self.border_fg {
-            format!("\x1b[{}m{}\x1b[0m", c.fg_code(), text)
-        } else if let Some(ref c) = self.fg {
-            format!("\x1b[{}m{}\x1b[0m", c.fg_code(), text)
-        } else {
+        let mut codes = Vec::new();
+        if let Some(c) = self.border_fg.or(self.fg) {
+            codes.push(c.fg_code());
+        }
+        if let Some(c) = self.bg {
+            codes.push(c.bg_code());
+        }
+
+        if codes.is_empty() {
             text.to_string()
+        } else {
+            format!("\x1b[{}m{}\x1b[0m", codes.join(";"), text)
         }
     }
 }
@@ -578,17 +664,24 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
 
     let target = width - 1;
     let mut out = String::new();
-    let mut chars = s.chars().peekable();
     let mut used = 0;
     let mut saw_ansi = false;
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
+    while index < s.len() {
+        let ch = s[index..].chars().next().unwrap_or_default();
+        if starts_ansi_csi_at(s, index) {
             saw_ansi = true;
             out.push(ch);
-            out.push(chars.next().expect("peeked CSI introducer"));
-            for next in chars.by_ref() {
+            index += ch.len_utf8();
+            let Some(introducer) = s[index..].chars().next() else {
+                break;
+            };
+            out.push(introducer);
+            index += introducer.len_utf8();
+            for next in s[index..].chars() {
                 out.push(next);
+                index += next.len_utf8();
                 if next.is_ascii_alphabetic() {
                     break;
                 }
@@ -596,12 +689,15 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
             continue;
         }
 
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let Some((end, cw)) = next_display_cell_boundary(s, index) else {
+            break;
+        };
         if used + cw > target {
             break;
         }
-        out.push(ch);
+        out.push_str(&s[index..end]);
         used += cw;
+        index = end;
     }
 
     out.push('…');
@@ -623,9 +719,89 @@ pub fn pad_visible(s: &str, width: usize) -> String {
     }
 }
 
+/// Repeat a character until the output fills `width` display columns.
+///
+/// If the character is zero-width, or if a wide character would straddle the
+/// final column, spaces are used for the remaining columns.
+pub fn repeat_visible_char(ch: char, width: usize) -> String {
+    let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    if width == 0 {
+        return String::new();
+    }
+    if char_width == 0 {
+        return " ".repeat(width);
+    }
+
+    let count = width / char_width;
+    let remainder = width % char_width;
+    format!("{}{}", ch.to_string().repeat(count), " ".repeat(remainder))
+}
+
+/// Repeat a string pattern until the output fills `width` display columns.
+///
+/// ANSI escape sequences are stripped from the pattern before repeating. If the
+/// pattern is zero-width, or if a wide glyph would straddle the final column,
+/// spaces are used for the remaining columns.
+pub fn repeat_visible(pattern: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let pattern = strip_ansi(pattern);
+    if UnicodeWidthStr::width(pattern.as_str()) == 0 {
+        return " ".repeat(width);
+    }
+
+    let mut out = String::new();
+    let mut used = 0usize;
+    while used < width {
+        let pass_start = used;
+        let mut index = 0usize;
+        while used < width {
+            let Some((end, cell_width)) = next_display_cell_boundary(&pattern, index) else {
+                break;
+            };
+            let cell = &pattern[index..end];
+            index = end;
+
+            if cell_width == 0 {
+                if !out.is_empty() {
+                    out.push_str(cell);
+                }
+                continue;
+            }
+            if used + cell_width > width {
+                out.push_str(&" ".repeat(width - used));
+                return out;
+            }
+
+            out.push_str(cell);
+            used += cell_width;
+        }
+
+        if used == pass_start {
+            out.push_str(&" ".repeat(width - used));
+            return out;
+        }
+    }
+
+    out
+}
+
 /// Truncate a string to `width` display columns, then pad it to exactly `width`.
 pub fn fit_visible(s: &str, width: usize) -> String {
     pad_visible(&truncate_visible(s, width), width)
+}
+
+/// Right-align a string in `width` display columns, truncating first if needed.
+pub fn right_visible(s: &str, width: usize) -> String {
+    let truncated = truncate_visible(s, width);
+    let len = visible_len(&truncated);
+    if len >= width {
+        truncated
+    } else {
+        format!("{}{truncated}", " ".repeat(width - len))
+    }
 }
 
 /// Center a string in `width` display columns, truncating first if needed.
@@ -638,6 +814,63 @@ pub fn center_visible(s: &str, width: usize) -> String {
     let left = (width - len) / 2;
     let right = width - len - left;
     format!("{}{}{}", " ".repeat(left), truncated, " ".repeat(right))
+}
+
+pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(usize, usize)> {
+    if start >= value.len() {
+        return None;
+    }
+
+    let mut chars = value[start..].char_indices();
+    let (_, ch) = chars.next()?;
+    let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+    let mut end = start + ch.len_utf8();
+
+    if width != 0 {
+        for (offset, next) in chars {
+            if starts_ansi_csi_at(value, start + offset) {
+                break;
+            }
+            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
+                break;
+            }
+            end = start + offset + next.len_utf8();
+        }
+    }
+
+    Some((end, width))
+}
+
+pub(crate) fn display_cell_char_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor >= chars.len() {
+        return (cursor, cursor);
+    }
+
+    let mut start = cursor;
+    while start > 0 && UnicodeWidthChar::width(chars[start]).unwrap_or(0) == 0 {
+        start -= 1;
+    }
+
+    let mut end = start + 1;
+    while end < chars.len() && UnicodeWidthChar::width(chars[end]).unwrap_or(0) == 0 {
+        end += 1;
+    }
+    (start, end)
+}
+
+pub(crate) fn previous_display_cell_char_span(chars: &[char], cursor: usize) -> (usize, usize) {
+    if cursor == 0 || chars.is_empty() {
+        return (0, 0);
+    }
+
+    let start = cursor.saturating_sub(1).min(chars.len() - 1);
+    display_cell_char_span(chars, start)
+}
+
+fn starts_ansi_csi_at(value: &str, index: usize) -> bool {
+    value
+        .get(index..)
+        .is_some_and(|tail| tail.starts_with("\x1b["))
 }
 
 /// Return the substring spanning display columns `[from, to)`.
@@ -653,15 +886,29 @@ pub fn slice_visible_cols(s: &str, from: usize, to: usize) -> String {
     let plain = strip_ansi(s);
     let mut col = 0usize;
     let mut out = String::new();
+    let mut index = 0usize;
 
-    for ch in plain.chars() {
+    while let Some((end, width)) = next_display_cell_boundary(&plain, index) {
+        let cell = &plain[index..end];
+        index = end;
+        if width == 0 {
+            if col >= to {
+                break;
+            }
+            if col >= from {
+                out.push_str(cell);
+            }
+            continue;
+        }
+
         if col >= to {
             break;
         }
+
         if col >= from {
-            out.push(ch);
+            out.push_str(cell);
         }
-        col += UnicodeWidthChar::width(ch).unwrap_or(0);
+        col = col.saturating_add(width);
     }
 
     out
@@ -675,6 +922,20 @@ pub fn wrap_words(text: &str, width: usize) -> Vec<String> {
     wrap_words_inner(text, width, false)
 }
 
+/// Split text rows while retaining a final empty row from a trailing newline.
+pub(crate) fn split_lines_preserving_trailing_blank(text: &str) -> Vec<&str> {
+    text.split('\n').collect()
+}
+
+/// Split non-empty text rows while retaining a final empty row from a trailing newline.
+pub(crate) fn split_nonempty_lines_preserving_trailing_blank(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        split_lines_preserving_trailing_blank(text)
+    }
+}
+
 /// Wrap plain text on whitespace and drop blank input lines.
 pub fn wrap_words_compact(text: &str, width: usize) -> Vec<String> {
     wrap_words_inner(text, width, true)
@@ -686,7 +947,7 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
     }
 
     let mut out = Vec::new();
-    for para in text.lines() {
+    for para in split_lines_preserving_trailing_blank(text) {
         if para.trim().is_empty() {
             if !compact {
                 out.push(String::new());
@@ -707,23 +968,10 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
             }
 
             while visible_len(&line) > width {
-                let mut head = String::new();
-                let mut used = 0usize;
-                for ch in line.chars() {
-                    let cw = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
-                    if used > 0 && used + cw > width {
-                        break;
-                    }
-                    used += cw;
-                    head.push(ch);
-                    if used >= width {
-                        break;
-                    }
-                }
+                let (head, rest) = split_visible_prefix(&line, width);
                 if head.is_empty() {
                     break;
                 }
-                let rest: String = line.chars().skip(head.chars().count()).collect();
                 out.push(head);
                 line = rest;
             }
@@ -738,6 +986,44 @@ fn wrap_words_inner(text: &str, width: usize, compact: bool) -> Vec<String> {
         out.push(String::new());
     }
     out
+}
+
+fn split_visible_prefix(value: &str, width: usize) -> (String, String) {
+    let mut head = String::new();
+    let mut used = 0usize;
+    let mut consumed_bytes = 0usize;
+    let mut index = 0usize;
+
+    while let Some((end, ch_width)) = next_display_cell_boundary(value, index) {
+        let cell = &value[index..end];
+        if ch_width == 0 {
+            head.push_str(cell);
+            consumed_bytes = end;
+            index = end;
+            continue;
+        }
+
+        if ch_width > width {
+            if head.is_empty() {
+                head = truncate_visible(cell, width);
+                consumed_bytes = end;
+            }
+            break;
+        }
+        if used > 0 && used + ch_width > width {
+            break;
+        }
+
+        head.push_str(cell);
+        consumed_bytes = end;
+        index = end;
+        used += ch_width;
+        if used >= width {
+            break;
+        }
+    }
+
+    (head, value[consumed_bytes..].to_string())
 }
 
 /// Strip ANSI escape sequences from a string.
@@ -817,6 +1103,18 @@ mod tests {
     }
 
     #[test]
+    fn color_lighten_and_darken_ignore_non_finite_amounts() {
+        let c = Color::Rgb(120, 80, 40);
+
+        assert_eq!(c.lighten(f64::NAN), c);
+        assert_eq!(c.lighten(f64::INFINITY), c);
+        assert_eq!(c.lighten(f64::NEG_INFINITY), c);
+        assert_eq!(c.darken(f64::NAN), c);
+        assert_eq!(c.darken(f64::INFINITY), c);
+        assert_eq!(c.darken(f64::NEG_INFINITY), c);
+    }
+
+    #[test]
     fn visible_len_plain() {
         assert_eq!(visible_len("hello"), 5);
         assert_eq!(visible_len(""), 0);
@@ -861,11 +1159,157 @@ mod tests {
     }
 
     #[test]
+    fn repeats_visible_char_to_display_width() {
+        assert_eq!(repeat_visible_char('·', 4), "····");
+        assert_eq!(repeat_visible_char('界', 3), "界 ");
+        assert_eq!(repeat_visible_char('\u{301}', 3), "   ");
+        assert_eq!(visible_len(&repeat_visible_char('界', 5)), 5);
+    }
+
+    #[test]
+    fn repeats_visible_pattern_to_display_width() {
+        assert_eq!(repeat_visible("ab", 5), "ababa");
+        assert_eq!(repeat_visible("界", 5), "界界 ");
+        assert_eq!(repeat_visible("\u{301}", 3), "   ");
+        assert_eq!(repeat_visible("\x1b[31m-\x1b[0m", 3), "---");
+        assert_eq!(visible_len(&repeat_visible("界a", 6)), 6);
+    }
+
+    #[test]
     fn fits_visible_width_by_truncating_then_padding() {
         let out = fit_visible("一二三四五", 6);
 
         assert!(visible_len(&out) <= 6, "{out:?}");
         assert!(out.ends_with('…') || out.ends_with(' '));
+    }
+
+    #[test]
+    fn truncate_visible_preserves_ansi_when_truncating() {
+        let styled = Style::new().fg(Color::Red).render("abcdef");
+        let out = truncate_visible(&styled, 4);
+
+        assert_eq!(visible_len(&out), 4);
+        assert_eq!(strip_ansi(&out), "abc…");
+        assert!(out.starts_with("\x1b[31m"));
+        assert!(out.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn truncate_visible_skips_ansi_reset_between_segments() {
+        let styled_prefix = Style::new().fg(Color::Green).render("ok");
+        let out = truncate_visible(&format!("{styled_prefix}abcdef"), 5);
+
+        assert_eq!(visible_len(&out), 5);
+        assert_eq!(strip_ansi(&out), "okab…");
+        assert!(out.contains("\x1b[0mab"));
+    }
+
+    #[test]
+    fn truncate_visible_keeps_zero_width_marks_with_base_glyph() {
+        let out = truncate_visible("e\u{301}xyz", 2);
+
+        assert_eq!(out, "e\u{301}…");
+        assert_eq!(visible_len(&out), 2);
+    }
+
+    #[test]
+    fn render_border_with_padding() {
+        let out = Style::new()
+            .border(Border::Rounded)
+            .padding(1, 1)
+            .render("x");
+
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec!["╭───╮", "│   │", "│ x │", "│   │", "╰───╯"]
+        );
+    }
+
+    #[test]
+    fn render_border_preserves_trailing_blank_content_row() {
+        let out = Style::new().border(Border::Rounded).render("x\n");
+
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec!["╭─╮", "│x│", "│ │", "╰─╯"]
+        );
+    }
+
+    #[test]
+    fn render_bordered_content_uses_border_style_for_vertical_edges() {
+        let out = Style::new()
+            .fg(Color::Red)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36m╭─╮\x1b[0m");
+        assert_eq!(lines[1], "\x1b[36m│\x1b[0m\x1b[31mx\x1b[0m\x1b[36m│\x1b[0m");
+        assert_eq!(lines[2], "\x1b[36m╰─╯\x1b[0m");
+        assert_eq!(strip_ansi(lines[1]), "│x│");
+        assert_eq!(visible_len(lines[1]), 3);
+    }
+
+    #[test]
+    fn render_bordered_cells_inherit_background_style() {
+        let out = Style::new()
+            .fg(Color::Red)
+            .bg(Color::Blue)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36;44m╭─╮\x1b[0m");
+        assert_eq!(
+            lines[1],
+            "\x1b[36;44m│\x1b[0m\x1b[31;44mx\x1b[0m\x1b[36;44m│\x1b[0m"
+        );
+        assert_eq!(lines[2], "\x1b[36;44m╰─╯\x1b[0m");
+        assert!(lines.iter().all(|line| visible_len(line) == 3));
+    }
+
+    #[test]
+    fn render_bordered_padding_uses_text_style_inside_vertical_edges() {
+        let out = Style::new()
+            .bg(Color::Blue)
+            .border(Border::Rounded)
+            .border_fg(Color::Cyan)
+            .padding(1, 1)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "\x1b[36;44m╭───╮\x1b[0m");
+        assert_eq!(
+            lines[1],
+            "\x1b[36;44m│\x1b[0m\x1b[44m   \x1b[0m\x1b[36;44m│\x1b[0m"
+        );
+        assert_eq!(strip_ansi(lines[1]), "│   │");
+        assert_eq!(visible_len(lines[1]), 5);
+    }
+
+    #[test]
+    fn render_unbordered_padding_uses_text_style() {
+        let out = Style::new()
+            .bg(Color::Blue)
+            .border_fg(Color::Cyan)
+            .padding(1, 0)
+            .render("x");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(
+            lines,
+            vec!["\x1b[44m \x1b[0m", "\x1b[44mx\x1b[0m", "\x1b[44m \x1b[0m"]
+        );
+        assert!(lines.iter().all(|line| visible_len(line) == 1));
+    }
+
+    #[test]
+    fn render_empty_styled_text_stays_empty() {
+        let out = Style::new().fg(Color::Red).bold().render("");
+
+        assert_eq!(out, "");
     }
 
     #[test]
@@ -875,6 +1319,117 @@ mod tests {
 
         assert_eq!(visible_len(&centered), 6);
         assert!(strip_ansi(&centered).starts_with("  中"));
+    }
+
+    #[test]
+    fn right_aligns_visible_width_with_ansi_and_cjk() {
+        let styled = Style::new().fg(Color::Green).render("中");
+        let right = right_visible(&styled, 6);
+
+        assert_eq!(visible_len(&right), 6);
+        assert!(strip_ansi(&right).starts_with("    中"));
+    }
+
+    #[test]
+    fn render_aligns_text_by_visible_width() {
+        let styled = Style::new().fg(Color::Red).render("中");
+        let right = Style::new().width(6).align(Align::Right).render(&styled);
+        let center = Style::new().width(7).align(Align::Center).render("中");
+
+        assert_eq!(visible_len(&right), 6);
+        assert_eq!(strip_ansi(&right), "    中");
+        assert!(right.ends_with("\x1b[0m"));
+        assert_eq!(visible_len(&center), 7);
+        assert_eq!(center, "  中   ");
+    }
+
+    #[test]
+    fn render_width_truncates_long_content_by_visible_width() {
+        let out = Style::new().width(4).render("abcdef");
+        let cjk = Style::new().width(5).render("中文测试");
+
+        assert_eq!(visible_len(&out), 4);
+        assert_eq!(out, "abc…");
+        assert_eq!(visible_len(&cjk), 5);
+        assert_eq!(cjk, "中文…");
+    }
+
+    #[test]
+    fn render_bordered_width_truncates_inner_content() {
+        let out = Style::new()
+            .width(6)
+            .border(Border::Rounded)
+            .render("abcdef");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["╭────╮", "│abc…│", "╰────╯"]);
+        assert!(lines.iter().all(|line| visible_len(line) == 6));
+    }
+
+    #[test]
+    fn render_width_includes_right_margin() {
+        let out = Style::new()
+            .width(8)
+            .margin_left(1)
+            .margin_right(2)
+            .render("abcd");
+
+        assert_eq!(visible_len(&out), 8);
+        assert_eq!(out, " abcd   ");
+    }
+
+    #[test]
+    fn render_bordered_width_includes_right_margin() {
+        let out = Style::new()
+            .width(8)
+            .margin_left(1)
+            .margin_right(1)
+            .border(Border::Rounded)
+            .render("abcdef");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec![" ╭────╮ ", " │abc…│ ", " ╰────╯ "]);
+        assert!(lines.iter().all(|line| visible_len(line) == 8));
+    }
+
+    #[test]
+    fn render_height_truncates_and_pads_content_rows() {
+        let truncated = Style::new().width(4).height(2).render("one\ntwo\nthree");
+        let padded = Style::new().width(4).height(3).render("one");
+
+        assert_eq!(truncated.lines().collect::<Vec<_>>(), vec!["one ", "two "]);
+        assert_eq!(
+            padded.lines().collect::<Vec<_>>(),
+            vec!["one ", "    ", "    "]
+        );
+    }
+
+    #[test]
+    fn render_bordered_height_limits_inner_content() {
+        let out = Style::new()
+            .width(6)
+            .height(3)
+            .border(Border::Rounded)
+            .render("one\ntwo");
+        let lines = out.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["╭────╮", "│one │", "╰────╯"]);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn render_height_includes_vertical_spacing() {
+        let out = Style::new()
+            .width(6)
+            .height(6)
+            .margin_top(1)
+            .margin_bottom(1)
+            .padding(1, 1)
+            .render("x\ny");
+        let lines = out.split('\n').collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["", "      ", " x    ", " y    ", "      ", ""]);
+        assert_eq!(lines.len(), 6);
     }
 
     #[test]
@@ -896,6 +1451,31 @@ mod tests {
     }
 
     #[test]
+    fn slices_visible_columns_keep_zero_width_marks_with_base_glyph() {
+        assert_eq!(slice_visible_cols("e\u{301}x", 0, 1), "e\u{301}");
+        assert_eq!(slice_visible_cols("e\u{301}x", 1, 2), "x");
+    }
+
+    #[test]
+    fn display_cell_char_span_keeps_zero_width_marks_with_base_glyph() {
+        let chars = "e\u{301}x".chars().collect::<Vec<_>>();
+
+        assert_eq!(display_cell_char_span(&chars, 0), (0, 2));
+        assert_eq!(display_cell_char_span(&chars, 1), (0, 2));
+        assert_eq!(display_cell_char_span(&chars, 2), (2, 3));
+        assert_eq!(display_cell_char_span(&chars, 3), (3, 3));
+    }
+
+    #[test]
+    fn previous_display_cell_char_span_keeps_zero_width_marks_with_base_glyph() {
+        let chars = "e\u{301}x".chars().collect::<Vec<_>>();
+
+        assert_eq!(previous_display_cell_char_span(&chars, 0), (0, 0));
+        assert_eq!(previous_display_cell_char_span(&chars, 2), (0, 2));
+        assert_eq!(previous_display_cell_char_span(&chars, 3), (2, 3));
+    }
+
+    #[test]
     fn wraps_words_on_display_columns() {
         let lines = wrap_words("the quick brown fox jumps", 9);
 
@@ -914,6 +1494,34 @@ mod tests {
     }
 
     #[test]
+    fn wrap_words_preserves_trailing_blank_lines() {
+        let lines = wrap_words("alpha\n", 40);
+
+        assert_eq!(lines, vec!["alpha", ""]);
+    }
+
+    #[test]
+    fn split_lines_preserves_trailing_blank_line() {
+        assert_eq!(
+            split_lines_preserving_trailing_blank("alpha\n"),
+            vec!["alpha", ""]
+        );
+        assert_eq!(split_lines_preserving_trailing_blank(""), vec![""]);
+    }
+
+    #[test]
+    fn split_nonempty_lines_preserves_trailing_blank_line() {
+        assert_eq!(
+            split_nonempty_lines_preserving_trailing_blank(""),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            split_nonempty_lines_preserving_trailing_blank("alpha\n"),
+            vec!["alpha", ""]
+        );
+    }
+
+    #[test]
     fn compact_wrap_words_drops_blank_lines() {
         let lines = wrap_words_compact("alpha\n\nbeta", 40);
 
@@ -926,5 +1534,28 @@ mod tests {
 
         assert!(lines.iter().all(|line| visible_len(line) <= 8));
         assert_eq!(lines.concat(), "中文测试内容");
+    }
+
+    #[test]
+    fn wrap_words_hard_break_keeps_zero_width_marks_with_base_glyph() {
+        let lines = wrap_words_compact("e\u{301}e\u{301}e", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
+        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_words_hard_break_packs_zero_width_marks_by_display_width() {
+        let lines = wrap_words_compact("e\u{301}e\u{301}e", 2);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 2));
+        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
+    }
+
+    #[test]
+    fn wrap_words_clips_wide_glyphs_at_single_column_width() {
+        let lines = wrap_words_compact("中文", 1);
+
+        assert!(lines.iter().all(|line| visible_len(line) <= 1));
     }
 }

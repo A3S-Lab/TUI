@@ -91,6 +91,7 @@ impl Program {
 
         let mut event_stream = EventStream::new();
         let mut renderer = Renderer::new(fps);
+        let mut dirty = false;
 
         let view = model.view();
         renderer.render(&mut terminal, &view)?;
@@ -114,16 +115,18 @@ impl Program {
                 event = event_stream.next() => {
                     match event {
                         Some(Ok(ct_event)) => {
-                            immediate = true;
                             // A resize shifts every row — force a full clear+redraw.
                             if matches!(ct_event, crossterm::event::Event::Resize(_, _)) {
                                 renderer.invalidate();
                             }
-                            let ev: Event = ct_event.into();
-                            let msg: M::Msg = ev.into();
-                            if let Some(cmd) = model.update(msg) {
-                                Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                            if let Some(ev) = Event::from_crossterm(ct_event) {
+                                immediate = true;
+                                let msg: M::Msg = ev.into();
+                                if let Some(cmd) = model.update(msg) {
+                                    Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
+                                }
                             }
+                            dirty = true;
                         }
                         Some(Err(_)) => break,
                         None => break,
@@ -133,6 +136,9 @@ impl Program {
                     if let Some(cmd) = model.update(msg) {
                         Self::dispatch_cmd(cmd, msg_tx.clone(), quit_flag.clone());
                     }
+                    dirty = true;
+                }
+                _ = tokio::time::sleep(renderer.time_until_next_frame()), if dirty => {
                 }
             }
 
@@ -140,11 +146,16 @@ impl Program {
                 break;
             }
 
-            let view = model.view();
             if immediate {
+                let view = model.view();
                 renderer.render(&mut terminal, &view)?;
-            } else {
-                renderer.render_if_changed(&mut terminal, &view)?;
+                dirty = false;
+            } else if dirty && renderer.is_frame_due() {
+                let view = model.view();
+                if renderer.is_changed(&view) {
+                    renderer.render(&mut terminal, &view)?;
+                }
+                dirty = false;
             }
             // Place the real terminal cursor at the model's insertion point (or
             // hide it). Done after rendering so it sits on top of the content.

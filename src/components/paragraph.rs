@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{visible_len, wrap_words, Color};
+use crate::style::{center_visible, right_visible, visible_len, wrap_words, Color, Style};
+
+const MAX_PARAGRAPH_INDENT: usize = u16::MAX as usize;
+const MAX_PARAGRAPH_WIDTH: usize = u16::MAX as usize;
 
 /// Text alignment for paragraphs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,12 +37,12 @@ impl Paragraph {
     }
 
     pub fn width(mut self, w: usize) -> Self {
-        self.width = w;
+        self.width = w.min(MAX_PARAGRAPH_WIDTH);
         self
     }
 
     pub fn indent(mut self, n: usize) -> Self {
-        self.indent = n;
+        self.indent = n.min(MAX_PARAGRAPH_INDENT);
         self
     }
 
@@ -51,6 +54,17 @@ impl Paragraph {
     pub fn color(mut self, c: Color) -> Self {
         self.color = Some(c);
         self
+    }
+
+    pub fn lines(&self) -> Vec<String> {
+        self.wrap()
+            .into_iter()
+            .map(|line| self.apply_style(&self.apply_align(&line)))
+            .collect()
+    }
+
+    pub fn view(&self) -> String {
+        self.lines().join("\n")
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
@@ -75,12 +89,14 @@ impl Paragraph {
     }
 
     fn wrap(&self) -> Vec<String> {
-        let effective_width = self.width.saturating_sub(self.indent);
+        let width = self.width_for_render();
+        let indent = self.indent_for_width(width);
+        let effective_width = width.saturating_sub(indent);
         if effective_width == 0 {
             return vec![self.text.clone()];
         }
 
-        let indent_str = " ".repeat(self.indent);
+        let indent_str = " ".repeat(indent);
         wrap_words(&self.text, effective_width)
             .into_iter()
             .map(|line| {
@@ -96,25 +112,47 @@ impl Paragraph {
     fn apply_align(&self, line: &str) -> String {
         let content = line.trim_start().trim_end();
         let content_len = visible_len(content);
-        let available = self.width;
+        let available = self.width_for_render();
 
         match self.align {
             TextAlign::Left => line.to_string(),
             TextAlign::Center => {
-                let pad = available.saturating_sub(content_len) / 2;
-                format!("{}{}", " ".repeat(pad), content)
+                if available == 0 || content_len >= available {
+                    content.to_string()
+                } else {
+                    center_visible(content, available)
+                }
             }
             TextAlign::Right => {
-                let pad = available.saturating_sub(content_len);
-                format!("{}{}", " ".repeat(pad), content)
+                if available == 0 || content_len >= available {
+                    content.to_string()
+                } else {
+                    right_visible(content, available)
+                }
             }
         }
+    }
+
+    fn apply_style(&self, line: &str) -> String {
+        match self.color {
+            Some(color) => Style::new().fg(color).render(line),
+            None => line.to_string(),
+        }
+    }
+
+    fn width_for_render(&self) -> usize {
+        self.width.min(MAX_PARAGRAPH_WIDTH)
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_PARAGRAPH_INDENT)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, Style};
 
     #[test]
     fn no_wrap_short_text() {
@@ -143,6 +181,13 @@ mod tests {
     }
 
     #[test]
+    fn preserves_trailing_newline() {
+        let p = Paragraph::new("line1\n").width(80);
+
+        assert_eq!(p.wrap(), vec!["line1", ""]);
+    }
+
+    #[test]
     fn indent_adds_spaces() {
         let p = Paragraph::new("hello").width(80).indent(4);
         let lines = p.wrap();
@@ -150,17 +195,57 @@ mod tests {
     }
 
     #[test]
+    fn oversized_dimensions_are_clamped() {
+        let p = Paragraph::new("hello").width(usize::MAX).indent(usize::MAX);
+
+        assert_eq!(p.width, MAX_PARAGRAPH_WIDTH);
+        assert_eq!(p.indent, MAX_PARAGRAPH_INDENT);
+        assert_eq!(p.indent_for_width(8), 8);
+
+        let lines = Paragraph::new("hello").width(8).indent(usize::MAX).wrap();
+        assert_eq!(lines, vec!["hello"]);
+    }
+
+    #[test]
     fn center_alignment() {
         let p = Paragraph::new("hi").width(10).align(TextAlign::Center);
         let aligned = p.apply_align("hi");
-        assert!(aligned.starts_with("    "));
+        assert_eq!(visible_len(&aligned), 10);
+        assert_eq!(aligned, "    hi    ");
     }
 
     #[test]
     fn right_alignment() {
         let p = Paragraph::new("hi").width(10).align(TextAlign::Right);
         let aligned = p.apply_align("hi");
-        assert!(aligned.starts_with("        "));
+        assert_eq!(visible_len(&aligned), 10);
+        assert_eq!(aligned, "        hi");
+    }
+
+    #[test]
+    fn alignment_uses_display_width_for_styled_cjk() {
+        let styled = Style::new().fg(Color::Green).render("中");
+        let centered = Paragraph::new("")
+            .width(6)
+            .align(TextAlign::Center)
+            .apply_align("中");
+        let right = Paragraph::new("")
+            .width(6)
+            .align(TextAlign::Right)
+            .apply_align(&styled);
+
+        assert_eq!(centered, "  中  ");
+        assert_eq!(visible_len(&right), 6);
+        assert_eq!(strip_ansi(&right), "    中");
+    }
+
+    #[test]
+    fn alignment_preserves_content_when_width_is_zero() {
+        let centered = Paragraph::new("hello").width(0).align(TextAlign::Center);
+        let right = Paragraph::new("hello").width(0).align(TextAlign::Right);
+
+        assert_eq!(centered.apply_align("hello"), "hello");
+        assert_eq!(right.apply_align("hello"), "hello");
     }
 
     #[test]
@@ -170,6 +255,29 @@ mod tests {
 
         assert!(lines.iter().all(|line| visible_len(line) <= 8));
         assert_eq!(lines.concat(), "中文测试内容");
+    }
+
+    #[test]
+    fn lines_apply_alignment_and_color_for_string_rendering() {
+        let lines = Paragraph::new("hi")
+            .width(6)
+            .align(TextAlign::Right)
+            .color(Color::Green)
+            .lines();
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(strip_ansi(&lines[0]), "    hi");
+        assert_eq!(visible_len(&lines[0]), 6);
+        assert!(lines[0].contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn view_joins_wrapped_lines() {
+        let rendered = Paragraph::new("alpha beta gamma").width(8).view();
+        let plain = strip_ansi(&rendered);
+
+        assert!(plain.contains('\n'));
+        assert!(plain.lines().all(|line| visible_len(line) <= 8));
     }
 
     #[test]

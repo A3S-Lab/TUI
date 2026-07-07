@@ -1,5 +1,11 @@
+use crate::components::Meter;
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_SESSION_STATUS_CHIP_LABEL_WIDTH: usize = u16::MAX as usize;
+const MAX_SESSION_STATUS_MARGIN: usize = u16::MAX as usize;
+const CONTEXT_METER_WIDTH: usize = 6;
 
 /// Agent/session status row with workspace, model, context, and live chips.
 ///
@@ -80,7 +86,7 @@ impl SessionStatus {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_SESSION_STATUS_MARGIN);
         self
     }
 
@@ -110,6 +116,16 @@ impl SessionStatus {
         self
     }
 
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.accent_color = theme.color(ThemeRole::Primary);
+        self.branch_color = theme.color(ThemeRole::Secondary);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.warning_color = theme.color(ThemeRole::Warning);
+        self.danger_color = theme.color(ThemeRole::Error);
+        self
+    }
+
     pub fn cwd_value(&self) -> &str {
         &self.cwd
     }
@@ -131,12 +147,14 @@ impl SessionStatus {
         if width == 0 {
             return String::new();
         }
-        fit_visible(&self.render_raw(), width)
+        fit_visible(&self.render_raw(self.margin_for_width(width)), width)
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut row = BoxElement::new().direction(FlexDirection::Row);
-        row = row.child(Element::Text(TextElement::new(" ".repeat(self.margin))));
+        row = row.child(Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        )));
         row = row.child(Element::Text(
             TextElement::new(self.workspace_name())
                 .fg(self.accent_color)
@@ -173,6 +191,11 @@ impl SessionStatus {
                 .child(Element::Text(
                     TextElement::new(format!("ctx:{}%", context_percent(used, limit)))
                         .fg(self.context_color()),
+                ))
+                .child(Element::Text(TextElement::new(" ")))
+                .child(Element::Text(
+                    TextElement::new(self.context_meter(used, limit).plain())
+                        .fg(self.context_color()),
                 ));
         } else if let Some(tokens) = self.output_tokens.filter(|tokens| *tokens > 0) {
             row = row.child(Element::Text(
@@ -196,10 +219,10 @@ impl SessionStatus {
         Element::Box(row)
     }
 
-    fn render_raw(&self) -> String {
+    fn render_raw(&self, margin: usize) -> String {
         let mut raw = format!(
             "{}{}",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             Style::new()
                 .fg(self.accent_color)
                 .bold()
@@ -234,10 +257,11 @@ impl SessionStatus {
 
         if let Some((used, limit)) = self.context {
             raw.push_str(&format!(
-                " {}",
+                " {} {}",
                 Style::new()
                     .fg(self.context_color())
-                    .render(&format!("ctx:{}%", context_percent(used, limit)))
+                    .render(&format!("ctx:{}%", context_percent(used, limit))),
+                self.context_meter(used, limit).view()
             ));
         } else if let Some(tokens) = self.output_tokens.filter(|tokens| *tokens > 0) {
             raw.push_str(&format!(
@@ -259,6 +283,14 @@ impl SessionStatus {
         }
 
         raw
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_SESSION_STATUS_MARGIN)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_SESSION_STATUS_MARGIN)
     }
 
     fn workspace_name(&self) -> String {
@@ -283,6 +315,15 @@ impl SessionStatus {
         } else {
             self.muted_color
         }
+    }
+
+    fn context_meter(&self, used: usize, limit: usize) -> Meter {
+        Meter::new(context_percent(used, limit) as f64)
+            .width(CONTEXT_METER_WIDTH)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .fg(self.context_color())
+            .empty_fg(self.muted_color)
     }
 }
 
@@ -317,7 +358,7 @@ impl SessionStatusChip {
     }
 
     pub fn max_label_width(mut self, width: usize) -> Self {
-        self.max_label_width = Some(width.max(1));
+        self.max_label_width = Some(width.clamp(1, MAX_SESSION_STATUS_CHIP_LABEL_WIDTH));
         self
     }
 
@@ -365,7 +406,7 @@ fn context_percent(used: usize, limit: usize) -> usize {
     } else if used >= limit {
         100
     } else {
-        used.saturating_mul(100) / limit
+        ((used as u128 * 100) / limit as u128) as usize
     }
 }
 
@@ -389,6 +430,8 @@ mod tests {
         assert!(plain.contains("a3s git:(main)"));
         assert!(plain.contains("gpt-5 (128k context)"));
         assert!(plain.contains("ctx:70%"));
+        assert!(plain.contains('▰'));
+        assert!(plain.contains('▱'));
         assert!(plain.contains("🎯 ship tui"));
         assert!(plain.contains("⚙ 2 running"));
         assert!(rendered.contains("\x1b[33mctx:70%\x1b[0m"));
@@ -403,6 +446,44 @@ mod tests {
 
         assert!(strip_ansi(&rendered).contains("ctx:85%"));
         assert!(rendered.contains("\x1b[31mctx:85%\x1b[0m"));
+    }
+
+    #[test]
+    fn context_status_uses_shared_meter() {
+        let status = SessionStatus::new("a3s").context(50, 100);
+        let rendered = status.view(32);
+        let plain = strip_ansi(&rendered);
+        let expected = Meter::new(50.0)
+            .width(CONTEXT_METER_WIDTH)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .plain();
+
+        assert!(plain.contains("ctx:50%"), "{plain}");
+        assert!(plain.contains(&expected), "{plain}");
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let status = SessionStatus::new("/tmp/a3s").with_theme(&theme);
+
+        assert_eq!(status.accent_color, theme.color(ThemeRole::Primary));
+        assert_eq!(status.branch_color, theme.color(ThemeRole::Secondary));
+        assert_eq!(status.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(status.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(status.warning_color, theme.color(ThemeRole::Warning));
+        assert_eq!(status.danger_color, theme.color(ThemeRole::Error));
+    }
+
+    #[test]
+    fn context_percent_handles_large_token_counts() {
+        let limit = usize::MAX / 2;
+        let used = limit / 2;
+        let expected = ((used as u128 * 100) / limit as u128) as usize;
+
+        assert_eq!(expected, 49);
+        assert_eq!(context_percent(used, limit), expected);
     }
 
     #[test]
@@ -429,6 +510,37 @@ mod tests {
 
         assert_eq!(visible_len(&rendered), 32);
         assert!(strip_ansi(&rendered).contains('…'));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let status = SessionStatus::new("/tmp/a3s").margin(usize::MAX);
+        let rendered = status.view(8);
+
+        assert_eq!(status.margin, MAX_SESSION_STATUS_MARGIN);
+        assert_eq!(visible_len(&rendered), 8);
+
+        let Element::Box(row) = status.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), MAX_SESSION_STATUS_MARGIN);
+    }
+
+    #[test]
+    fn oversized_chip_label_width_is_clamped() {
+        let chip = SessionStatusChip::new("*", "running").max_label_width(usize::MAX);
+        let rendered = SessionStatus::new("/tmp/a3s")
+            .status_chip(chip.clone())
+            .view(24);
+
+        assert_eq!(
+            chip.max_label_width,
+            Some(MAX_SESSION_STATUS_CHIP_LABEL_WIDTH)
+        );
+        assert_eq!(visible_len(&rendered), 24);
     }
 
     #[test]

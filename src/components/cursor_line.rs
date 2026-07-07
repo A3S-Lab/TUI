@@ -1,5 +1,7 @@
 use crate::element::{BoxElement, Element, TextElement};
-use crate::style::{slice_visible_cols, visible_len, Color, Style};
+use crate::style::{next_display_cell_boundary, slice_visible_cols, visible_len, Color, Style};
+
+const MAX_CURSOR_LINE_WIDTH: usize = u16::MAX as usize;
 
 /// A horizontally scrollable single text line with a block cursor.
 ///
@@ -39,7 +41,7 @@ impl CursorLine {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_CURSOR_LINE_WIDTH));
         self
     }
 
@@ -103,14 +105,7 @@ impl CursorLine {
 
         let (before, cursor, mut after) = if self.cursor_visible() {
             let rel_col = self.cursor_col.saturating_sub(self.scroll_col);
-            let before = slice_visible_cols(&window, 0, rel_col);
-            let cursor = slice_visible_cols(&window, rel_col, rel_col + 1);
-            let cursor = if cursor.is_empty() {
-                " ".to_string()
-            } else {
-                cursor
-            };
-            let after = slice_visible_cols(&window, rel_col + 1, usize::MAX);
+            let (before, cursor, after) = split_window_at_cursor(&window, rel_col);
             (before, Some(cursor), after)
         } else {
             (window, None, String::new())
@@ -159,11 +154,12 @@ impl CursorLine {
         if self.cursor_style.is_strikethrough() {
             text = text.strikethrough();
         }
-        if self.cursor_style.is_reverse()
-            && self.cursor_style.foreground().is_none()
-            && self.cursor_style.background().is_none()
-        {
-            text = text.fg(Color::Black).bg(Color::White);
+        if self.cursor_style.is_reverse() {
+            text = text.reverse();
+            if self.cursor_style.foreground().is_none() && self.cursor_style.background().is_none()
+            {
+                text = text.fg(Color::Black).bg(Color::White);
+            }
         }
 
         text
@@ -174,6 +170,32 @@ struct CursorLineParts {
     before: String,
     cursor: Option<String>,
     after: String,
+}
+
+fn split_window_at_cursor(window: &str, cursor_col: usize) -> (String, String, String) {
+    let mut before = String::new();
+    let mut col = 0usize;
+    let mut index = 0usize;
+
+    while let Some((end, width)) = next_display_cell_boundary(window, index) {
+        let cell = &window[index..end];
+        if width == 0 {
+            before.push_str(cell);
+            index = end;
+            continue;
+        }
+
+        let next_col = col.saturating_add(width);
+        if cursor_col < next_col {
+            return (before, cell.to_string(), window[end..].to_string());
+        }
+
+        before.push_str(cell);
+        col = next_col;
+        index = end;
+    }
+
+    (window.to_string(), " ".to_string(), String::new())
 }
 
 #[cfg(test)]
@@ -215,6 +237,22 @@ mod tests {
     }
 
     #[test]
+    fn cursor_inside_wide_glyph_styles_whole_glyph() {
+        let line = CursorLine::new("你好").cursor_col(1).view();
+
+        assert_eq!(strip_ansi(&line), "你好");
+        assert!(line.contains("\x1b[7m你\x1b[0m"));
+    }
+
+    #[test]
+    fn cursor_styles_following_zero_width_marks_with_base_glyph() {
+        let line = CursorLine::new("e\u{301}x").cursor_col(0).view();
+
+        assert_eq!(strip_ansi(&line), "e\u{301}x");
+        assert!(line.contains("\x1b[7me\u{301}\x1b[0mx"));
+    }
+
+    #[test]
     fn does_not_render_cursor_outside_visible_window() {
         let line = CursorLine::new("abcdef")
             .scroll_col(2)
@@ -239,6 +277,25 @@ mod tests {
     }
 
     #[test]
+    fn oversized_width_is_clamped() {
+        let line = CursorLine::new("x")
+            .cursor_col(1)
+            .width(usize::MAX)
+            .fill_width(true);
+        let rendered = line.view();
+
+        assert_eq!(line.width, Some(MAX_CURSOR_LINE_WIDTH));
+        assert_eq!(visible_len(&rendered), MAX_CURSOR_LINE_WIDTH);
+    }
+
+    #[test]
+    fn oversized_cursor_column_does_not_overflow() {
+        let line = CursorLine::new("abc").cursor_col(usize::MAX).view();
+
+        assert_eq!(strip_ansi(&line), "abc ");
+    }
+
+    #[test]
     fn element_contains_rendered_cursor_line() {
         let element: Element<()> = CursorLine::new("abc").cursor_col(0).element();
 
@@ -250,6 +307,7 @@ mod tests {
                         assert_eq!(text.content, "a");
                         assert_eq!(text.style.fg, Some(Color::Black));
                         assert_eq!(text.style.bg, Some(Color::White));
+                        assert!(text.style.reverse);
                     }
                     _ => panic!("expected cursor text element"),
                 }

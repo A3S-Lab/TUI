@@ -28,11 +28,14 @@ impl FocusManager {
 
     pub fn unregister(&mut self, id: FocusId) {
         if let Some(pos) = self.focusable.iter().position(|&x| x == id) {
+            let current = self.normalized_current();
             self.focusable.remove(pos);
             if self.focusable.is_empty() {
                 self.current = None;
-            } else if let Some(cur) = self.current {
-                if cur >= self.focusable.len() {
+            } else if let Some(cur) = current {
+                if pos < cur {
+                    self.current = Some(cur - 1);
+                } else if cur >= self.focusable.len() {
                     self.current = Some(self.focusable.len() - 1);
                 }
             }
@@ -44,7 +47,14 @@ impl FocusManager {
             return;
         }
         self.current = Some(match self.current {
-            Some(idx) => (idx + 1) % self.focusable.len(),
+            Some(_) => {
+                let current = self.normalized_current().unwrap_or(0);
+                if current + 1 == self.focusable.len() {
+                    0
+                } else {
+                    current + 1
+                }
+            }
             None => 0,
         });
     }
@@ -54,8 +64,10 @@ impl FocusManager {
             return;
         }
         self.current = Some(match self.current {
-            Some(0) => self.focusable.len() - 1,
-            Some(idx) => idx - 1,
+            Some(_) => self
+                .normalized_current()
+                .and_then(|idx| idx.checked_sub(1))
+                .unwrap_or_else(|| self.focusable.len() - 1),
             None => 0,
         });
     }
@@ -67,20 +79,25 @@ impl FocusManager {
     }
 
     pub fn is_focused(&self, id: FocusId) -> bool {
-        match self.current {
+        match self.normalized_current() {
             Some(idx) => self.focusable.get(idx) == Some(&id),
             None => false,
         }
     }
 
     pub fn current(&self) -> Option<FocusId> {
-        self.current
+        self.normalized_current()
             .and_then(|idx| self.focusable.get(idx).copied())
     }
 
     pub fn clear(&mut self) {
         self.focusable.clear();
         self.current = None;
+    }
+
+    fn normalized_current(&self) -> Option<usize> {
+        self.current
+            .map(|idx| idx.min(self.focusable.len().saturating_sub(1)))
     }
 }
 
@@ -143,6 +160,20 @@ mod tests {
     }
 
     #[test]
+    fn unregister_before_current_preserves_focused_id() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.focus(2);
+
+        fm.unregister(1);
+
+        assert_eq!(fm.current(), Some(2));
+        assert!(fm.is_focused(2));
+    }
+
+    #[test]
     fn unregister_all_clears_focus() {
         let mut fm = FocusManager::new();
         fm.register(1);
@@ -175,5 +206,56 @@ mod tests {
         let mut fm = FocusManager::new();
         fm.focus_next();
         assert_eq!(fm.current(), None);
+    }
+
+    #[test]
+    fn stale_current_is_normalized_for_queries() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.current = Some(usize::MAX);
+
+        assert_eq!(fm.current(), Some(3));
+        assert!(fm.is_focused(3));
+    }
+
+    #[test]
+    fn focus_next_normalizes_stale_current() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.current = Some(usize::MAX);
+
+        fm.focus_next();
+
+        assert_eq!(fm.current(), Some(1));
+    }
+
+    #[test]
+    fn focus_prev_normalizes_stale_current() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.current = Some(usize::MAX);
+
+        fm.focus_prev();
+
+        assert_eq!(fm.current(), Some(2));
+    }
+
+    #[test]
+    fn unregister_normalizes_stale_current() {
+        let mut fm = FocusManager::new();
+        fm.register(1);
+        fm.register(2);
+        fm.register(3);
+        fm.current = Some(usize::MAX);
+
+        fm.unregister(1);
+
+        assert_eq!(fm.current(), Some(3));
     }
 }

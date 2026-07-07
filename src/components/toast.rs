@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{fit_visible, Color, Style};
+
+const MAX_TOAST_VISIBLE: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
@@ -12,7 +14,7 @@ pub enum ToastKind {
 }
 
 impl ToastKind {
-    fn color(&self) -> Color {
+    pub fn color(self) -> Color {
         match self {
             ToastKind::Info => Color::Blue,
             ToastKind::Success => Color::Green,
@@ -21,13 +23,65 @@ impl ToastKind {
         }
     }
 
-    fn icon(&self) -> &'static str {
+    pub fn icon(self) -> &'static str {
         match self {
             ToastKind::Info => "ℹ",
             ToastKind::Success => "✓",
             ToastKind::Warning => "⚠",
             ToastKind::Error => "✗",
         }
+    }
+}
+
+/// Single toast notification with line and Element rendering.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    kind: ToastKind,
+    message: String,
+    color: Option<Color>,
+}
+
+impl Toast {
+    pub fn new(kind: ToastKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            color: None,
+        }
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub fn view(&self) -> String {
+        Style::new().fg(self.resolved_color()).render(&format!(
+            "{} {}",
+            self.kind.icon(),
+            self.message.trim()
+        ))
+    }
+
+    pub fn view_with_width(&self, width: u16) -> String {
+        fit_visible(&self.view(), width as usize)
+    }
+
+    pub fn element<Msg>(&self) -> Element<Msg> {
+        let text = format!(" {} {} ", self.kind.icon(), self.message.trim());
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .border(BorderStyle::Rounded)
+                .border_color(self.resolved_color())
+                .child(Element::Text(
+                    TextElement::new(text).fg(self.resolved_color()),
+                )),
+        )
+    }
+
+    fn resolved_color(&self) -> Color {
+        self.color.unwrap_or_else(|| self.kind.color())
     }
 }
 
@@ -70,7 +124,7 @@ impl ToastManager {
     }
 
     pub fn with_max_visible(mut self, max: usize) -> Self {
-        self.max_visible = max;
+        self.max_visible = max.min(MAX_TOAST_VISIBLE);
         self
     }
 
@@ -106,11 +160,11 @@ impl ToastManager {
 
     /// Number of currently visible toasts.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len().min(self.max_visible)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
     }
 
     /// Clear all toasts.
@@ -123,19 +177,7 @@ impl ToastManager {
         let visible = self.entries.iter().rev().take(self.max_visible);
 
         let children: Vec<Element<Msg>> = visible
-            .map(|entry| {
-                let color = entry.kind.color();
-                let icon = entry.kind.icon();
-                let text = format!(" {} {} ", icon, entry.message);
-
-                Element::Box(
-                    BoxElement::new()
-                        .direction(FlexDirection::Row)
-                        .border(BorderStyle::Rounded)
-                        .border_color(color)
-                        .child(Element::Text(TextElement::new(text).fg(color))),
-                )
-            })
+            .map(|entry| Toast::new(entry.kind, &entry.message).element())
             .collect();
 
         Element::Box(
@@ -156,6 +198,42 @@ impl Default for ToastManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{strip_ansi, visible_len};
+
+    #[test]
+    fn toast_view_renders_icon_and_message() {
+        let rendered = Toast::new(ToastKind::Success, "saved").view();
+
+        assert_eq!(strip_ansi(&rendered), "✓ saved");
+        assert!(rendered.contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn toast_view_uses_custom_color() {
+        let rendered = Toast::new(ToastKind::Warning, "careful")
+            .color(Color::Rgb(245, 166, 35))
+            .view();
+
+        assert_eq!(strip_ansi(&rendered), "⚠ careful");
+        assert!(rendered.contains("\x1b[38;2;245;166;35m"));
+    }
+
+    #[test]
+    fn toast_view_with_width_bounds_visible_length() {
+        let rendered = Toast::new(ToastKind::Error, "a very long message").view_with_width(8);
+
+        assert_eq!(visible_len(&rendered), 8);
+    }
+
+    #[test]
+    fn toast_element_contains_icon_and_message() {
+        let Element::Box(row) = Toast::new(ToastKind::Info, "hello").element::<()>() else {
+            panic!("expected row");
+        };
+
+        assert_eq!(row.children.len(), 1);
+        assert_eq!(row.children[0].text_content(), Some(" ℹ hello "));
+    }
 
     #[test]
     fn push_and_len() {
@@ -200,5 +278,47 @@ mod tests {
         assert_eq!(ToastKind::Success.color(), Color::Green);
         assert_eq!(ToastKind::Warning.color(), Color::Yellow);
         assert_eq!(ToastKind::Error.color(), Color::Red);
+    }
+
+    #[test]
+    fn oversized_visible_limit_is_clamped() {
+        let mut tm = ToastManager::new().with_max_visible(usize::MAX);
+        tm.push(ToastKind::Info, "one");
+        tm.push(ToastKind::Info, "two");
+
+        assert_eq!(tm.max_visible, MAX_TOAST_VISIBLE);
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 2);
+    }
+
+    #[test]
+    fn len_counts_visible_toasts() {
+        let mut tm = ToastManager::new().with_max_visible(1);
+        tm.push(ToastKind::Info, "one");
+        tm.push(ToastKind::Info, "two");
+
+        assert_eq!(tm.len(), 1);
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 1);
+    }
+
+    #[test]
+    fn zero_visible_toasts_is_empty_for_rendering() {
+        let mut tm = ToastManager::new().with_max_visible(0);
+        tm.push(ToastKind::Info, "hidden");
+
+        assert_eq!(tm.len(), 0);
+        assert!(tm.is_empty());
+
+        let Element::Box(column) = tm.element::<()>() else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
     }
 }

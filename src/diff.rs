@@ -15,19 +15,23 @@ impl DiffRenderer {
     }
 
     pub fn render(&mut self, terminal: &mut Terminal, grid: Grid) -> io::Result<()> {
-        match &self.previous {
-            None => {
-                self.full_paint(terminal, &grid)?;
-            }
-            Some(prev) => {
-                let changes = prev.diff(&grid);
-                if !changes.is_empty() {
-                    self.apply_changes(terminal, &changes)?;
-                }
+        if self.needs_full_paint(&grid) {
+            self.full_paint(terminal, &grid)?;
+        } else if let Some(prev) = &self.previous {
+            let changes = prev.diff(&grid);
+            if !changes.is_empty() {
+                self.apply_changes(terminal, &changes)?;
             }
         }
         self.previous = Some(grid);
         Ok(())
+    }
+
+    fn needs_full_paint(&self, grid: &Grid) -> bool {
+        match &self.previous {
+            None => true,
+            Some(prev) => prev.width != grid.width || prev.height != grid.height,
+        }
     }
 
     fn full_paint(&self, terminal: &mut Terminal, grid: &Grid) -> io::Result<()> {
@@ -68,5 +72,24 @@ impl DiffRenderer {
 impl Default for DiffRenderer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_renderer_full_paints_after_grid_size_changes() {
+        let mut renderer = DiffRenderer::new();
+        let initial = Grid::new(2, 1);
+
+        assert!(renderer.needs_full_paint(&initial));
+
+        renderer.previous = Some(initial);
+
+        assert!(!renderer.needs_full_paint(&Grid::new(2, 1)));
+        assert!(renderer.needs_full_paint(&Grid::new(3, 1)));
+        assert!(renderer.needs_full_paint(&Grid::new(2, 2)));
     }
 }

@@ -1,4 +1,6 @@
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{repeat_visible_char, truncate_visible, visible_len, Color, Style};
+
+const MAX_METER_WIDTH: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone)]
 pub struct Meter {
@@ -10,6 +12,7 @@ pub struct Meter {
     empty_fg: Color,
     fill: char,
     empty: char,
+    show_value: bool,
 }
 
 impl Meter {
@@ -23,6 +26,7 @@ impl Meter {
             empty_fg: Color::BrightBlack,
             fill: '█',
             empty: '░',
+            show_value: true,
         }
     }
 
@@ -32,12 +36,12 @@ impl Meter {
     }
 
     pub fn max(mut self, max: f64) -> Self {
-        self.max = max.max(f64::EPSILON);
+        self.max = Self::normalize_max(max);
         self
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = width.max(1);
+        self.width = width.clamp(1, MAX_METER_WIDTH);
         self
     }
 
@@ -57,22 +61,31 @@ impl Meter {
         self
     }
 
+    pub fn show_value(mut self, show: bool) -> Self {
+        self.show_value = show;
+        self
+    }
+
     pub fn view(&self) -> String {
         let value = if self.value.is_finite() {
             self.value
         } else {
             0.0
         };
-        let ratio = (value / self.max).clamp(0.0, 1.0);
-        let value_label = if (self.max - 100.0).abs() < f64::EPSILON {
+        let max = Self::normalize_max(self.max);
+        let ratio = (value / max).clamp(0.0, 1.0);
+        let value_label = if !self.show_value {
+            String::new()
+        } else if (max - 100.0).abs() < f64::EPSILON {
             format!("{value:>5.1}%")
         } else {
             format!("{value:>6.1}")
         };
-        let prefix = if self.label.is_empty() {
-            format!("{value_label} ")
-        } else {
-            format!("{} {value_label} ", self.label)
+        let prefix = match (self.label.is_empty(), self.show_value) {
+            (true, true) => format!("{value_label} "),
+            (true, false) => String::new(),
+            (false, true) => format!("{} {value_label} ", self.label),
+            (false, false) => format!("{} ", self.label),
         };
 
         let prefix_width = visible_len(&prefix).min(self.width);
@@ -88,10 +101,10 @@ impl Meter {
             "{}{}",
             Style::new()
                 .fg(self.fg)
-                .render(&self.fill.to_string().repeat(filled)),
+                .render(&repeat_visible_char(self.fill, filled)),
             Style::new()
                 .fg(self.empty_fg)
-                .render(&self.empty.to_string().repeat(empty))
+                .render(&repeat_visible_char(self.empty, empty))
         );
 
         format!("{prefix}{bar}")
@@ -99,6 +112,14 @@ impl Meter {
 
     pub fn plain(&self) -> String {
         crate::style::strip_ansi(&self.view())
+    }
+
+    fn normalize_max(max: f64) -> f64 {
+        if max.is_finite() {
+            max.max(f64::EPSILON)
+        } else {
+            f64::EPSILON
+        }
     }
 }
 
@@ -128,5 +149,60 @@ mod tests {
         let line = Meter::new(1.0).label("very-long-label").width(8).plain();
 
         assert_eq!(visible_len(&line), 8);
+    }
+
+    #[test]
+    fn can_render_bar_without_value_label() {
+        let line = Meter::new(50.0)
+            .width(6)
+            .glyphs('▰', '▱')
+            .show_value(false)
+            .plain();
+
+        assert_eq!(visible_len(&line), 6);
+        assert_eq!(line, "▰▰▰▱▱▱");
+    }
+
+    #[test]
+    fn non_finite_max_is_treated_as_minimum_positive_range() {
+        let line = Meter::new(1.0).max(f64::NAN).width(12).plain();
+
+        assert_eq!(visible_len(&line), 12);
+        assert!(!line.contains('░'));
+    }
+
+    #[test]
+    fn custom_wide_glyphs_fill_bar_by_display_width() {
+        let line = Meter::new(50.0)
+            .label("CPU")
+            .width(16)
+            .glyphs('界', '·')
+            .view();
+        let plain = strip_ansi(&line);
+
+        assert_eq!(visible_len(&line), 16);
+        assert_eq!(visible_len(&plain), 16);
+        assert!(plain.contains("界 "));
+        assert!(plain.ends_with("··"));
+    }
+
+    #[test]
+    fn custom_zero_width_glyphs_fall_back_to_spaces() {
+        let line = Meter::new(50.0)
+            .width(12)
+            .glyphs('\u{301}', '\u{301}')
+            .plain();
+
+        assert_eq!(visible_len(&line), 12);
+        assert!(line.ends_with("     "));
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let meter = Meter::new(50.0).width(usize::MAX);
+        let line = meter.plain();
+
+        assert_eq!(meter.width, MAX_METER_WIDTH);
+        assert_eq!(visible_len(&line), MAX_METER_WIDTH);
     }
 }

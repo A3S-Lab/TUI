@@ -1,6 +1,6 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseEvent, MouseEventKind};
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, Color, Style};
 use crossterm::event::KeyCode;
 
 pub struct Select {
@@ -28,7 +28,7 @@ impl Select {
     }
 
     pub fn with_selected(mut self, selected: usize) -> Self {
-        self.cursor = selected.min(self.items.len().saturating_sub(1));
+        self.cursor = selected.min(self.max_cursor());
         self
     }
 
@@ -44,13 +44,16 @@ impl Select {
         self.focused = false;
     }
     pub fn selected_index(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
     pub fn selected_value(&self) -> &str {
-        &self.items[self.cursor]
+        self.selected_value_opt().unwrap_or("")
+    }
+    pub fn selected_value_opt(&self) -> Option<&str> {
+        self.items.get(self.normalized_cursor()).map(String::as_str)
     }
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.normalized_cursor()
     }
 
     /// Set the vertical offset for mouse click calculations.
@@ -64,13 +67,14 @@ impl Select {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.cursor = self.cursor.saturating_sub(1);
+                self.cursor = self.cursor.saturating_sub(1).min(self.max_cursor());
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < self.items.len() {
-                    self.cursor += 1;
-                }
+                self.cursor = self
+                    .normalized_cursor()
+                    .saturating_add(1)
+                    .min(self.max_cursor());
                 None
             }
             KeyCode::Enter => self.selected_msg(),
@@ -94,7 +98,7 @@ impl Select {
         }
         match mouse.kind {
             MouseEventKind::Down(crate::event::MouseButton::Left) => {
-                let row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 if row < self.items.len() {
                     self.cursor = row;
                     Some(SelectMsg::Selected(
@@ -115,30 +119,25 @@ impl Select {
             return String::new();
         }
 
-        let start = if self.items.len() <= height {
-            0
-        } else {
-            self.cursor
-                .saturating_sub(height - 1)
-                .min(self.items.len() - height)
-        };
+        let cursor = self.normalized_cursor();
+        let range = self.visible_range(height);
 
         self.items
             .iter()
             .enumerate()
-            .skip(start)
-            .take(height)
+            .skip(range.start)
+            .take(range.len())
             .map(|(idx, item)| {
-                let prefix = if idx == self.cursor { ">" } else { " " };
+                let prefix = if idx == cursor { ">" } else { " " };
                 let raw = if self.number_shortcuts {
                     match number_shortcut_label(idx) {
-                        Some(label) => pad_or_truncate(&format!("{prefix} {label} {item}"), width),
-                        None => pad_or_truncate(&format!("{prefix}   {item}"), width),
+                        Some(label) => fit_visible(&format!("{prefix} {label} {item}"), width),
+                        None => fit_visible(&format!("{prefix}   {item}"), width),
                     }
                 } else {
-                    pad_or_truncate(&format!("{prefix} {item}"), width)
+                    fit_visible(&format!("{prefix} {item}"), width)
                 };
-                if idx == self.cursor && self.focused {
+                if idx == cursor && self.focused {
                     Style::new().fg(Color::Cyan).bold().render(&raw)
                 } else {
                     raw
@@ -149,12 +148,20 @@ impl Select {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_height(self.items.len())
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let cursor = self.normalized_cursor();
+        let range = self.visible_range(height);
         let children: Vec<Element<Msg>> = self
             .items
             .iter()
             .enumerate()
+            .skip(range.start)
+            .take(range.len())
             .map(|(i, item)| {
-                let prefix = if i == self.cursor { "▸ " } else { "  " };
+                let prefix = if i == cursor { "▸ " } else { "  " };
                 let text = if self.number_shortcuts {
                     match number_shortcut_label(i) {
                         Some(label) => format!("{prefix}{label} {item}"),
@@ -163,7 +170,7 @@ impl Select {
                 } else {
                     format!("{}{}", prefix, item)
                 };
-                if i == self.cursor && self.focused {
+                if i == cursor && self.focused {
                     Element::Text(TextElement::new(text).bold().fg(Color::Cyan))
                 } else {
                     Element::Text(TextElement::new(text))
@@ -179,10 +186,36 @@ impl Select {
     }
 
     fn selected_msg(&self) -> Option<SelectMsg> {
+        let cursor = self.normalized_cursor();
         self.items
-            .get(self.cursor)
+            .get(cursor)
             .cloned()
-            .map(|item| SelectMsg::Selected(self.cursor, item))
+            .map(|item| SelectMsg::Selected(cursor, item))
+    }
+
+    fn max_cursor(&self) -> usize {
+        self.items.len().saturating_sub(1)
+    }
+
+    fn normalized_cursor(&self) -> usize {
+        self.cursor.min(self.max_cursor())
+    }
+
+    fn visible_range(&self, height: usize) -> std::ops::Range<usize> {
+        if height == 0 || self.items.is_empty() {
+            return 0..0;
+        }
+
+        let cursor = self.normalized_cursor();
+        let visible = height.min(self.items.len());
+        let start = if self.items.len() <= visible {
+            0
+        } else {
+            cursor
+                .saturating_sub(visible - 1)
+                .min(self.items.len() - visible)
+        };
+        start..start.saturating_add(visible).min(self.items.len())
     }
 }
 
@@ -202,19 +235,10 @@ fn number_shortcut_label(idx: usize) -> Option<char> {
     }
 }
 
-fn pad_or_truncate(value: &str, width: usize) -> String {
-    let truncated = truncate_visible(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        truncated
-    } else {
-        format!("{truncated}{}", " ".repeat(width - len))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::visible_len;
     use crossterm::event::KeyModifiers;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -268,11 +292,94 @@ mod tests {
     }
 
     #[test]
+    fn stale_cursor_navigation_clamps_to_items() {
+        let mut select = Select::new(vec!["a", "b"]);
+        select.cursor = usize::MAX;
+
+        select.handle_key(&key(KeyCode::Down));
+        assert_eq!(select.selected_index(), 1);
+
+        select.cursor = usize::MAX;
+        select.handle_key(&key(KeyCode::Up));
+        assert_eq!(select.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_cursor_is_normalized_for_selection_rendering_and_enter() {
+        let mut select = Select::new(vec!["a", "b"]).with_number_shortcuts();
+        select.cursor = usize::MAX;
+
+        assert_eq!(select.selected_index(), 1);
+        assert_eq!(select.cursor(), 1);
+        assert_eq!(select.selected_value(), "b");
+        assert_eq!(select.selected_value_opt(), Some("b"));
+        assert!(matches!(
+            select.handle_key(&key(KeyCode::Enter)),
+            Some(SelectMsg::Selected(1, value)) if value == "b"
+        ));
+
+        let plain = crate::style::strip_ansi(&select.view(20, 5));
+        assert!(plain.contains("> 2 b"));
+        assert!(!plain.contains("> 1 a"));
+
+        let Element::Box(box_el) = select.element::<()>() else {
+            panic!("expected box element");
+        };
+        let Element::Text(last_item) = box_el.children.last().expect("expected last item") else {
+            panic!("expected select item");
+        };
+        assert_eq!(last_item.content, "▸ 2 b");
+
+        select.handle_key(&key(KeyCode::Up));
+        assert_eq!(select.selected_index(), 1);
+    }
+
+    #[test]
+    fn empty_select_has_no_selected_value_and_ignores_selection_input() {
+        let mut select = Select::new(Vec::<&str>::new()).with_selected(9);
+
+        assert_eq!(select.selected_index(), 0);
+        assert_eq!(select.selected_value(), "");
+        assert_eq!(select.selected_value_opt(), None);
+        assert!(select.handle_key(&key(KeyCode::Enter)).is_none());
+        assert!(select
+            .handle_mouse(&MouseEvent {
+                kind: MouseEventKind::Down(crate::event::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })
+            .is_none());
+        assert_eq!(select.view(10, 2), "");
+
+        let Element::Box(box_el) = select.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert!(box_el.children.is_empty());
+    }
+
+    #[test]
     fn enter_selects() {
         let mut select = Select::new(vec!["x", "y"]);
         select.handle_key(&key(KeyCode::Down));
         let msg = select.handle_key(&key(KeyCode::Enter));
         assert!(matches!(msg, Some(SelectMsg::Selected(1, _))));
+    }
+
+    #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut select = Select::new(vec!["x", "y"]).with_selected(1);
+        select.set_y_offset(4);
+
+        let msg = select.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(crate::event::MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(msg.is_none());
+        assert_eq!(select.selected_index(), 1);
     }
 
     #[test]
@@ -337,5 +444,28 @@ mod tests {
 
         assert!(!plain.contains("one"));
         assert!(plain.contains("> four"));
+    }
+
+    #[test]
+    fn element_with_height_scrolls_to_cursor() {
+        let select = Select::new(vec!["one", "two", "three", "four"])
+            .with_selected(3)
+            .with_number_shortcuts();
+
+        let Element::Box(column) = select.element_with_height::<()>(2) else {
+            panic!("expected box element");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 2);
+        assert!(text.contains("  3 three"));
+        assert!(text.contains("▸ 4 four"));
+        assert!(!text.contains("one"));
+        assert!(!text.contains("two"));
     }
 }

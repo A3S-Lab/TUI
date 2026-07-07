@@ -1,5 +1,5 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::Color;
+use crate::style::{pad_visible, visible_len, Color};
 
 pub struct Table {
     headers: Vec<String>,
@@ -10,7 +10,7 @@ pub struct Table {
 impl Table {
     pub fn new(headers: Vec<impl Into<String>>) -> Self {
         let headers: Vec<String> = headers.into_iter().map(|h| h.into()).collect();
-        let col_widths = headers.iter().map(|h| h.len()).collect();
+        let col_widths = headers.iter().map(|h| visible_len(h)).collect();
         Self {
             headers,
             rows: Vec::new(),
@@ -20,22 +20,14 @@ impl Table {
 
     pub fn row(mut self, cells: Vec<impl Into<String>>) -> Self {
         let row: Vec<String> = cells.into_iter().map(|c| c.into()).collect();
-        for (i, cell) in row.iter().enumerate() {
-            if i < self.col_widths.len() {
-                self.col_widths[i] = self.col_widths[i].max(cell.len());
-            }
-        }
+        self.update_col_widths(&row);
         self.rows.push(row);
         self
     }
 
     pub fn add_row(&mut self, cells: Vec<impl Into<String>>) {
         let row: Vec<String> = cells.into_iter().map(|c| c.into()).collect();
-        for (i, cell) in row.iter().enumerate() {
-            if i < self.col_widths.len() {
-                self.col_widths[i] = self.col_widths[i].max(cell.len());
-            }
-        }
+        self.update_col_widths(&row);
         self.rows.push(row);
     }
 
@@ -50,7 +42,7 @@ impl Table {
         let separator = self
             .col_widths
             .iter()
-            .map(|w| "─".repeat(*w + 2))
+            .map(|w| "─".repeat(w.saturating_add(2)))
             .collect::<Vec<_>>()
             .join("┼");
         lines.push(Element::Text(
@@ -69,13 +61,26 @@ impl Table {
         )
     }
 
+    fn update_col_widths(&mut self, row: &[String]) {
+        if row.len() > self.col_widths.len() {
+            self.col_widths.resize(row.len(), 0);
+        }
+        for (i, cell) in row.iter().enumerate() {
+            self.col_widths[i] = self.col_widths[i].max(visible_len(cell));
+        }
+    }
+
     fn format_row(&self, cells: &[String]) -> String {
-        cells
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                let width = self.col_widths.get(i).copied().unwrap_or(cell.len());
-                format!(" {:width$} ", cell, width = width)
+        let column_count = self.col_widths.len().max(cells.len());
+        (0..column_count)
+            .map(|i| {
+                let cell = cells.get(i).map(String::as_str).unwrap_or("");
+                let width = self
+                    .col_widths
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| visible_len(cell));
+                format!(" {} ", pad_visible(cell, width))
             })
             .collect::<Vec<_>>()
             .join("│")
@@ -85,6 +90,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::visible_len;
 
     #[test]
     fn empty_table() {
@@ -118,6 +124,49 @@ mod tests {
     fn col_widths_expand() {
         let table = Table::new(vec!["X"]).row(vec!["longer text"]);
         assert_eq!(table.col_widths[0], 11);
+    }
+
+    #[test]
+    fn columns_align_wide_cells_by_display_width() {
+        let table = Table::new(vec!["文件", "State"]).row(vec!["中", "ok"]);
+        let header = table.format_row(&table.headers);
+        let row = table.format_row(&table.rows[0]);
+        let header_first_col = header.split('│').next().unwrap();
+        let row_first_col = row.split('│').next().unwrap();
+
+        assert_eq!(visible_len(header_first_col), visible_len(row_first_col));
+    }
+
+    #[test]
+    fn rows_with_missing_cells_preserve_columns() {
+        let table = Table::new(vec!["A", "B"]).row(vec!["x"]);
+        let header = table.format_row(&table.headers);
+        let row = table.format_row(&table.rows[0]);
+
+        assert_eq!(visible_len(&row), visible_len(&header));
+        assert_eq!(row.split('│').count(), 2);
+    }
+
+    #[test]
+    fn rows_with_extra_cells_expand_columns() {
+        let table = Table::new(vec!["A"]).row(vec!["x", "extra"]);
+        let Element::Box(box_el) = table.element::<()>() else {
+            panic!("expected Box");
+        };
+        let Element::Text(header) = &box_el.children[0] else {
+            panic!("expected header");
+        };
+        let Element::Text(separator) = &box_el.children[1] else {
+            panic!("expected separator");
+        };
+        let Element::Text(row) = &box_el.children[2] else {
+            panic!("expected row");
+        };
+
+        assert_eq!(table.col_widths, vec![1, 5]);
+        assert_eq!(visible_len(&header.content), visible_len(&row.content));
+        assert_eq!(visible_len(&separator.content), visible_len(&row.content));
+        assert_eq!(row.content.split('│').count(), 2);
     }
 
     #[test]

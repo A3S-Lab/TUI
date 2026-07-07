@@ -1,7 +1,11 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{fit_visible, truncate_visible, Color, Style};
+use crate::interaction::{Activatable, Selectable};
+use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
+
+const MAX_CHOICE_PROMPT_INDENT: usize = u16::MAX as usize;
 
 /// One selectable action in a [`ChoicePrompt`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +146,7 @@ impl ChoicePrompt {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_CHOICE_PROMPT_INDENT);
         self
     }
 
@@ -187,6 +191,17 @@ impl ChoicePrompt {
         self
     }
 
+    /// Apply semantic colors from a theme while preserving choices and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.danger_color = theme.color(ThemeRole::Error);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = theme.color(ThemeRole::Highlight);
+        self
+    }
+
     pub fn set_y_offset(&mut self, y: u16) {
         self.y_offset = y;
     }
@@ -200,22 +215,25 @@ impl ChoicePrompt {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn selected_choice(&self) -> Option<&ChoicePromptItem> {
-        self.choices.get(self.selected)
+        self.choices.get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<ChoicePromptMsg> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < self.choices.len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.choices.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 None
             }
@@ -235,9 +253,26 @@ impl ChoicePrompt {
     }
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<ChoicePromptMsg> {
+        let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+        if local_row >= self.row_count() {
+            return None;
+        }
+
         match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                self.selected = self.normalized_selected().saturating_sub(1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.choices.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
+                }
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = mouse.row.saturating_sub(self.y_offset) as usize;
                 let choice_row = local_row.checked_sub(self.choice_start_row())?;
                 if choice_row < self.choices.len() {
                     self.selected = choice_row;
@@ -251,11 +286,15 @@ impl ChoicePrompt {
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
+        self.lines(width, height).join("\n")
+    }
+
+    /// Render bounded prompt rows without joining them into a single string.
+    pub fn lines(&self, width: u16, height: usize) -> Vec<String> {
         let width = width as usize;
         if width == 0 || height == 0 {
-            return String::new();
+            return Vec::new();
         }
-
         let mut lines = self.render_lines(width);
         lines.truncate(height);
         if self.fill_height {
@@ -267,11 +306,34 @@ impl ChoicePrompt {
         lines
             .into_iter()
             .map(|line| fit_visible(&line, width))
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect()
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(self.element_children()),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = self.element_children();
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    fn element_children<Msg>(&self) -> Vec<Element<Msg>> {
         let mut children = Vec::new();
         if !self.title.is_empty() {
             children.push(Element::Text(
@@ -281,10 +343,11 @@ impl ChoicePrompt {
             ));
         }
 
+        let selected = self.normalized_selected();
         for (index, choice) in self.choices.iter().enumerate() {
             let text = self.plain_choice_line(index, None);
             let mut element = TextElement::new(text);
-            if index == self.selected {
+            if index == selected {
                 element = element.fg(self.selected_fg).bg(self.selected_bg).bold();
             } else if choice.danger {
                 element = element.fg(self.danger_color);
@@ -298,23 +361,20 @@ impl ChoicePrompt {
             children.push(Element::Text(TextElement::new(hint).fg(self.muted_color)));
         }
 
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Column)
-                .children(children),
-        )
+        children
     }
 
     fn render_lines(&self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         if !self.title.is_empty() {
-            let raw = format!("{}{}", " ".repeat(self.indent), self.title);
+            let raw = format!("{}{}", " ".repeat(self.indent_for_width(width)), self.title);
             lines.push(Style::new().fg(self.title_color).bold().render(&raw));
         }
 
+        let selected = self.normalized_selected();
         for (index, choice) in self.choices.iter().enumerate() {
             let raw = fit_visible(&self.plain_choice_line(index, Some(width)), width);
-            if index == self.selected {
+            if index == selected {
                 lines.push(
                     Style::new()
                         .fg(self.selected_fg)
@@ -332,7 +392,7 @@ impl ChoicePrompt {
         }
 
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
-            let raw = format!("{}{}", " ".repeat(self.indent), hint);
+            let raw = format!("{}{}", " ".repeat(self.indent_for_width(width)), hint);
             lines.push(Style::new().fg(self.muted_color).render(&raw));
         }
 
@@ -343,17 +403,17 @@ impl ChoicePrompt {
         let Some(choice) = self.choices.get(index) else {
             return String::new();
         };
-        let marker = if index == self.selected {
+        let marker = if index == self.normalized_selected() {
             self.marker.as_str()
         } else {
             " "
         };
         let shortcut = self.choice_label(index, choice);
-        let prefix = if shortcut.is_empty() {
-            format!("{}{} ", " ".repeat(self.indent), marker)
-        } else {
-            format!("{}{} {shortcut} ", " ".repeat(self.indent), marker)
-        };
+        let indent = width.map_or_else(
+            || self.indent_for_element(),
+            |width| self.choice_indent_for_width(marker, &shortcut, width),
+        );
+        let prefix = self.choice_prefix(marker, &shortcut, indent);
         let suffix = choice
             .description
             .as_deref()
@@ -361,7 +421,7 @@ impl ChoicePrompt {
             .map(|description| format!("  {description}"))
             .unwrap_or_default();
         let available = width
-            .map(|width| width.saturating_sub(crate::style::visible_len(&prefix)))
+            .map(|width| width.saturating_sub(visible_len(&prefix)))
             .unwrap_or(usize::MAX);
 
         format!(
@@ -406,7 +466,7 @@ impl ChoicePrompt {
         if self.choices.is_empty() {
             None
         } else {
-            Some(ChoicePromptMsg::Selected(self.selected))
+            Some(ChoicePromptMsg::Selected(self.normalized_selected()))
         }
     }
 
@@ -414,14 +474,78 @@ impl ChoicePrompt {
         usize::from(!self.title.is_empty())
     }
 
+    fn row_count(&self) -> usize {
+        self.choice_start_row()
+            + self.choices.len()
+            + usize::from(self.hint.as_deref().is_some_and(|hint| !hint.is_empty()))
+    }
+
     fn clamp_selected(&mut self) {
         self.selected = self.selected.min(self.choices.len().saturating_sub(1));
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.choices.len().saturating_sub(1))
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_CHOICE_PROMPT_INDENT)
+    }
+
+    fn choice_indent_for_width(&self, marker: &str, shortcut: &str, width: usize) -> usize {
+        self.indent
+            .min(width.saturating_sub(self.choice_prefix_width(marker, shortcut)))
+            .min(MAX_CHOICE_PROMPT_INDENT)
+    }
+
+    fn choice_prefix(&self, marker: &str, shortcut: &str, indent: usize) -> String {
+        if shortcut.is_empty() {
+            format!("{}{} ", " ".repeat(indent), marker)
+        } else {
+            format!("{}{} {shortcut} ", " ".repeat(indent), marker)
+        }
+    }
+
+    fn choice_prefix_width(&self, marker: &str, shortcut: &str) -> usize {
+        if shortcut.is_empty() {
+            visible_len(marker).saturating_add(1)
+        } else {
+            visible_len(marker)
+                .saturating_add(1)
+                .saturating_add(visible_len(shortcut))
+                .saturating_add(1)
+        }
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_CHOICE_PROMPT_INDENT)
     }
 }
 
 impl Default for ChoicePrompt {
     fn default() -> Self {
         Self::new("", Vec::new())
+    }
+}
+
+impl Selectable for ChoicePrompt {
+    fn item_count(&self) -> usize {
+        self.choices.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.choices.is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_selected();
+    }
+}
+
+impl Activatable for ChoicePrompt {
+    fn is_item_disabled(&self, _index: usize) -> bool {
+        false
     }
 }
 
@@ -455,6 +579,18 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let prompt = ChoicePrompt::approval("Allow?").with_theme(&theme);
+
+        assert_eq!(prompt.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(prompt.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(prompt.muted_color, theme.color(ThemeRole::Muted));
+        assert_eq!(prompt.danger_color, theme.color(ThemeRole::Error));
+        assert_eq!(prompt.selected_bg, theme.color(ThemeRole::Highlight));
+    }
+
+    #[test]
     fn approval_prompt_has_three_standard_choices() {
         let prompt = ChoicePrompt::approval("Allow shell_command?");
 
@@ -473,6 +609,38 @@ mod tests {
         prompt.handle_key(&key(KeyCode::Down));
         assert_eq!(prompt.selected_index(), 2);
         prompt.handle_key(&key(KeyCode::Up));
+        assert_eq!(prompt.selected_index(), 1);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_input_and_rendering() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.selected = usize::MAX;
+
+        assert_eq!(prompt.selected_index(), 2);
+        assert_eq!(
+            prompt.selected_choice().map(ChoicePromptItem::label),
+            Some("No")
+        );
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Enter)),
+            Some(ChoicePromptMsg::Selected(2))
+        );
+
+        let rendered = strip_ansi(&prompt.view(40, 5));
+        assert!(rendered.contains("❯ 3. No"));
+
+        let Element::Box(column) = prompt.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(choice) = &column.children[3] else {
+            panic!("expected choice text");
+        };
+        assert_eq!(choice.content, "  ❯ 3. No");
+
+        assert_eq!(prompt.handle_key(&key(KeyCode::Down)), None);
+        assert_eq!(prompt.selected_index(), 2);
+        assert_eq!(prompt.handle_key(&key(KeyCode::Up)), None);
         assert_eq!(prompt.selected_index(), 1);
     }
 
@@ -534,6 +702,62 @@ mod tests {
     }
 
     #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let msg = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(prompt.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_choice() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let down = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(down, None);
+        assert_eq!(prompt.selected_index(), 1);
+
+        let up = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(up, None);
+        assert_eq!(prompt.selected_index(), 0);
+    }
+
+    #[test]
+    fn mouse_wheel_below_prompt_is_ignored() {
+        let mut prompt = ChoicePrompt::approval("Allow edit?");
+        prompt.set_y_offset(4);
+
+        let msg = prompt.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(prompt.selected_index(), 0);
+    }
+
+    #[test]
     fn view_pads_and_truncates_to_width() {
         let prompt = ChoicePrompt::new(
             "允许执行命令?",
@@ -554,6 +778,55 @@ mod tests {
     }
 
     #[test]
+    fn lines_return_bounded_rows_without_joining() {
+        let lines = ChoicePrompt::approval("Allow a very long command label?")
+            .selected(1)
+            .lines(20, 5);
+        let plain = lines
+            .iter()
+            .map(|line| strip_ansi(line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 5);
+        assert!(plain[0].contains("Allow"), "{plain:?}");
+        assert!(plain[2].contains("2. Yes"), "{plain:?}");
+        assert!(
+            lines.iter().all(|line| visible_len(line) == 20),
+            "{plain:?}"
+        );
+        assert!(lines[2].contains("\x1b["), "selected row should be styled");
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let prompt = ChoicePrompt::new(
+            "Allow?",
+            vec![ChoicePromptItem::new("Run command").shortcut('r')],
+        )
+        .hint("Enter")
+        .indent(usize::MAX);
+        let rendered = prompt.view(8, 4);
+        let choice = prompt.plain_choice_line(0, Some(8));
+
+        assert_eq!(prompt.indent, MAX_CHOICE_PROMPT_INDENT);
+        assert_eq!(prompt.indent_for_width(8), 8);
+        assert_eq!(prompt.choice_indent_for_width("❯", "1.", 8), 3);
+        assert_eq!(visible_len(&choice), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = prompt.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(choice) = &column.children[1] else {
+            panic!("expected choice text");
+        };
+        assert_eq!(
+            visible_len(&choice.content),
+            MAX_CHOICE_PROMPT_INDENT + visible_len("❯ 1. Run command")
+        );
+    }
+
+    #[test]
     fn element_produces_column_rows() {
         let el: Element<()> = ChoicePrompt::approval("Allow edit?").element();
 
@@ -564,5 +837,49 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = ChoicePrompt::approval("Allow edit?").element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let el: Element<()> = ChoicePrompt::approval("Allow edit?").element_with_height(2);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 2);
+        assert_eq!(column.children[0].text_content(), Some("Allow edit?"));
+        assert!(column.children[1]
+            .text_content()
+            .is_some_and(|text| text.contains("Yes")));
+        assert!(!column
+            .children
+            .iter()
+            .any(|child| child.text_content().is_some_and(|text| text.contains("No"))));
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = ChoicePrompt::new("Allow?", Vec::new())
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected Box");
+        };
+        assert_eq!(column.children.len(), 3);
+        assert_eq!(column.children[0].text_content(), Some("Allow?"));
+        assert_eq!(column.children[1].text_content(), Some(""));
+        assert_eq!(column.children[2].text_content(), Some(""));
     }
 }

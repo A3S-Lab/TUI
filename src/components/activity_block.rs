@@ -1,5 +1,14 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, truncate_visible, visible_len,
+    Color, Style,
+};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_ACTIVITY_BLOCK_MARGIN: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_OUTPUT_LINES: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN: usize = u16::MAX as usize;
+const MAX_ACTIVITY_BLOCK_WIDTH: usize = u16::MAX as usize;
 
 /// In-flight activity line with an optional live output tail.
 ///
@@ -10,6 +19,7 @@ use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 pub struct ActivityBlock {
     label: String,
     detail: Option<String>,
+    detail_styled: bool,
     lines: Vec<String>,
     max_output_lines: usize,
     margin: usize,
@@ -31,6 +41,7 @@ impl ActivityBlock {
         Self {
             label: label.into(),
             detail: None,
+            detail_styled: false,
             lines: Vec::new(),
             max_output_lines: 12,
             margin: 2,
@@ -52,6 +63,16 @@ impl ActivityBlock {
         let detail = detail.into();
         if !detail.is_empty() {
             self.detail = Some(detail);
+            self.detail_styled = false;
+        }
+        self
+    }
+
+    pub fn styled_detail(mut self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        if !detail.is_empty() {
+            self.detail = Some(detail);
+            self.detail_styled = true;
         }
         self
     }
@@ -62,7 +83,10 @@ impl ActivityBlock {
     }
 
     pub fn text(mut self, text: impl AsRef<str>) -> Self {
-        self.lines = text.as_ref().lines().map(str::to_string).collect();
+        self.lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self
     }
 
@@ -76,17 +100,17 @@ impl ActivityBlock {
     }
 
     pub fn max_output_lines(mut self, max_output_lines: usize) -> Self {
-        self.max_output_lines = max_output_lines.max(1);
+        self.max_output_lines = max_output_lines.clamp(1, MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
         self
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_ACTIVITY_BLOCK_MARGIN);
         self
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.min(MAX_ACTIVITY_BLOCK_WIDTH));
         self
     }
 
@@ -133,6 +157,16 @@ impl ActivityBlock {
 
     pub fn connector_color(mut self, color: Color) -> Self {
         self.connector_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.label_color = theme.color(ThemeRole::Primary);
+        self.detail_color = theme.color(ThemeRole::Muted);
+        self.active_color = theme.color(ThemeRole::Primary);
+        self.inactive_color = theme.color(ThemeRole::Muted);
+        self.output_color = theme.color(ThemeRole::Muted);
+        self.connector_color = theme.color(ThemeRole::Border);
         self
     }
 
@@ -187,8 +221,10 @@ impl ActivityBlock {
     }
 
     fn render_header(&self) -> String {
-        let mut out = String::with_capacity(self.margin + self.label.len() + 8);
-        out.push_str(&" ".repeat(self.margin));
+        let margin = self.margin_for_render();
+        let mut out =
+            String::with_capacity(margin.saturating_add(self.label.len()).saturating_add(8));
+        out.push_str(&" ".repeat(margin));
         out.push_str(
             &Style::new()
                 .fg(self.marker_color())
@@ -201,11 +237,12 @@ impl ActivityBlock {
         if let Some(detail) = self.detail.as_deref() {
             out.push(' ');
             let detail_width = self.detail_width(&out);
-            out.push_str(
-                &Style::new()
-                    .fg(self.detail_color)
-                    .render(&truncate_visible(detail, detail_width)),
-            );
+            let detail = truncate_visible(detail, detail_width);
+            if self.detail_styled {
+                out.push_str(&detail);
+            } else {
+                out.push_str(&Style::new().fg(self.detail_color).render(&detail));
+            }
         }
         if self.show_ellipsis {
             out.push('…');
@@ -216,7 +253,7 @@ impl ActivityBlock {
     fn render_output(&self, line: String) -> String {
         format!(
             "{}{} {}",
-            " ".repeat(self.output_margin()),
+            " ".repeat(self.output_margin_for_render()),
             Style::new()
                 .fg(self.connector_color)
                 .render(&self.connector),
@@ -226,7 +263,7 @@ impl ActivityBlock {
 
     fn header_element<Msg>(&self) -> Element<Msg> {
         let mut children = vec![
-            Element::Text(TextElement::new(" ".repeat(self.margin))),
+            Element::Text(TextElement::new(" ".repeat(self.margin_for_render()))),
             Element::Text(
                 TextElement::new(self.marker.as_str())
                     .fg(self.marker_color())
@@ -242,9 +279,12 @@ impl ActivityBlock {
 
         if let Some(detail) = self.detail.as_deref() {
             children.push(Element::Text(TextElement::new(" ")));
-            children.push(Element::Text(
-                TextElement::new(detail).fg(self.detail_color),
-            ));
+            let text = if self.detail_styled {
+                TextElement::new(detail)
+            } else {
+                TextElement::new(detail).fg(self.detail_color)
+            };
+            children.push(Element::Text(text));
         }
         if self.show_ellipsis {
             children.push(Element::Text(TextElement::new("…")));
@@ -262,7 +302,7 @@ impl ActivityBlock {
             BoxElement::new()
                 .direction(FlexDirection::Row)
                 .child(Element::Text(TextElement::new(
-                    " ".repeat(self.output_margin()),
+                    " ".repeat(self.output_margin_for_render()),
                 )))
                 .child(Element::Text(
                     TextElement::new(self.connector.as_str()).fg(self.connector_color),
@@ -292,8 +332,22 @@ impl ActivityBlock {
             .unwrap_or(usize::MAX / 4)
     }
 
-    fn output_margin(&self) -> usize {
-        self.margin + visible_len(&self.marker) + 1
+    fn margin_for_render(&self) -> usize {
+        self.width
+            .map(|width| self.margin.min(width))
+            .unwrap_or(self.margin)
+            .min(MAX_ACTIVITY_BLOCK_MARGIN)
+    }
+
+    fn output_margin_for_render(&self) -> usize {
+        let margin = self.margin_for_render();
+        let output_margin = margin
+            .saturating_add(visible_len(&self.marker))
+            .saturating_add(1)
+            .min(MAX_ACTIVITY_BLOCK_OUTPUT_MARGIN);
+        self.width
+            .map(|width| output_margin.min(width))
+            .unwrap_or(output_margin)
     }
 
     fn marker_color(&self) -> Color {
@@ -336,6 +390,27 @@ mod tests {
     }
 
     #[test]
+    fn text_preserves_trailing_blank_output_line() {
+        let block = ActivityBlock::new("Running")
+            .show_ellipsis(false)
+            .text("done\n");
+
+        assert_eq!(block.lines_value(), ["done", ""]);
+
+        let plain = strip_ansi(&block.view());
+        let rows = plain.split('\n').collect::<Vec<_>>();
+        assert_eq!(rows[1], "    │ done");
+        assert_eq!(rows[2], "    │ ");
+    }
+
+    #[test]
+    fn empty_text_keeps_output_empty() {
+        let block = ActivityBlock::new("Running").text("");
+
+        assert!(block.lines_value().is_empty());
+    }
+
+    #[test]
     fn inactive_marker_uses_inactive_color() {
         let rendered = ActivityBlock::new("Waiting")
             .active(false)
@@ -358,6 +433,41 @@ mod tests {
     }
 
     #[test]
+    fn styled_detail_preserves_ansi_and_fits_width() {
+        let detail = Style::new()
+            .fg(Color::Cyan)
+            .render("cargo test -- --nocapture");
+        let rendered = ActivityBlock::new("Running")
+            .styled_detail(detail)
+            .width(24)
+            .view();
+
+        assert!(rendered.contains("\x1b[36mcargo"));
+        assert_eq!(visible_len(rendered.lines().next().unwrap()), 24);
+        assert!(strip_ansi(&rendered).starts_with("  • Running cargo"));
+    }
+
+    #[test]
+    fn plain_detail_uses_detail_color() {
+        let rendered = ActivityBlock::new("Running").detail("plain").view();
+
+        assert!(rendered.contains("\x1b[90mplain\x1b[0m"));
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let block = ActivityBlock::new("Running").with_theme(&theme);
+
+        assert_eq!(block.label_color, theme.color(ThemeRole::Primary));
+        assert_eq!(block.detail_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.active_color, theme.color(ThemeRole::Primary));
+        assert_eq!(block.inactive_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.output_color, theme.color(ThemeRole::Muted));
+        assert_eq!(block.connector_color, theme.color(ThemeRole::Border));
+    }
+
+    #[test]
     fn custom_margin_marker_and_connector_align_output() {
         let rendered = ActivityBlock::new("Sync")
             .marker(">>")
@@ -370,6 +480,66 @@ mod tests {
 
         assert!(rows[0].starts_with(" >> Sync…"));
         assert_eq!(rows[1], "    | done");
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let block = ActivityBlock::new("Running")
+            .margin(usize::MAX)
+            .width(8)
+            .line("ok");
+        let rendered = block.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(block.margin, MAX_ACTIVITY_BLOCK_MARGIN);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 8));
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(header) = &column.children[0] else {
+            panic!("expected header row");
+        };
+        let Element::Text(margin) = &header.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+
+        let Element::Box(output) = &column.children[1] else {
+            panic!("expected output row");
+        };
+        let Element::Text(indent) = &output.children[0] else {
+            panic!("expected output indent text");
+        };
+        assert_eq!(indent.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_width_is_clamped() {
+        let block = ActivityBlock::new("Running")
+            .detail("cargo test")
+            .width(usize::MAX)
+            .line("ok");
+        let rendered = block.view();
+
+        assert_eq!(block.width, Some(MAX_ACTIVITY_BLOCK_WIDTH));
+        assert!(rendered
+            .lines()
+            .all(|line| visible_len(line) == MAX_ACTIVITY_BLOCK_WIDTH));
+    }
+
+    #[test]
+    fn oversized_output_line_limit_is_clamped() {
+        let block = ActivityBlock::new("Running")
+            .max_output_lines(usize::MAX)
+            .width(24)
+            .text("one\ntwo");
+        let rendered = block.view();
+
+        assert_eq!(block.max_output_lines, MAX_ACTIVITY_BLOCK_OUTPUT_LINES);
+        assert_eq!(block.output_tail().len(), 2);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]

@@ -1,7 +1,11 @@
 use crate::element::{BorderStyle, BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{center_visible, fit_visible, wrap_words, Color, Style};
+use crate::style::{
+    center_visible, fit_visible, truncate_visible, visible_len, wrap_words, Color, Style,
+};
 use crossterm::event::KeyCode;
+
+const MAX_CONFIRM_WIDTH: usize = u16::MAX as usize;
 
 /// A confirmation dialog with Yes/No options.
 pub struct Confirm {
@@ -58,8 +62,12 @@ impl Confirm {
         self
     }
 
+    pub fn selected_yes(&self) -> bool {
+        self.selected
+    }
+
     pub fn max_width(mut self, width: usize) -> Self {
-        self.max_width = width.max(8);
+        self.max_width = width.clamp(8, MAX_CONFIRM_WIDTH);
         self
     }
 
@@ -112,37 +120,41 @@ impl Confirm {
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
+        self.element_with_content_width(None)
+    }
+
+    pub fn element_with_width<Msg>(&self, width: u16) -> Element<Msg> {
+        let width = width as usize;
+        if width == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        let content_width = self.max_width.min(width).saturating_sub(4).max(1);
+        self.element_with_content_width(Some(content_width))
+    }
+
+    fn element_with_content_width<Msg>(&self, content_width: Option<usize>) -> Element<Msg> {
         let mut children = Vec::new();
         if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            let title = Self::bounded_text(title, content_width);
             children.push(Element::Text(
                 TextElement::new(title).bold().fg(Color::BrightWhite),
             ));
         }
-        children.push(Element::Text(TextElement::new(&self.message).bold()));
 
-        let yes_el = if self.selected {
-            Element::Text(
-                TextElement::new(format!(" [{}] ", self.yes_label))
-                    .bold()
-                    .fg(Color::White)
-                    .bg(Color::Green),
-            )
+        if let Some(width) = content_width {
+            for line in wrap_words(&self.message, width.max(1)) {
+                children.push(Element::Text(TextElement::new(line).bold()));
+            }
         } else {
-            Element::Text(
-                TextElement::new(format!("  {}  ", self.yes_label)).fg(Color::BrightBlack),
-            )
-        };
+            children.push(Element::Text(TextElement::new(&self.message).bold()));
+        }
 
-        let no_el = if !self.selected {
-            Element::Text(
-                TextElement::new(format!(" [{}] ", self.no_label))
-                    .bold()
-                    .fg(Color::White)
-                    .bg(Color::Red),
-            )
-        } else {
-            Element::Text(TextElement::new(format!("  {}  ", self.no_label)).fg(Color::BrightBlack))
-        };
+        let button_width =
+            content_width.map(|width| width.saturating_sub(2).saturating_div(2).max(1));
+        let yes_el =
+            self.button_element(&self.yes_label, self.selected, Color::Green, button_width);
+        let no_el = self.button_element(&self.no_label, !self.selected, Color::Red, button_width);
 
         children.push(Element::Box(
             BoxElement::new()
@@ -152,7 +164,9 @@ impl Confirm {
                 .child(no_el),
         ));
         if let Some(hint) = self.hint.as_deref().filter(|hint| !hint.is_empty()) {
-            children.push(Element::Text(TextElement::new(hint).fg(Color::BrightBlack)));
+            children.push(Element::Text(
+                TextElement::new(Self::bounded_text(hint, content_width)).fg(Color::BrightBlack),
+            ));
         }
 
         Element::Box(
@@ -164,6 +178,37 @@ impl Confirm {
                 .gap(1)
                 .children(children),
         )
+    }
+
+    fn button_element<Msg>(
+        &self,
+        label: &str,
+        selected: bool,
+        selected_bg: Color,
+        width: Option<usize>,
+    ) -> Element<Msg> {
+        let raw = if selected {
+            format!(" [{label}] ")
+        } else {
+            format!("  {label}  ")
+        };
+        let content = Self::bounded_text(&raw, width);
+        if selected {
+            Element::Text(
+                TextElement::new(content)
+                    .bold()
+                    .fg(Color::White)
+                    .bg(selected_bg),
+            )
+        } else {
+            Element::Text(TextElement::new(content).fg(Color::BrightBlack))
+        }
+    }
+
+    fn bounded_text(value: &str, width: Option<usize>) -> String {
+        width
+            .map(|width| truncate_visible(value, width))
+            .unwrap_or_else(|| value.to_string())
     }
 
     /// Render a horizontally centered confirmation box.
@@ -204,6 +249,29 @@ impl Confirm {
             .map(|row| format!("{}{}", " ".repeat(left), self.style_line(&row)))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Render a compact inline confirmation row.
+    pub fn line(&self, width: u16) -> String {
+        let width = width as usize;
+        if width == 0 {
+            return String::new();
+        }
+
+        let prompt = self.compact_prompt();
+        let suffix = match self.hint.as_deref().filter(|hint| !hint.is_empty()) {
+            Some(hint) => format!("{prompt}  {hint}"),
+            None => prompt,
+        };
+        let suffix_len = visible_len(&suffix);
+        let message_width = width.saturating_sub(suffix_len.saturating_add(2));
+        let message = truncate_visible(&self.message, message_width);
+        let raw = if message.is_empty() {
+            suffix
+        } else {
+            format!("{message}  {suffix}")
+        };
+        fit_visible(&self.style_line(&raw), width)
     }
 
     /// Render a full-screen confirmation view centered in both axes.
@@ -253,6 +321,20 @@ impl Confirm {
             };
             format!("{yes} confirm     {no} cancel")
         }
+    }
+
+    fn compact_prompt(&self) -> String {
+        let yes = if self.selected {
+            format!("[{}]", self.yes_label)
+        } else {
+            self.yes_label.clone()
+        };
+        let no = if !self.selected {
+            format!("[{}]", self.no_label)
+        } else {
+            self.no_label.clone()
+        };
+        format!("{yes} / {no}")
     }
 
     fn style_line(&self, line: &str) -> String {
@@ -351,6 +433,15 @@ mod tests {
     }
 
     #[test]
+    fn oversized_max_width_is_clamped() {
+        let confirm = Confirm::new("Proceed?").max_width(usize::MAX);
+        let rendered = confirm.box_view(16);
+
+        assert_eq!(confirm.max_width, MAX_CONFIRM_WIDTH);
+        assert!(rendered.lines().all(|line| visible_len(line) <= 16));
+    }
+
+    #[test]
     fn danger_view_fills_requested_screen() {
         let rendered = Confirm::new("PID 42")
             .title("FORCE-KILL THIS PROCESS?")
@@ -366,10 +457,105 @@ mod tests {
     }
 
     #[test]
+    fn line_view_is_width_bounded_and_styled() {
+        let rendered = Confirm::new("Delete knowledge note?")
+            .with_labels("Delete", "Cancel")
+            .hint("Enter/y | n/Esc")
+            .danger()
+            .line(48);
+        let plain = crate::style::strip_ansi(&rendered);
+
+        assert_eq!(visible_len(&rendered), 48);
+        assert!(plain.contains("Delete"), "{plain}");
+        assert!(plain.contains("Enter/y"), "{plain}");
+        assert!(
+            rendered.contains("\x1b["),
+            "inline confirm should carry styling"
+        );
+    }
+
+    #[test]
+    fn line_view_handles_tiny_widths() {
+        assert_eq!(Confirm::new("Delete?").line(0), "");
+        assert_eq!(visible_len(&Confirm::new("Delete?").line(1)), 1);
+    }
+
+    #[test]
     fn selected_no_is_visible_in_prompt() {
         let rendered = Confirm::new("Continue?").selected(false).box_view(40);
         let plain = crate::style::strip_ansi(&rendered);
 
         assert!(plain.contains("[No] cancel"));
+    }
+
+    #[test]
+    fn element_with_width_zero_returns_empty_column() {
+        let el: Element<()> = Confirm::new("Continue?").element_with_width(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_width_wraps_long_message() {
+        let el: Element<()> = Confirm::new(
+            "Delete the selected workspace artifact and all generated runtime outputs?",
+        )
+        .title("Confirm destructive action")
+        .hint("Enter to confirm · Esc to cancel")
+        .element_with_width(24);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let texts = text_contents(&column.children);
+
+        assert!(texts.iter().any(|text| text.contains("Confirm")));
+        assert!(texts.iter().any(|text| text.contains("Delete")));
+        assert!(texts.iter().any(|text| text.contains("runtime")));
+        assert!(texts.iter().all(|text| visible_len(text) <= 20));
+    }
+
+    #[test]
+    fn element_with_width_truncates_long_button_labels() {
+        let el: Element<()> = Confirm::new("Proceed?")
+            .with_labels("Absolutely continue", "No, abort everything")
+            .element_with_width(18);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let Element::Box(buttons) = &column.children[1] else {
+            panic!("expected button row");
+        };
+
+        for child in &buttons.children {
+            let Element::Text(text) = child else {
+                panic!("expected button text");
+            };
+            assert!(visible_len(&text.content) <= 7, "{:?}", text.content);
+        }
+    }
+
+    fn text_contents<Msg>(elements: &[Element<Msg>]) -> Vec<&str> {
+        let mut out = Vec::new();
+        for element in elements {
+            collect_text_contents(element, &mut out);
+        }
+        out
+    }
+
+    fn collect_text_contents<'a, Msg>(element: &'a Element<Msg>, out: &mut Vec<&'a str>) {
+        match element {
+            Element::Text(text) => out.push(text.content.as_str()),
+            Element::Box(box_element) => {
+                for child in &box_element.children {
+                    collect_text_contents(child, out);
+                }
+            }
+            Element::Spacer | Element::_Phantom(_) => {}
+        }
     }
 }

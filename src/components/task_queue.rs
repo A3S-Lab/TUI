@@ -1,5 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_TASK_QUEUE_MARGIN: usize = u16::MAX as usize;
+const MAX_TASK_QUEUE_QUEUED_ROWS: usize = u16::MAX as usize;
 
 /// Pinned queued-task panel with a running task and ordered queue rows.
 ///
@@ -78,12 +82,12 @@ impl TaskQueue {
     }
 
     pub fn max_queued_rows(mut self, max_queued_rows: usize) -> Self {
-        self.max_queued_rows = max_queued_rows;
+        self.max_queued_rows = max_queued_rows.clamp(1, MAX_TASK_QUEUE_QUEUED_ROWS);
         self
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_TASK_QUEUE_MARGIN);
         self
     }
 
@@ -125,6 +129,13 @@ impl TaskQueue {
 
     pub fn queued_color(mut self, color: Color) -> Self {
         self.queued_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_color = theme.color(ThemeRole::Border);
+        self.running_color = theme.color(ThemeRole::Warning);
+        self.queued_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -182,24 +193,27 @@ impl TaskQueue {
     }
 
     fn render_header(&self, width: usize) -> String {
+        let margin = self.margin_for_width(width);
         let prefix = format!(
             "{}{} {} · ✓ {} done ",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             self.divider,
             self.title.trim(),
             self.completed
         );
-        let fill = self
-            .divider
-            .to_string()
-            .repeat(width.saturating_sub(visible_len(&prefix)));
+        let fill = repeat_visible_char(self.divider, width.saturating_sub(visible_len(&prefix)));
         Style::new()
             .fg(self.header_color)
             .render(&fit_visible(&format!("{prefix}{fill}"), width))
     }
 
     fn render_task_row(&self, marker: &str, text: &str, color: Color, width: usize) -> String {
-        let raw = format!("{}{} {}", " ".repeat(self.margin), marker, text.trim());
+        let raw = format!(
+            "{}{} {}",
+            " ".repeat(self.margin_for_width(width)),
+            marker,
+            text.trim()
+        );
         Style::new().fg(color).render(&fit_visible(&raw, width))
     }
 
@@ -227,7 +241,7 @@ impl TaskQueue {
     fn header_text(&self) -> String {
         format!(
             "{}{} {} · ✓ {} done",
-            " ".repeat(self.margin),
+            " ".repeat(self.margin_for_element()),
             self.divider,
             self.title.trim(),
             self.completed
@@ -242,7 +256,9 @@ impl TaskQueue {
         bold: bool,
     ) -> Element<Msg> {
         let mut row = BoxElement::new().direction(FlexDirection::Row);
-        row = row.child(Element::Text(TextElement::new(" ".repeat(self.margin))));
+        row = row.child(Element::Text(TextElement::new(
+            " ".repeat(self.margin_for_element()),
+        )));
 
         let mut marker_text = TextElement::new(marker).fg(color);
         if bold {
@@ -254,6 +270,14 @@ impl TaskQueue {
             .child(Element::Text(TextElement::new(text.trim()).fg(color)));
 
         Element::Box(row)
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_TASK_QUEUE_MARGIN)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_TASK_QUEUE_MARGIN)
     }
 }
 
@@ -361,6 +385,80 @@ mod tests {
         for row in plain.lines() {
             assert_eq!(visible_len(row), 24, "{row:?}");
         }
+    }
+
+    #[test]
+    fn wide_divider_fills_header_by_display_width() {
+        let view = TaskQueue::new()
+            .divider('界')
+            .queued(QueuedTask::new("first"))
+            .view(48);
+        let plain = strip_ansi(&view);
+        let header = plain.lines().next().unwrap();
+
+        assert_eq!(visible_len(header), 48);
+        assert!(header.starts_with("  界 tasks"));
+        assert!(header.matches('界').count() > 1);
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let queue = TaskQueue::new().with_theme(&theme);
+
+        assert_eq!(queue.header_color, theme.color(ThemeRole::Border));
+        assert_eq!(queue.running_color, theme.color(ThemeRole::Warning));
+        assert_eq!(queue.queued_color, theme.color(ThemeRole::Muted));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let queue = TaskQueue::new()
+            .margin(usize::MAX)
+            .queued(QueuedTask::new("first"));
+        let view = queue.view(8);
+
+        assert_eq!(queue.margin, MAX_TASK_QUEUE_MARGIN);
+        assert!(view.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = queue.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(row) = &column.children[1] else {
+            panic!("expected queued row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), MAX_TASK_QUEUE_MARGIN);
+    }
+
+    #[test]
+    fn oversized_queued_row_limit_is_clamped() {
+        let queue = TaskQueue::new()
+            .max_queued_rows(usize::MAX)
+            .queued(QueuedTask::new("one"))
+            .queued(QueuedTask::new("two"));
+        let view = queue.view(24);
+
+        assert_eq!(queue.max_queued_rows, MAX_TASK_QUEUE_QUEUED_ROWS);
+        assert_eq!(queue.visible_queued().len(), 2);
+        assert!(view.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
+    fn zero_queued_row_limit_keeps_one_row_visible() {
+        let queue = TaskQueue::new()
+            .max_queued_rows(0)
+            .queued(QueuedTask::new("one"))
+            .queued(QueuedTask::new("two"));
+        let view = queue.view(24);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(queue.max_queued_rows, 1);
+        assert_eq!(queue.visible_queued().len(), 1);
+        assert!(plain.contains("▱ one"));
+        assert!(!plain.contains("▱ two"));
     }
 
     #[test]

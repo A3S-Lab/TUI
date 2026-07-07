@@ -1,7 +1,15 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use crate::style::{fit_visible, strip_ansi, truncate_visible, visible_len, Color, Style};
+use crate::interaction::{Activatable, Scrollable, Selectable};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, strip_ansi, truncate_visible,
+    visible_len, Color, Style,
+};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
+
+const MAX_PREVIEW_PANEL_INDENT: usize = u16::MAX as usize;
+const MAX_PREVIEW_PANEL_ITEMS: usize = u16::MAX as usize;
 
 /// One selectable row in a [`PreviewPanel`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,7 +169,7 @@ impl PreviewPanel {
     }
 
     pub fn max_items(mut self, max_items: usize) -> Self {
-        self.max_items = Some(max_items.max(1));
+        self.max_items = Some(max_items.clamp(1, MAX_PREVIEW_PANEL_ITEMS));
         self
     }
 
@@ -181,7 +189,10 @@ impl PreviewPanel {
     }
 
     pub fn preview_text(mut self, text: impl AsRef<str>) -> Self {
-        self.preview_lines = text.as_ref().lines().map(str::to_string).collect();
+        self.preview_lines = split_nonempty_lines_preserving_trailing_blank(text.as_ref())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         self
     }
 
@@ -205,7 +216,7 @@ impl PreviewPanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_PREVIEW_PANEL_INDENT);
         self
     }
 
@@ -258,6 +269,20 @@ impl PreviewPanel {
         self
     }
 
+    /// Apply semantic colors from a theme while preserving content and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.title_color = theme.color(ThemeRole::Primary);
+        self.subtitle_color = theme.color(ThemeRole::Muted);
+        self.text_color = theme.color(ThemeRole::Foreground);
+        self.muted_color = theme.color(ThemeRole::Muted);
+        self.selected_fg = theme.color(ThemeRole::Foreground);
+        self.selected_bg = theme.color(ThemeRole::Highlight);
+        self.disabled_color = theme.color(ThemeRole::Muted);
+        self.preview_color = theme.color(ThemeRole::Foreground);
+        self.divider_color = theme.color(ThemeRole::Border);
+        self
+    }
+
     pub fn set_y_offset(&mut self, y: u16) {
         self.y_offset = y;
     }
@@ -271,36 +296,42 @@ impl PreviewPanel {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.normalized_selected()
     }
 
     pub fn selected_item(&self) -> Option<&PreviewItem> {
-        self.items.get(self.selected)
+        self.items.get(self.normalized_selected())
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<PreviewPanelMsg> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                self.selected = self.normalized_selected().saturating_sub(1);
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < self.items.len() {
-                    self.selected += 1;
+                let selected = self.normalized_selected();
+                if selected.saturating_add(1) < self.items.len() {
+                    self.selected = selected + 1;
+                } else {
+                    self.selected = selected;
                 }
                 self.keep_selected_visible(1);
                 None
             }
             KeyCode::PageUp => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = self.selected.saturating_sub(step);
+                self.selected = self.normalized_selected().saturating_sub(step);
                 self.keep_selected_visible(step);
                 None
             }
             KeyCode::PageDown => {
                 let step = self.max_items.unwrap_or(10);
-                self.selected = (self.selected + step).min(self.items.len().saturating_sub(1));
+                self.selected = self
+                    .normalized_selected()
+                    .saturating_add(step)
+                    .min(self.items.len().saturating_sub(1));
                 self.keep_selected_visible(step);
                 None
             }
@@ -315,10 +346,12 @@ impl PreviewPanel {
                 None
             }
             KeyCode::Enter => {
-                if self.items.is_empty() || self.items[self.selected].disabled {
+                let selected = self.normalized_selected();
+                let item = self.items.get(selected)?;
+                if item.disabled {
                     None
                 } else {
-                    Some(PreviewPanelMsg::Selected(self.selected))
+                    Some(PreviewPanelMsg::Selected(selected))
                 }
             }
             KeyCode::Esc => Some(PreviewPanelMsg::Cancelled),
@@ -328,8 +361,23 @@ impl PreviewPanel {
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> Option<PreviewPanelMsg> {
         match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                self.selected = self.normalized_selected().saturating_sub(1);
+                self.keep_selected_visible(1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                super::relative_mouse_row(mouse.row, self.y_offset)?;
+                let selected = self.normalized_selected();
+                self.selected = selected
+                    .saturating_add(1)
+                    .min(self.items.len().saturating_sub(1));
+                self.keep_selected_visible(1);
+                None
+            }
             MouseEventKind::Down(MouseButton::Left) => {
-                let local_row = mouse.row.saturating_sub(self.y_offset) as usize;
+                let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
                 let item_row = local_row.checked_sub(self.item_start_row())?;
                 let item_count = self.visible_item_count_for_height(usize::MAX);
                 if item_row >= item_count {
@@ -389,16 +437,9 @@ impl PreviewPanel {
             ));
         }
 
-        for (index, item) in self.items.iter().enumerate() {
-            let mut text = TextElement::new(self.plain_item_line(index, None));
-            if index == self.selected {
-                text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
-            } else if item.disabled {
-                text = text.fg(self.disabled_color);
-            } else {
-                text = text.fg(item.color.unwrap_or(self.text_color));
-            }
-            children.push(Element::Text(text));
+        let selected = self.normalized_selected();
+        for index in self.element_item_range() {
+            children.push(Element::Text(self.item_text_element(index, selected)));
         }
 
         if let Some(title) = self
@@ -406,18 +447,71 @@ impl PreviewPanel {
             .as_deref()
             .filter(|title| !title.is_empty())
         {
-            children.push(Element::Text(
-                TextElement::new(format!("── {title} ──")).fg(self.divider_color),
-            ));
+            children.push(Element::Text(self.preview_divider_element(title)));
         }
         for line in &self.preview_lines {
-            children.push(Element::Text(
-                TextElement::new(strip_ansi(line)).fg(self.preview_color),
-            ));
+            children.push(Element::Text(self.preview_line_element(line)));
         }
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, height: usize) -> Element<Msg> {
+        let mut children = Vec::new();
+        if let Some(title) = self.title.as_deref().filter(|title| !title.is_empty()) {
+            children.push(Element::Text(
+                TextElement::new(title).fg(self.title_color).bold(),
+            ));
+        }
+        if let Some(subtitle) = self
+            .subtitle
+            .as_deref()
+            .filter(|subtitle| !subtitle.is_empty())
+        {
+            children.push(Element::Text(
+                TextElement::new(subtitle).fg(self.subtitle_color),
+            ));
+        }
+
+        let visible_items = self.visible_item_count_for_height(height);
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        let selected = self.normalized_selected();
+        for index in start..end {
+            children.push(Element::Text(self.item_text_element(index, selected)));
+        }
+
+        if let Some(title) = self
+            .preview_title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .filter(|_| children.len() < height)
+        {
+            children.push(Element::Text(self.preview_divider_element(title)));
+        }
+
+        let preview_slots = height.saturating_sub(children.len() + self.footer_rows());
+        for line in self.preview_lines.iter().take(preview_slots) {
+            children.push(Element::Text(self.preview_line_element(line)));
+        }
+
+        if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
+            children.push(Element::Text(TextElement::new(footer).fg(self.muted_color)));
+        }
+
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
+            }
         }
 
         Element::Box(
@@ -435,7 +529,7 @@ impl PreviewPanel {
                     .fg(self.title_color)
                     .bold()
                     .render(&fit_visible(
-                        &format!("{}{}", " ".repeat(self.indent), title),
+                        &format!("{}{}", " ".repeat(self.indent_for_width(width)), title),
                         width,
                     )),
             );
@@ -446,7 +540,7 @@ impl PreviewPanel {
             .filter(|subtitle| !subtitle.is_empty())
         {
             lines.push(Style::new().fg(self.subtitle_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), subtitle),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), subtitle),
                 width,
             )));
         }
@@ -467,7 +561,7 @@ impl PreviewPanel {
             lines.push(self.render_preview_divider(title, width));
         }
 
-        let preview_indent = " ".repeat(self.indent + 2);
+        let preview_indent = " ".repeat(self.preview_indent_for_width(width));
         let preview_width = width.saturating_sub(visible_len(&preview_indent));
         let preview_slots = height.saturating_sub(lines.len() + self.footer_rows());
         for line in self.preview_lines.iter().take(preview_slots) {
@@ -479,7 +573,7 @@ impl PreviewPanel {
 
         if let Some(footer) = self.footer.as_deref().filter(|footer| !footer.is_empty()) {
             lines.push(Style::new().fg(self.muted_color).render(&fit_visible(
-                &format!("{}{}", " ".repeat(self.indent), footer),
+                &format!("{}{}", " ".repeat(self.indent_for_width(width)), footer),
                 width,
             )));
         }
@@ -487,10 +581,31 @@ impl PreviewPanel {
         lines
     }
 
+    fn item_text_element(&self, index: usize, selected: usize) -> TextElement {
+        let item = &self.items[index];
+        let mut text = TextElement::new(self.plain_item_line(index, None));
+        if index == selected {
+            text = text.fg(self.selected_fg).bg(self.selected_bg).bold();
+        } else if item.disabled {
+            text = text.fg(self.disabled_color);
+        } else {
+            text = text.fg(item.color.unwrap_or(self.text_color));
+        }
+        text
+    }
+
+    fn preview_divider_element(&self, title: &str) -> TextElement {
+        TextElement::new(format!("── {title} ──")).fg(self.divider_color)
+    }
+
+    fn preview_line_element(&self, line: &str) -> TextElement {
+        TextElement::new(strip_ansi(line)).fg(self.preview_color)
+    }
+
     fn render_item(&self, index: usize, width: usize) -> String {
         let raw = fit_visible(&self.plain_item_line(index, Some(width)), width);
         let item = &self.items[index];
-        if index == self.selected {
+        if index == self.normalized_selected() {
             Style::new()
                 .fg(self.selected_fg)
                 .bg(self.selected_bg)
@@ -508,12 +623,15 @@ impl PreviewPanel {
         let Some(item) = self.items.get(index) else {
             return String::new();
         };
-        let marker = if index == self.selected {
+        let marker = if index == self.normalized_selected() {
             self.marker.as_str()
         } else {
             " "
         };
-        let prefix = format!("{}{} ", " ".repeat(self.indent), marker);
+        let prefix = match width {
+            Some(width) => self.item_prefix_for_width(marker, width),
+            None => self.item_prefix_for_element(marker),
+        };
         let mut label = item.label.clone();
         if let Some(description) = item
             .description
@@ -530,7 +648,7 @@ impl PreviewPanel {
     }
 
     fn render_preview_divider(&self, title: &str, width: usize) -> String {
-        let indent = " ".repeat(self.indent);
+        let indent = " ".repeat(self.indent_for_width(width));
         let label = format!("{indent}── {title} ");
         let fill = "─".repeat(width.saturating_sub(visible_len(&label)));
         Style::new()
@@ -556,12 +674,23 @@ impl PreviewPanel {
         }
         let max_start = self.items.len().saturating_sub(visible_items);
         let mut start = self.scroll.min(max_start);
-        if self.selected < start {
-            start = self.selected;
-        } else if self.selected >= start + visible_items {
-            start = self.selected + 1 - visible_items;
+        let selected = self.normalized_selected();
+        if selected < start {
+            start = selected;
+        } else if selected >= start + visible_items {
+            start = selected + 1 - visible_items;
         }
         start.min(max_start)
+    }
+
+    fn element_item_range(&self) -> std::ops::Range<usize> {
+        let visible_items = self
+            .max_items
+            .unwrap_or(self.items.len())
+            .min(self.items.len());
+        let start = self.window_start(visible_items);
+        let end = start.saturating_add(visible_items).min(self.items.len());
+        start..end
     }
 
     fn keep_selected_visible(&mut self, window_hint: usize) {
@@ -595,13 +724,74 @@ impl PreviewPanel {
     }
 
     fn clamp_selection(&mut self) {
-        self.selected = self.selected.min(self.items.len().saturating_sub(1));
+        self.selected = self.normalized_selected();
+    }
+
+    fn normalized_selected(&self) -> usize {
+        self.selected.min(self.items.len().saturating_sub(1))
+    }
+
+    fn indent_for_width(&self, width: usize) -> usize {
+        self.indent.min(width).min(MAX_PREVIEW_PANEL_INDENT)
+    }
+
+    fn preview_indent_for_width(&self, width: usize) -> usize {
+        self.indent
+            .min(MAX_PREVIEW_PANEL_INDENT)
+            .saturating_add(2)
+            .min(width)
+    }
+
+    fn item_prefix_for_width(&self, marker: &str, width: usize) -> String {
+        let tail = truncate_visible(&format!("{marker} "), width);
+        let tail_width = visible_len(&tail);
+        let indent = self.indent.min(width.saturating_sub(tail_width));
+        format!("{}{}", " ".repeat(indent), tail)
+    }
+
+    fn item_prefix_for_element(&self, marker: &str) -> String {
+        format!("{}{} ", " ".repeat(self.indent_for_element()), marker)
+    }
+
+    fn indent_for_element(&self) -> usize {
+        self.indent.min(MAX_PREVIEW_PANEL_INDENT)
     }
 }
 
 impl Default for PreviewPanel {
     fn default() -> Self {
         Self::without_title()
+    }
+}
+
+impl Selectable for PreviewPanel {
+    fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        (!self.items.is_empty()).then(|| self.normalized_selected())
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = index;
+        self.clamp_selection();
+    }
+}
+
+impl Scrollable for PreviewPanel {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.items.len().saturating_sub(1));
+    }
+}
+
+impl Activatable for PreviewPanel {
+    fn is_item_disabled(&self, index: usize) -> bool {
+        self.items.get(index).is_some_and(PreviewItem::is_disabled)
     }
 }
 
@@ -630,6 +820,19 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = PreviewPanel::without_title().with_theme(&theme);
+
+        assert_eq!(panel.title_color, theme.color(ThemeRole::Primary));
+        assert_eq!(panel.subtitle_color, theme.color(ThemeRole::Muted));
+        assert_eq!(panel.text_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.selected_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(panel.preview_color, theme.color(ThemeRole::Foreground));
+        assert_eq!(panel.divider_color, theme.color(ThemeRole::Border));
+    }
+
+    #[test]
     fn renders_items_and_preview_lines() {
         let rendered = sample().view(48, 10);
         let plain = strip_ansi(&rendered);
@@ -643,6 +846,20 @@ mod tests {
         for line in rendered.lines() {
             assert_eq!(visible_len(line), 48, "{line:?}");
         }
+    }
+
+    #[test]
+    fn preview_text_preserves_trailing_blank_line() {
+        let panel = PreviewPanel::new("Theme").preview_text("sample\n");
+
+        assert_eq!(panel.preview_lines_value(), ["sample", ""]);
+    }
+
+    #[test]
+    fn empty_preview_text_keeps_preview_empty() {
+        let panel = PreviewPanel::new("Theme").preview_text("");
+
+        assert!(panel.preview_lines_value().is_empty());
     }
 
     #[test]
@@ -706,9 +923,172 @@ mod tests {
     }
 
     #[test]
+    fn mouse_click_above_offset_is_ignored() {
+        let mut panel = sample();
+        panel.set_y_offset(4);
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 1);
+    }
+
+    #[test]
+    fn mouse_wheel_updates_selected_preview_item() {
+        let mut panel = sample();
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 2,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 2);
+
+        assert_eq!(
+            panel.handle_mouse(&MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 0,
+                row: 2,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            None
+        );
+        assert_eq!(panel.selected_index(), 1);
+    }
+
+    #[test]
+    fn mouse_wheel_above_offset_is_ignored() {
+        let mut panel = sample();
+        panel.set_y_offset(4);
+
+        let msg = panel.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert_eq!(msg, None);
+        assert_eq!(panel.selected_index(), 1);
+    }
+
+    #[test]
+    fn huge_page_down_saturates_selection() {
+        let mut panel = sample().selected(1).max_items(usize::MAX);
+        let page_down = KeyEvent {
+            code: KeyCode::PageDown,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        assert_eq!(panel.handle_key(&page_down), None);
+
+        assert_eq!(panel.selected_index(), panel.items_value().len() - 1);
+    }
+
+    #[test]
+    fn stale_selection_is_normalized_for_rendering_and_input() {
+        let mut panel = PreviewPanel::new("Theme")
+            .max_items(1)
+            .item(PreviewItem::new("one"))
+            .item(PreviewItem::new("two"))
+            .preview_line("sample");
+        panel.selected = usize::MAX;
+
+        assert_eq!(panel.selected_index(), 1);
+        assert_eq!(panel.selected_item().map(PreviewItem::label), Some("two"));
+
+        let enter = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&enter), Some(PreviewPanelMsg::Selected(1)));
+
+        let plain = strip_ansi(&panel.view(24, 5));
+        assert!(plain.contains("▸ two"));
+        assert!(!plain.contains("▸ one"));
+
+        let Element::Box(box_el) = panel.element::<()>() else {
+            panic!("expected box element");
+        };
+        assert_eq!(box_el.children.len(), 4);
+        let Element::Text(last_item) = &box_el.children[1] else {
+            panic!("expected selected item");
+        };
+        assert_eq!(last_item.content, "  ▸ two");
+
+        let down = KeyEvent {
+            code: KeyCode::Down,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&down), None);
+        assert_eq!(panel.selected_index(), 1);
+
+        let up = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(panel.handle_key(&up), None);
+        assert_eq!(panel.selected_index(), 0);
+    }
+
+    #[test]
     fn zero_size_renders_empty_string() {
         assert_eq!(sample().view(0, 8), "");
         assert_eq!(sample().view(40, 0), "");
+    }
+
+    #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let panel = PreviewPanel::new("Theme")
+            .subtitle("pick")
+            .indent(usize::MAX)
+            .item(PreviewItem::new("Atom").description("default"))
+            .preview_title("preview")
+            .preview_line("let x = 1;")
+            .footer("footer")
+            .fill_height(true);
+        let rendered = panel.view(8, 6);
+        let item = panel.plain_item_line(0, Some(8));
+        let divider = panel.render_preview_divider("preview", 8);
+
+        assert_eq!(panel.indent, MAX_PREVIEW_PANEL_INDENT);
+        assert_eq!(panel.indent_for_width(8), 8);
+        assert_eq!(panel.preview_indent_for_width(8), 8);
+        assert_eq!(visible_len(&item), 8);
+        assert_eq!(visible_len(&divider), 8);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Text(item) = &column.children[2] else {
+            panic!("expected item text");
+        };
+        assert_eq!(
+            visible_len(&item.content),
+            MAX_PREVIEW_PANEL_INDENT + visible_len("▸ Atom  default")
+        );
+    }
+
+    #[test]
+    fn oversized_item_limit_is_clamped() {
+        let panel = PreviewPanel::new("Theme")
+            .max_items(usize::MAX)
+            .item(PreviewItem::new("Atom"))
+            .item(PreviewItem::new("Ayu"));
+        let rendered = panel.view(24, 4);
+
+        assert_eq!(panel.max_items, Some(MAX_PREVIEW_PANEL_ITEMS));
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
     }
 
     #[test]
@@ -722,5 +1102,91 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_respects_max_items_window() {
+        let items = (0..5)
+            .map(|index| PreviewItem::new(format!("entry-{index}")))
+            .collect::<Vec<_>>();
+        let el: Element<()> = PreviewPanel::without_title()
+            .items(items)
+            .without_preview_title()
+            .selected(3)
+            .scroll(1)
+            .max_items(3)
+            .element();
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("entry-1"));
+        assert!(text.contains("entry-2"));
+        assert!(text.contains("entry-3"));
+        assert!(!text.contains("entry-0"));
+        assert!(!text.contains("entry-4"));
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_items_and_preview_budget() {
+        let el: Element<()> = sample().selected(2).element_with_height(6);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 6);
+        assert!(text.contains("Theme"), "{text:?}");
+        assert!(text.contains("Quiet Light"), "{text:?}");
+        assert!(text.contains("syntax preview"), "{text:?}");
+        assert!(text.contains("// syntax preview"), "{text:?}");
+        assert!(text.contains("↑/↓ preview"), "{text:?}");
+        assert!(!text.contains("fn compute"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = PreviewPanel::without_title()
+            .without_preview_title()
+            .item(PreviewItem::new("only"))
+            .fill_height(true)
+            .element_with_height(3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], "  ▸ only");
+        assert_eq!(rows[1], "");
+        assert_eq!(rows[2], "");
     }
 }

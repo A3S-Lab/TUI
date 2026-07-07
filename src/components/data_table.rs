@@ -1,4 +1,12 @@
-use crate::style::{truncate_visible, visible_len, Color, Style};
+use crate::element::{BoxElement, Element, FlexDirection, TextElement};
+use crate::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::interaction::{Scrollable, Selectable};
+use crate::style::{center_visible, fit_visible, right_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_DATA_COLUMN_WIDTH: usize = u16::MAX as usize;
+const MAX_DATA_ROW_CELL_STYLES: usize = u16::MAX as usize;
+const MAX_DATA_TABLE_GAP: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellAlign {
@@ -32,12 +40,12 @@ impl DataColumn {
     }
 
     pub fn width(mut self, width: usize) -> Self {
-        self.width = Some(width.max(1));
+        self.width = Some(width.clamp(1, MAX_DATA_COLUMN_WIDTH));
         self
     }
 
     pub fn min_width(mut self, width: usize) -> Self {
-        self.min_width = width.max(1);
+        self.min_width = width.clamp(1, MAX_DATA_COLUMN_WIDTH);
         self
     }
 
@@ -102,8 +110,9 @@ impl DataRow {
     }
 
     pub fn cell_fg(mut self, index: usize, color: Color) -> Self {
+        let index = index.min(MAX_DATA_ROW_CELL_STYLES.saturating_sub(1));
         if index >= self.cell_fg.len() {
-            self.cell_fg.resize(index + 1, None);
+            self.cell_fg.resize(index.saturating_add(1), None);
         }
         self.cell_fg[index] = Some(color);
         self
@@ -132,10 +141,16 @@ pub struct DataTable {
     rows: Vec<DataRow>,
     selected: Option<usize>,
     scroll: usize,
+    y_offset: u16,
     gap: usize,
     header_fg: Color,
     separator_fg: Color,
     empty: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataTableMsg {
+    Selected(usize),
 }
 
 impl DataTable {
@@ -145,6 +160,7 @@ impl DataTable {
             rows: Vec::new(),
             selected: None,
             scroll: 0,
+            y_offset: 0,
             gap: 2,
             header_fg: Color::BrightWhite,
             separator_fg: Color::BrightBlack,
@@ -172,7 +188,7 @@ impl DataTable {
     }
 
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_DATA_TABLE_GAP);
         self
     }
 
@@ -191,8 +207,75 @@ impl DataTable {
         self
     }
 
+    /// Apply semantic colors from a theme while preserving rows and layout.
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.header_fg = theme.color(ThemeRole::Foreground);
+        self.separator_fg = theme.color(ThemeRole::Border);
+        self
+    }
+
     pub fn rows(&self) -> &[DataRow] {
         &self.rows
+    }
+
+    pub fn selected_index(&self) -> Option<usize> {
+        self.normalized_selected()
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    pub fn set_y_offset(&mut self, y_offset: u16) {
+        self.y_offset = y_offset;
+    }
+
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent, height: usize) -> Option<DataTableMsg> {
+        let local_row = super::relative_mouse_row(mouse.row, self.y_offset)?;
+        if height == 0 || local_row >= height || self.rows.is_empty() {
+            return None;
+        }
+
+        let body_height = height.saturating_sub(2);
+        if body_height == 0 {
+            return None;
+        }
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                let selected = self.normalized_selected().unwrap_or(0);
+                self.selected = Some(selected.saturating_sub(1));
+                self.keep_selected_visible(body_height);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                let selected = self.normalized_selected().unwrap_or(0);
+                self.selected = Some(
+                    selected
+                        .saturating_add(1)
+                        .min(self.rows.len().saturating_sub(1)),
+                );
+                self.keep_selected_visible(body_height);
+                None
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let body_row = local_row.checked_sub(2)?;
+                if body_row >= body_height {
+                    return None;
+                }
+                let index = self
+                    .visible_body_start(body_height)
+                    .saturating_add(body_row);
+                if index < self.rows.len() {
+                    self.selected = Some(index);
+                    self.keep_selected_visible(body_height);
+                    Some(DataTableMsg::Selected(index))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     pub fn view(&self, width: u16, height: usize) -> String {
@@ -207,6 +290,8 @@ impl DataTable {
         }
 
         let widths = self.column_widths(&cols, width);
+        let gap = self.gap_for_width(width, cols.len());
+        let gap_text = " ".repeat(gap);
         let mut lines = Vec::new();
         let header = cols
             .iter()
@@ -216,12 +301,12 @@ impl DataTable {
                 format_cell(&column.header_label(), *w, column.align)
             })
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap));
+            .join(&gap_text);
         lines.push(
             Style::new()
                 .fg(self.header_fg)
                 .bold()
-                .render(&pad_or_truncate(&header, width)),
+                .render(&fit_visible(&header, width)),
         );
 
         if height == 1 {
@@ -232,11 +317,11 @@ impl DataTable {
             .iter()
             .map(|w| "─".repeat(*w))
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap));
+            .join(&gap_text);
         lines.push(
             Style::new()
                 .fg(self.separator_fg)
-                .render(&pad_or_truncate(&sep, width)),
+                .render(&fit_visible(&sep, width)),
         );
 
         if height == 2 {
@@ -249,21 +334,18 @@ impl DataTable {
                 Style::new()
                     .fg(Color::BrightBlack)
                     .italic()
-                    .render(&pad_or_truncate(msg, width)),
+                    .render(&fit_visible(msg, width)),
             );
             return lines.join("\n");
         }
 
         let body_height = height.saturating_sub(2);
-        let start = self.scroll.min(
-            self.rows
-                .len()
-                .saturating_sub(body_height.min(self.rows.len())),
-        );
+        let start = self.visible_body_start(body_height);
+        let selected_row = self.normalized_selected();
         for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
-            let selected = self.selected == Some(idx);
-            let raw = self.row_line(row, &cols, &widths, selected);
-            let line = pad_or_truncate(&raw, width);
+            let selected = selected_row == Some(idx);
+            let raw = self.row_line(row, &cols, &widths, selected, &gap_text);
+            let line = fit_visible(&raw, width);
             let mut style = Style::new();
             if selected {
                 if let Some(fg) = row.selected_fg {
@@ -288,7 +370,101 @@ impl DataTable {
         lines.join("\n")
     }
 
-    fn row_line(&self, row: &DataRow, cols: &[usize], widths: &[usize], selected: bool) -> String {
+    pub fn element<Msg>(&self, width: u16, height: usize) -> Element<Msg> {
+        let width = width as usize;
+        let mut children = Vec::new();
+        if width == 0 || height == 0 {
+            return data_table_column(children);
+        }
+
+        let cols = self.visible_columns_for_width(width);
+        if cols.is_empty() {
+            return data_table_column(children);
+        }
+
+        let widths = self.column_widths(&cols, width);
+        let gap = self.gap_for_width(width, cols.len());
+        let gap_text = " ".repeat(gap);
+        let header = cols
+            .iter()
+            .zip(widths.iter())
+            .map(|(idx, w)| {
+                let column = &self.columns[*idx];
+                format_cell(&column.header_label(), *w, column.align)
+            })
+            .collect::<Vec<_>>()
+            .join(&gap_text);
+        children.push(Element::Text(
+            TextElement::new(fit_visible(&header, width))
+                .fg(self.header_fg)
+                .bold(),
+        ));
+
+        if height == 1 {
+            return data_table_column(children);
+        }
+
+        let sep = widths
+            .iter()
+            .map(|w| "─".repeat(*w))
+            .collect::<Vec<_>>()
+            .join(&gap_text);
+        children.push(Element::Text(
+            TextElement::new(fit_visible(&sep, width)).fg(self.separator_fg),
+        ));
+
+        if height == 2 {
+            return data_table_column(children);
+        }
+
+        if self.rows.is_empty() {
+            let msg = self.empty.as_deref().unwrap_or("no rows");
+            children.push(Element::Text(
+                TextElement::new(fit_visible(msg, width))
+                    .fg(Color::BrightBlack)
+                    .italic(),
+            ));
+            return data_table_column(children);
+        }
+
+        let body_height = height.saturating_sub(2);
+        let start = self.visible_body_start(body_height);
+        let selected_row = self.normalized_selected();
+        for (idx, row) in self.rows.iter().enumerate().skip(start).take(body_height) {
+            let selected = selected_row == Some(idx);
+            let raw = self.plain_row_line(row, &cols, &widths, &gap_text);
+            let mut text = TextElement::new(fit_visible(&raw, width));
+            if selected {
+                if let Some(fg) = row.selected_fg {
+                    text = text.fg(fg);
+                }
+                text = text.bg(row.selected_bg.or(row.fg).unwrap_or(Color::Blue));
+                text = text.bold();
+            } else {
+                if let Some(fg) = row.fg {
+                    text = text.fg(fg);
+                }
+                if let Some(bg) = row.bg {
+                    text = text.bg(bg);
+                }
+                if row.bold {
+                    text = text.bold();
+                }
+            }
+            children.push(Element::Text(text));
+        }
+
+        data_table_column(children)
+    }
+
+    fn row_line(
+        &self,
+        row: &DataRow,
+        cols: &[usize],
+        widths: &[usize],
+        selected: bool,
+        gap: &str,
+    ) -> String {
         cols.iter()
             .zip(widths.iter())
             .map(|(col_idx, w)| {
@@ -304,7 +480,19 @@ impl DataTable {
                 }
             })
             .collect::<Vec<_>>()
-            .join(&" ".repeat(self.gap))
+            .join(gap)
+    }
+
+    fn plain_row_line(&self, row: &DataRow, cols: &[usize], widths: &[usize], gap: &str) -> String {
+        cols.iter()
+            .zip(widths.iter())
+            .map(|(col_idx, w)| {
+                let column = &self.columns[*col_idx];
+                let cell = row.cells.get(*col_idx).map_or("", String::as_str);
+                format_cell(cell, *w, column.align)
+            })
+            .collect::<Vec<_>>()
+            .join(gap)
     }
 
     fn visible_columns(&self) -> Vec<usize> {
@@ -321,7 +509,7 @@ impl DataTable {
             return cols;
         }
 
-        while cols.len() > 1 && self.requested_total_width(&cols) > width {
+        while cols.len() > 1 && self.requested_total_width(&cols, width) > width {
             let Some(lowest_priority) = cols
                 .iter()
                 .filter_map(|idx| self.columns[*idx].priority)
@@ -341,13 +529,13 @@ impl DataTable {
         cols
     }
 
-    fn requested_total_width(&self, cols: &[usize]) -> usize {
-        let gap_total = self.gap.saturating_mul(cols.len().saturating_sub(1));
-        gap_total
-            + cols
-                .iter()
-                .map(|idx| self.requested_column_width(*idx))
-                .sum::<usize>()
+    fn requested_total_width(&self, cols: &[usize], width: usize) -> usize {
+        cols.iter()
+            .map(|idx| self.requested_column_width(*idx))
+            .fold(
+                self.gap_total_for_width(width, cols.len()),
+                usize::saturating_add,
+            )
     }
 
     fn requested_column_width(&self, idx: usize) -> usize {
@@ -366,7 +554,7 @@ impl DataTable {
     }
 
     fn column_widths(&self, cols: &[usize], width: usize) -> Vec<usize> {
-        let gap_total = self.gap.saturating_mul(cols.len().saturating_sub(1));
+        let gap_total = self.gap_total_for_width(width, cols.len());
         let available = width.saturating_sub(gap_total).max(cols.len());
         let mut widths = cols
             .iter()
@@ -397,48 +585,107 @@ impl DataTable {
 
         widths
     }
+
+    fn gap_for_width(&self, width: usize, column_count: usize) -> usize {
+        let separators = column_count.saturating_sub(1);
+        if separators == 0 {
+            return 0;
+        }
+
+        let max_gap = width.saturating_sub(column_count) / separators;
+        self.gap.min(max_gap).min(MAX_DATA_TABLE_GAP)
+    }
+
+    fn gap_total_for_width(&self, width: usize, column_count: usize) -> usize {
+        self.gap_for_width(width, column_count)
+            .saturating_mul(column_count.saturating_sub(1))
+    }
+
+    fn visible_body_start(&self, body_height: usize) -> usize {
+        if body_height == 0 || self.rows.is_empty() {
+            return 0;
+        }
+
+        let max_start = self
+            .rows
+            .len()
+            .saturating_sub(body_height.min(self.rows.len()));
+        let mut start = self.scroll.min(max_start);
+        if let Some(selected) = self.normalized_selected() {
+            if selected < start {
+                start = selected;
+            } else if selected >= start.saturating_add(body_height) {
+                start = selected.saturating_add(1).saturating_sub(body_height);
+            }
+        }
+
+        start.min(max_start)
+    }
+
+    fn keep_selected_visible(&mut self, body_height: usize) {
+        self.scroll = self.visible_body_start(body_height);
+    }
+
+    fn normalized_selected(&self) -> Option<usize> {
+        self.selected
+            .map(|selected| selected.min(self.rows.len().saturating_sub(1)))
+            .filter(|_| !self.rows.is_empty())
+    }
+}
+
+impl Selectable for DataTable {
+    fn item_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        self.normalized_selected()
+    }
+
+    fn select_index(&mut self, index: usize) {
+        self.selected = (!self.rows.is_empty()).then(|| index.min(self.rows.len() - 1));
+    }
+}
+
+impl Scrollable for DataTable {
+    fn scroll_offset(&self) -> usize {
+        self.scroll
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll = offset.min(self.rows.len().saturating_sub(1));
+    }
+}
+
+fn data_table_column<Msg>(children: Vec<Element<Msg>>) -> Element<Msg> {
+    Element::Box(
+        BoxElement::new()
+            .direction(FlexDirection::Column)
+            .children(children),
+    )
 }
 
 fn format_cell(value: &str, width: usize, align: CellAlign) -> String {
-    let truncated = truncate_to_width(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        return truncated;
-    }
-    let pad = width - len;
     match align {
-        CellAlign::Left => format!("{truncated}{}", " ".repeat(pad)),
-        CellAlign::Right => format!("{}{truncated}", " ".repeat(pad)),
-        CellAlign::Center => {
-            let left = pad / 2;
-            format!(
-                "{}{}{}",
-                " ".repeat(left),
-                truncated,
-                " ".repeat(pad - left)
-            )
-        }
+        CellAlign::Left => fit_visible(value, width),
+        CellAlign::Right => right_visible(value, width),
+        CellAlign::Center => center_visible(value, width),
     }
-}
-
-fn pad_or_truncate(value: &str, width: usize) -> String {
-    let truncated = truncate_to_width(value, width);
-    let len = visible_len(&truncated);
-    if len >= width {
-        truncated
-    } else {
-        format!("{truncated}{}", " ".repeat(width - len))
-    }
-}
-
-fn truncate_to_width(value: &str, width: usize) -> String {
-    truncate_visible(value, width)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::style::strip_ansi;
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let table = DataTable::new(vec![DataColumn::new("Name")]).with_theme(&theme);
+
+        assert_eq!(table.header_fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(table.separator_fg, theme.color(ThemeRole::Border));
+    }
 
     #[test]
     fn renders_header_separator_and_rows() {
@@ -452,6 +699,85 @@ mod tests {
         assert!(plain.contains("CPU"));
         assert!(plain.contains("codex"));
         assert!(plain.contains("a3s"));
+    }
+
+    #[test]
+    fn element_zero_size_returns_empty_column() {
+        let table = DataTable::new(vec![DataColumn::new("Name")]).row(DataRow::new(vec!["codex"]));
+
+        let Element::Box(column) = table.element::<()>(20, 0) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert!(column.children.is_empty());
+
+        let Element::Box(column) = table.element::<()>(0, 4) else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_renders_header_separator_and_bounded_rows() {
+        let table = DataTable::new(vec![DataColumn::new("Name"), DataColumn::new("CPU")])
+            .row(DataRow::new(vec!["codex", "12.4"]))
+            .row(DataRow::new(vec!["a3s", "1.0"]));
+
+        let Element::Box(column) = table.element::<()>(40, 3) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.style.flex_direction, FlexDirection::Column);
+        assert_eq!(column.children.len(), 3);
+        assert!(column.children[0]
+            .text_content()
+            .is_some_and(|text| text.contains("Name")));
+        assert!(column.children[1]
+            .text_content()
+            .is_some_and(|text| text.contains("─")));
+        assert!(column.children[2]
+            .text_content()
+            .is_some_and(|text| text.contains("codex")));
+        assert!(!column.children.iter().any(|child| child
+            .text_content()
+            .is_some_and(|text| text.contains("a3s"))));
+    }
+
+    #[test]
+    fn element_keeps_selected_row_visible_with_style() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]).selected(Color::White, Color::Red))
+            .selected(Some(usize::MAX))
+            .scroll(0);
+
+        let Element::Box(column) = table.element::<()>(12, 3) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 3);
+        let Element::Text(row) = &column.children[2] else {
+            panic!("expected row text");
+        };
+        assert!(row.content.contains("three"));
+        assert_eq!(row.style.fg, Some(Color::White));
+        assert_eq!(row.style.bg, Some(Color::Red));
+        assert!(row.style.bold);
+    }
+
+    #[test]
+    fn element_renders_empty_message() {
+        let table = DataTable::new(vec![DataColumn::new("Name")]).empty("nothing here");
+
+        let Element::Box(column) = table.element::<()>(24, 4) else {
+            panic!("expected column");
+        };
+        assert_eq!(column.children.len(), 3);
+        let Element::Text(empty) = &column.children[2] else {
+            panic!("expected empty text");
+        };
+        assert!(empty.content.contains("nothing here"));
+        assert_eq!(empty.style.fg, Some(Color::BrightBlack));
+        assert!(empty.style.italic);
     }
 
     #[test]
@@ -506,6 +832,27 @@ mod tests {
     }
 
     #[test]
+    fn oversized_gap_is_clamped_to_render_width() {
+        let table = DataTable::new(vec![
+            DataColumn::new("A").width(1),
+            DataColumn::new("B").width(1),
+            DataColumn::new("C").width(1),
+        ])
+        .gap(usize::MAX)
+        .row(DataRow::new(vec!["1", "2", "3"]));
+
+        assert_eq!(table.gap, MAX_DATA_TABLE_GAP);
+        assert_eq!(table.gap_for_width(9, 3), 3);
+        assert_eq!(table.gap_total_for_width(9, 3), 6);
+
+        let plain = strip_ansi(&table.view(9, 4));
+        let header = plain.lines().next().unwrap();
+        assert_eq!(visible_len(header), 9);
+        assert!(header.contains("A   B   C"));
+        assert!(plain.lines().all(|line| visible_len(line) == 9));
+    }
+
+    #[test]
     fn scrolls_body_rows_but_keeps_header() {
         let table = DataTable::new(vec![DataColumn::new("Name")])
             .row(DataRow::new(vec!["one"]))
@@ -518,6 +865,60 @@ mod tests {
         assert!(plain.contains("Name"));
         assert!(!plain.contains("one"));
         assert!(plain.contains("two"));
+    }
+
+    #[test]
+    fn mouse_wheel_moves_selection_at_y_offset() {
+        use crate::event::MouseEventKind;
+
+        let mut table = DataTable::new(vec![DataColumn::new("Name")])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .selected(Some(0));
+        table.set_y_offset(3);
+
+        let msg = table.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 5,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            4,
+        );
+
+        assert_eq!(msg, None);
+        assert_eq!(table.selected_index(), Some(1));
+        assert_eq!(table.scroll_offset(), 0);
+    }
+
+    #[test]
+    fn mouse_click_selects_visible_body_row_at_y_offset() {
+        use crate::event::{MouseButton, MouseEventKind};
+
+        let mut table = DataTable::new(vec![DataColumn::new("Name")])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .row(DataRow::new(vec!["four"]))
+            .selected(Some(2))
+            .scroll(2);
+        table.set_y_offset(4);
+
+        let msg = table.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 7,
+                modifiers: crate::KeyModifiers::NONE,
+            },
+            4,
+        );
+
+        assert_eq!(msg, Some(DataTableMsg::Selected(3)));
+        assert_eq!(table.selected_index(), Some(3));
+        assert_eq!(table.scroll_offset(), 2);
     }
 
     #[test]
@@ -565,6 +966,21 @@ mod tests {
     }
 
     #[test]
+    fn oversized_column_widths_are_clamped() {
+        let column = DataColumn::new("Huge")
+            .width(usize::MAX)
+            .min_width(usize::MAX);
+
+        assert_eq!(column.width, Some(MAX_DATA_COLUMN_WIDTH));
+        assert_eq!(column.min_width, MAX_DATA_COLUMN_WIDTH);
+
+        let table = DataTable::new(vec![column]).row(DataRow::new(vec!["value"]));
+        let plain = strip_ansi(&table.view(12, 4));
+
+        assert!(plain.lines().all(|line| visible_len(line) == 12));
+    }
+
+    #[test]
     fn selected_row_uses_row_color_as_default_background() {
         let table = DataTable::new(vec![DataColumn::new("Name")])
             .row(DataRow::new(vec!["agent"]).fg(Color::Green))
@@ -601,6 +1017,48 @@ mod tests {
         let rendered = table.view(16, 4);
 
         assert!(!rendered.contains("\x1b[31m"));
+    }
+
+    #[test]
+    fn stale_selected_row_is_clamped_during_rendering() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]).selected(Color::White, Color::Red))
+            .selected(Some(usize::MAX))
+            .scroll(0);
+
+        let rendered = table.view(12, 4);
+        let plain = strip_ansi(&rendered);
+
+        assert!(rendered.contains("\x1b[1;37;41m"));
+        assert!(!plain.contains("one"));
+        assert!(plain.contains("three"));
+    }
+
+    #[test]
+    fn selected_row_before_scroll_is_kept_visible() {
+        let table = DataTable::new(vec![DataColumn::new("Name").width(6)])
+            .row(DataRow::new(vec!["one"]).selected(Color::White, Color::Blue))
+            .row(DataRow::new(vec!["two"]))
+            .row(DataRow::new(vec!["three"]))
+            .selected(Some(0))
+            .scroll(usize::MAX);
+
+        let rendered = table.view(12, 4);
+        let plain = strip_ansi(&rendered);
+
+        assert!(rendered.contains("\x1b[1;37;44m"));
+        assert!(plain.contains("one"));
+        assert!(!plain.contains("three"));
+    }
+
+    #[test]
+    fn oversized_cell_style_index_is_clamped() {
+        let row = DataRow::new(vec!["dead"]).cell_fg(usize::MAX, Color::Red);
+
+        assert_eq!(row.cell_fg.len(), MAX_DATA_ROW_CELL_STYLES);
+        assert_eq!(row.cell_fg[MAX_DATA_ROW_CELL_STYLES - 1], Some(Color::Red));
     }
 
     #[test]

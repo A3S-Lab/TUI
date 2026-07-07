@@ -1,5 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::style::{fit_visible, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_MODE_LINE_MARGIN: usize = u16::MAX as usize;
 
 /// Current run/input mode row with muted shortcut hints.
 ///
@@ -46,7 +49,7 @@ impl ModeLine {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_MODE_LINE_MARGIN);
         self
     }
 
@@ -57,6 +60,12 @@ impl ModeLine {
 
     pub fn hint_color(mut self, color: Color) -> Self {
         self.hint_color = color;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.mode_color = theme.color(ThemeRole::Primary);
+        self.hint_color = theme.color(ThemeRole::Muted);
         self
     }
 
@@ -77,13 +86,15 @@ impl ModeLine {
         if width == 0 {
             return String::new();
         }
-        fit_visible(&self.render_raw(), width)
+        fit_visible(&self.render_raw(self.margin_for_width(width)), width)
     }
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut row = BoxElement::new()
             .direction(FlexDirection::Row)
-            .child(Element::Text(TextElement::new(" ".repeat(self.margin))))
+            .child(Element::Text(TextElement::new(
+                " ".repeat(self.margin_for_element()),
+            )))
             .child(Element::Text(
                 TextElement::new(self.mode_segment())
                     .fg(self.mode_color)
@@ -99,10 +110,10 @@ impl ModeLine {
         Element::Box(row)
     }
 
-    fn render_raw(&self) -> String {
+    fn render_raw(&self, margin: usize) -> String {
         let mut raw = format!(
             "{}{}",
-            " ".repeat(self.margin),
+            " ".repeat(margin),
             Style::new()
                 .fg(self.mode_color)
                 .bold()
@@ -113,6 +124,14 @@ impl ModeLine {
             raw.push_str(&Style::new().fg(self.hint_color).render(&self.hints));
         }
         raw
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_MODE_LINE_MARGIN)
+    }
+
+    fn margin_for_element(&self) -> usize {
+        self.margin.min(MAX_MODE_LINE_MARGIN)
     }
 
     fn mode_segment(&self) -> String {
@@ -176,6 +195,32 @@ mod tests {
             .view(20);
 
         assert_eq!(strip_ansi(&rendered).trim_end(), " -- insert");
+    }
+
+    #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let line = ModeLine::new("auto").with_theme(&theme);
+
+        assert_eq!(line.mode_color, theme.color(ThemeRole::Primary));
+        assert_eq!(line.hint_color, theme.color(ThemeRole::Muted));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let line = ModeLine::new("auto").margin(usize::MAX);
+        let rendered = line.view(8);
+
+        assert_eq!(line.margin, MAX_MODE_LINE_MARGIN);
+        assert_eq!(visible_len(&rendered), 8);
+
+        let Element::Box(row) = line.element::<()>() else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), MAX_MODE_LINE_MARGIN);
     }
 
     #[test]

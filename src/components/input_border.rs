@@ -1,5 +1,9 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::style::{fit_visible, repeat_visible_char, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
+
+const MAX_INPUT_BORDER_MARGIN: usize = u16::MAX as usize;
+const MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH: usize = u16::MAX as usize;
 
 /// Input-area border line with optional context and mode/effort labels.
 ///
@@ -37,7 +41,7 @@ impl InputBorder {
     }
 
     pub fn margin(mut self, margin: usize) -> Self {
-        self.margin = margin;
+        self.margin = margin.min(MAX_INPUT_BORDER_MARGIN);
         self
     }
 
@@ -63,7 +67,7 @@ impl InputBorder {
     }
 
     pub fn suffix_rule_width(mut self, width: usize) -> Self {
-        self.suffix_rule_width = width;
+        self.suffix_rule_width = width.min(MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH);
         self
     }
 
@@ -91,6 +95,13 @@ impl InputBorder {
         if !palette.is_empty() {
             self.rainbow = Some(RainbowRule { palette, offset });
         }
+        self
+    }
+
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.rule_color = theme.color(ThemeRole::Border);
+        self.context_color = theme.color(ThemeRole::Muted);
+        self.label_color = theme.color(ThemeRole::Primary);
         self
     }
 
@@ -130,28 +141,24 @@ impl InputBorder {
             return Vec::new();
         }
 
-        let inner_width = width.saturating_sub(self.margin);
-        let mut segments = vec![BorderSegment::plain(" ".repeat(self.margin))];
+        let margin = self.margin_for_width(width);
+        let inner_width = width.saturating_sub(margin);
+        let mut segments = vec![BorderSegment::plain(" ".repeat(margin))];
         if inner_width == 0 {
             return segments;
         }
 
         if let Some(rainbow) = &self.rainbow {
-            segments.extend((0..inner_width).map(|index| {
-                BorderSegment::styled(
-                    self.rule.to_string(),
-                    rainbow.palette[(index + rainbow.offset) % rainbow.palette.len()],
-                    true,
-                )
-            }));
+            segments.extend(self.rainbow_rule_segments(rainbow, inner_width));
             return segments;
         }
 
         let context = self.context.as_deref().unwrap_or_default();
         let label = self.label.as_deref().unwrap_or_default();
+        let suffix_rule_width = self.suffix_rule_width_for_width(inner_width);
         if context.is_empty() && label.is_empty() {
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(inner_width),
+                repeat_visible_char(self.rule, inner_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -160,17 +167,21 @@ impl InputBorder {
 
         let context_width = visible_len(context);
         let label_width = visible_len(label);
-        let label_group_width = usize::from(!context.is_empty())
-            + context_width
-            + usize::from(!label.is_empty())
-            + label_width
-            + usize::from(!context.is_empty() || !label.is_empty())
-            + self.suffix_rule_width;
+        let label_group_width = [
+            usize::from(!context.is_empty()),
+            context_width,
+            usize::from(!label.is_empty()),
+            label_width,
+            usize::from(!context.is_empty() || !label.is_empty()),
+            suffix_rule_width,
+        ]
+        .into_iter()
+        .fold(0usize, usize::saturating_add);
         let prefix_rule_width = inner_width.saturating_sub(label_group_width);
 
         if prefix_rule_width > 0 {
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(prefix_rule_width),
+                repeat_visible_char(self.rule, prefix_rule_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -194,10 +205,10 @@ impl InputBorder {
             ));
         }
 
-        if self.suffix_rule_width > 0 {
+        if suffix_rule_width > 0 {
             segments.push(BorderSegment::plain(" "));
             segments.push(BorderSegment::styled(
-                self.rule.to_string().repeat(self.suffix_rule_width),
+                repeat_visible_char(self.rule, suffix_rule_width),
                 self.rule_color,
                 self.bold_rule,
             ));
@@ -212,6 +223,38 @@ impl InputBorder {
         } else {
             segments
         }
+    }
+
+    fn rainbow_rule_segments(&self, rainbow: &RainbowRule, width: usize) -> Vec<BorderSegment> {
+        let rule_width = visible_len(&self.rule.to_string());
+        if rule_width == 0 {
+            return vec![BorderSegment::plain(" ".repeat(width))];
+        }
+
+        let rule_count = width / rule_width;
+        let remainder = width % rule_width;
+        let mut segments = Vec::with_capacity(rule_count + usize::from(remainder > 0));
+        for index in 0..rule_count {
+            segments.push(BorderSegment::styled(
+                self.rule.to_string(),
+                rainbow.palette[(index + rainbow.offset) % rainbow.palette.len()],
+                true,
+            ));
+        }
+        if remainder > 0 {
+            segments.push(BorderSegment::plain(" ".repeat(remainder)));
+        }
+        segments
+    }
+
+    fn margin_for_width(&self, width: usize) -> usize {
+        self.margin.min(width).min(MAX_INPUT_BORDER_MARGIN)
+    }
+
+    fn suffix_rule_width_for_width(&self, inner_width: usize) -> usize {
+        self.suffix_rule_width
+            .min(inner_width)
+            .min(MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH)
     }
 }
 
@@ -310,6 +353,32 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let border = InputBorder::new().with_theme(&theme);
+
+        assert_eq!(border.rule_color, theme.color(ThemeRole::Border));
+        assert_eq!(border.context_color, theme.color(ThemeRole::Muted));
+        assert_eq!(border.label_color, theme.color(ThemeRole::Primary));
+    }
+
+    #[test]
+    fn custom_wide_rule_glyph_respects_display_width() {
+        let plain_rule = InputBorder::new().margin(1).rule('界').view(5);
+        let labeled_rule = InputBorder::new()
+            .margin(0)
+            .rule('界')
+            .context("ctx")
+            .suffix_rule_width(3)
+            .view(10);
+
+        assert_eq!(visible_len(&plain_rule), 5);
+        assert_eq!(strip_ansi(&plain_rule), " 界界");
+        assert_eq!(visible_len(&labeled_rule), 10);
+        assert!(strip_ansi(&labeled_rule).starts_with("界 ctx"));
+    }
+
+    #[test]
     fn rainbow_rule_uses_palette_offset_and_ignores_labels() {
         let rendered = InputBorder::new()
             .margin(1)
@@ -324,6 +393,19 @@ mod tests {
     }
 
     #[test]
+    fn rainbow_wide_rule_glyph_respects_display_width() {
+        let rendered = InputBorder::new()
+            .margin(1)
+            .rule('界')
+            .rainbow(vec![Color::Red, Color::Green], 0)
+            .view(6);
+
+        assert_eq!(visible_len(&rendered), 6);
+        assert_eq!(strip_ansi(&rendered), " 界界 ");
+        assert!(rendered.starts_with(" \x1b[1;31m界\x1b[0m\x1b[1;32m界"));
+    }
+
+    #[test]
     fn truncates_when_labels_exceed_width() {
         let rendered = InputBorder::new()
             .context("very long context with 中文")
@@ -332,6 +414,35 @@ mod tests {
 
         assert_eq!(visible_len(&rendered), 20);
         assert!(strip_ansi(&rendered).contains('…'));
+    }
+
+    #[test]
+    fn oversized_margin_is_clamped_to_render_width() {
+        let border = InputBorder::new().margin(usize::MAX);
+        let rendered = border.view(8);
+
+        assert_eq!(border.margin, MAX_INPUT_BORDER_MARGIN);
+        assert_eq!(visible_len(&rendered), 8);
+
+        let Element::Box(row) = border.element::<()>(8) else {
+            panic!("expected row element");
+        };
+        let Element::Text(margin) = &row.children[0] else {
+            panic!("expected margin text");
+        };
+        assert_eq!(margin.content.len(), 8);
+    }
+
+    #[test]
+    fn oversized_suffix_rule_width_is_clamped_to_render_width() {
+        let border = InputBorder::new()
+            .context("ctx")
+            .label("max")
+            .suffix_rule_width(usize::MAX);
+        let rendered = border.view(12);
+
+        assert_eq!(border.suffix_rule_width, MAX_INPUT_BORDER_SUFFIX_RULE_WIDTH);
+        assert_eq!(visible_len(&rendered), 12);
     }
 
     #[test]

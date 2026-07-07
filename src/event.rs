@@ -1,6 +1,6 @@
 //! Terminal event types (keyboard, mouse, resize, focus).
 
-use crossterm::event::{KeyCode, KeyModifiers, MouseEventKind as CtMouseEventKind};
+use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind as CtMouseEventKind};
 
 /// A terminal event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +120,15 @@ impl From<crossterm::event::Event> for Event {
     }
 }
 
+impl Event {
+    pub fn from_crossterm(event: crossterm::event::Event) -> Option<Self> {
+        match event {
+            crossterm::event::Event::Key(key) if key.kind == KeyEventKind::Release => None,
+            event => Some(event.into()),
+        }
+    }
+}
+
 fn convert_mouse_button(button: crossterm::event::MouseButton) -> MouseButton {
     match button {
         crossterm::event::MouseButton::Left => MouseButton::Left,
@@ -144,6 +153,39 @@ fn convert_mouse_kind(kind: CtMouseEventKind) -> MouseEventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crossterm_key_release_is_ignored() {
+        let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            crossterm::event::KeyEventKind::Release,
+        ));
+
+        assert_eq!(Event::from_crossterm(event), None);
+    }
+
+    #[test]
+    fn crossterm_key_press_and_repeat_are_kept() {
+        for kind in [
+            crossterm::event::KeyEventKind::Press,
+            crossterm::event::KeyEventKind::Repeat,
+        ] {
+            let event = crossterm::event::Event::Key(crossterm::event::KeyEvent::new_with_kind(
+                KeyCode::Char('a'),
+                KeyModifiers::NONE,
+                kind,
+            ));
+
+            assert_eq!(
+                Event::from_crossterm(event),
+                Some(Event::Key(KeyEvent {
+                    code: KeyCode::Char('a'),
+                    modifiers: KeyModifiers::NONE,
+                }))
+            );
+        }
+    }
 
     #[test]
     fn is_char() {

@@ -1,0 +1,9 @@
+---
+source: tests/render_snapshots.rs
+expression: plain(&grid)
+---
+Name          State          CPU      
+────────────  ──────────  ──────      
+gateway       ready         2.4%      
+worker        busy         81.0%      
+search        idle          0.3%

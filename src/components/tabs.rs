@@ -1,7 +1,10 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::theme::{Theme, ThemeRole};
 use crossterm::event::KeyCode;
+
+const MAX_TAB_GAP: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabSegment {
@@ -77,13 +80,15 @@ impl Tabs {
         self.focused = false;
     }
     pub fn active(&self) -> usize {
-        self.active
+        self.normalized_active()
     }
     pub fn labels(&self) -> &[String] {
         &self.labels
     }
     pub fn active_label(&self) -> Option<&str> {
-        self.labels.get(self.active).map(String::as_str)
+        self.labels
+            .get(self.normalized_active())
+            .map(String::as_str)
     }
     pub fn set_active(&mut self, idx: usize) {
         if idx < self.labels.len() {
@@ -135,8 +140,16 @@ impl Tabs {
         self
     }
 
+    pub fn with_theme(mut self, theme: &Theme) -> Self {
+        self.active_fg = theme.color(ThemeRole::Foreground);
+        self.active_bg = theme.color(ThemeRole::Highlight);
+        self.inactive_fg = theme.color(ThemeRole::Muted);
+        self.suffix_fg = theme.color(ThemeRole::Muted);
+        self
+    }
+
     pub fn gap(mut self, gap: usize) -> Self {
-        self.gap = gap;
+        self.gap = gap.min(MAX_TAB_GAP);
         self
     }
 
@@ -151,18 +164,22 @@ impl Tabs {
         }
         match key.code {
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.active > 0 {
-                    self.active -= 1;
+                let active = self.normalized_active();
+                if active > 0 {
+                    self.active = active - 1;
                     Some(TabsMsg::Changed(self.active))
                 } else {
+                    self.active = active;
                     None
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                if self.active + 1 < self.labels.len() {
-                    self.active += 1;
+                let active = self.normalized_active();
+                if active.saturating_add(1) < self.labels.len() {
+                    self.active = active + 1;
                     Some(TabsMsg::Changed(self.active))
                 } else {
+                    self.active = active;
                     None
                 }
             }
@@ -177,15 +194,16 @@ impl Tabs {
         }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let click_x = mouse.column.saturating_sub(self.x_offset) as usize;
-                let mut x = 0;
+                let click_x = super::relative_mouse_column(mouse.column, self.x_offset)?;
+                let mut x = 0usize;
+                let gap = self.normalized_gap();
                 for (i, label) in self.labels.iter().enumerate() {
                     let tab_width = visible_len(label) + 2; // " label "
-                    if click_x >= x && click_x < x + tab_width {
+                    if click_x >= x && click_x < x.saturating_add(tab_width) {
                         self.active = i;
                         return Some(TabsMsg::Changed(i));
                     }
-                    x += tab_width + self.gap;
+                    x = x.saturating_add(tab_width).saturating_add(gap);
                 }
                 None
             }
@@ -195,9 +213,11 @@ impl Tabs {
 
     pub fn element<Msg>(&self) -> Element<Msg> {
         let mut children: Vec<Element<Msg>> = Vec::new();
+        let active = self.normalized_active();
+        let gap = self.normalized_gap();
         for (i, label) in self.labels.iter().enumerate() {
             let padded = format!(" {} ", label);
-            if i == self.active {
+            if i == active {
                 children.push(Element::Text(
                     TextElement::new(padded)
                         .bold()
@@ -211,7 +231,7 @@ impl Tabs {
             }
             if i + 1 < self.labels.len() {
                 children.push(Element::Text(
-                    TextElement::new(" ".repeat(self.gap)).fg(self.inactive_fg),
+                    TextElement::new(" ".repeat(gap)).fg(self.inactive_fg),
                 ));
             }
         }
@@ -238,12 +258,14 @@ impl Tabs {
         }
 
         let mut line = String::new();
+        let active = self.normalized_active();
+        let gap = self.normalized_gap();
         for (index, label) in self.labels.iter().enumerate() {
             if index > 0 {
-                line.push_str(&" ".repeat(self.gap));
+                line.push_str(&" ".repeat(gap));
             }
             let raw = format!(" {label} ");
-            if index == self.active {
+            if index == active {
                 line.push_str(
                     &Style::new()
                         .fg(self.active_fg)
@@ -282,6 +304,14 @@ impl Tabs {
 
     fn inactive_fg_for(&self, index: usize) -> Color {
         self.tab_color_value(index).unwrap_or(self.inactive_fg)
+    }
+
+    fn normalized_active(&self) -> usize {
+        self.active.min(self.labels.len().saturating_sub(1))
+    }
+
+    fn normalized_gap(&self) -> usize {
+        self.gap.min(MAX_TAB_GAP)
     }
 }
 
@@ -332,6 +362,22 @@ mod tests {
     }
 
     #[test]
+    fn stale_active_index_is_clamped_during_navigation() {
+        let mut tabs = Tabs::new(vec!["A", "B"]);
+        tabs.active = usize::MAX;
+
+        assert_eq!(tabs.active(), 1);
+        assert_eq!(tabs.active_label(), Some("B"));
+        assert!(tabs.handle_key(&key(KeyCode::Right)).is_none());
+        assert_eq!(tabs.active(), 1);
+
+        let msg = tabs.handle_key(&key(KeyCode::Left));
+
+        assert!(matches!(msg, Some(TabsMsg::Changed(0))));
+        assert_eq!(tabs.active(), 0);
+    }
+
+    #[test]
     fn set_active() {
         let mut tabs = Tabs::new(vec!["A", "B", "C"]);
         tabs.set_active(2);
@@ -376,6 +422,26 @@ mod tests {
     }
 
     #[test]
+    fn with_theme_applies_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let tabs = Tabs::new(vec!["Agents", "Tools"]).with_theme(&theme);
+
+        assert_eq!(tabs.active_fg, theme.color(ThemeRole::Foreground));
+        assert_eq!(tabs.active_bg, theme.color(ThemeRole::Highlight));
+        assert_eq!(tabs.inactive_fg, theme.color(ThemeRole::Muted));
+        assert_eq!(tabs.suffix_fg, theme.color(ThemeRole::Muted));
+    }
+
+    #[test]
+    fn oversized_gap_is_clamped() {
+        let tabs = Tabs::new(vec!["A", "B"]).gap(usize::MAX);
+        let rendered = tabs.view(8);
+
+        assert_eq!(tabs.gap, MAX_TAB_GAP);
+        assert_eq!(visible_len(&rendered), 8);
+    }
+
+    #[test]
     fn mouse_uses_display_width_for_wide_labels() {
         let mut tabs = Tabs::new(vec!["代理", "Containers"]);
         let msg = tabs.handle_mouse(&MouseEvent {
@@ -386,6 +452,23 @@ mod tests {
         });
 
         assert!(matches!(msg, Some(TabsMsg::Changed(1))));
+        assert_eq!(tabs.active(), 1);
+    }
+
+    #[test]
+    fn mouse_click_left_of_offset_is_ignored() {
+        let mut tabs = Tabs::new(vec!["A", "B"]);
+        tabs.set_active(1);
+        tabs.set_x_offset(4);
+
+        let msg = tabs.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(msg.is_none());
         assert_eq!(tabs.active(), 1);
     }
 

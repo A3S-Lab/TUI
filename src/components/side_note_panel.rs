@@ -1,5 +1,11 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, wrap_words, Color, Style};
+use crate::style::{
+    fit_visible, split_nonempty_lines_preserving_trailing_blank, truncate_visible, visible_len,
+    wrap_words, Color, Style,
+};
+
+const MAX_SIDE_NOTE_PANEL_BODY_LINES: usize = u16::MAX as usize;
+const MAX_SIDE_NOTE_PANEL_INDENT: usize = u16::MAX as usize;
 
 /// Side-note panel for background questions, side-channel answers, and compact
 /// transient notes.
@@ -70,7 +76,7 @@ impl SideNotePanel {
     }
 
     pub fn max_body_lines(mut self, max: usize) -> Self {
-        self.max_body_lines = max.max(1);
+        self.max_body_lines = max.clamp(1, MAX_SIDE_NOTE_PANEL_BODY_LINES);
         self
     }
 
@@ -80,7 +86,7 @@ impl SideNotePanel {
     }
 
     pub fn indent(mut self, indent: usize) -> Self {
-        self.indent = indent;
+        self.indent = indent.min(MAX_SIDE_NOTE_PANEL_INDENT);
         self
     }
 
@@ -139,34 +145,27 @@ impl SideNotePanel {
 
     pub fn element<Msg>(&self, width: u16) -> Element<Msg> {
         let width = width as usize;
-        let mut children = Vec::new();
-        children.push(Element::Text(
-            TextElement::new(self.indented(&self.title))
-                .fg(self.title_color)
-                .bold(),
-        ));
+        let children = self.element_children(width);
 
-        if let Some(question) = self.question.as_deref() {
-            for row in self.wrap_prefixed("Q: ", question, width) {
-                children.push(Element::Text(
-                    TextElement::new(row).fg(self.question_color).bold(),
-                ));
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Column)
+                .children(children),
+        )
+    }
+
+    pub fn element_with_height<Msg>(&self, width: u16, height: usize) -> Element<Msg> {
+        let width = width as usize;
+        if width == 0 || height == 0 {
+            return Element::Box(BoxElement::new().direction(FlexDirection::Column));
+        }
+
+        let mut children = self.element_children(width);
+        children.truncate(height);
+        if self.fill_height {
+            while children.len() < height {
+                children.push(Element::Text(TextElement::new("")));
             }
-        }
-
-        let body = self.answer.as_deref().unwrap_or(&self.loading_text);
-        for row in self
-            .wrap_prefixed("", body, width)
-            .into_iter()
-            .take(self.max_body_lines)
-        {
-            children.push(Element::Text(TextElement::new(row).fg(self.answer_color)));
-        }
-
-        if let Some(footer) = self.footer.as_deref() {
-            children.push(Element::Text(
-                TextElement::new(self.indented(footer)).fg(self.muted_color),
-            ));
         }
 
         Element::Box(
@@ -180,7 +179,10 @@ impl SideNotePanel {
         let mut lines = vec![Style::new()
             .fg(self.title_color)
             .bold()
-            .render(&fit_visible(&self.indented(&self.title), width))];
+            .render(&fit_visible(
+                &self.indented_for_width(&self.title, width),
+                width,
+            ))];
 
         if let Some(question) = self.question.as_deref() {
             for row in self.wrap_prefixed("Q: ", question, width) {
@@ -210,25 +212,62 @@ impl SideNotePanel {
             lines.push(
                 Style::new()
                     .fg(self.muted_color)
-                    .render(&fit_visible(&self.indented(footer), width)),
+                    .render(&fit_visible(&self.indented_for_width(footer, width), width)),
             );
         }
 
         lines
     }
 
+    fn element_children<Msg>(&self, width: usize) -> Vec<Element<Msg>> {
+        let mut children = Vec::new();
+        children.push(Element::Text(
+            TextElement::new(self.indented_for_width(&self.title, width))
+                .fg(self.title_color)
+                .bold(),
+        ));
+
+        if let Some(question) = self.question.as_deref() {
+            for row in self.wrap_prefixed("Q: ", question, width) {
+                children.push(Element::Text(
+                    TextElement::new(row).fg(self.question_color).bold(),
+                ));
+            }
+        }
+
+        let body = self.answer.as_deref().unwrap_or(&self.loading_text);
+        for row in self
+            .wrap_prefixed("", body, width)
+            .into_iter()
+            .take(self.max_body_lines)
+        {
+            children.push(Element::Text(TextElement::new(row).fg(self.answer_color)));
+        }
+
+        if let Some(footer) = self.footer.as_deref() {
+            children.push(Element::Text(
+                TextElement::new(self.indented_for_width(footer, width)).fg(self.muted_color),
+            ));
+        }
+
+        children
+    }
+
     fn wrap_prefixed(&self, prefix: &str, text: &str, width: usize) -> Vec<String> {
-        let indent = " ".repeat(self.indent);
+        if width == 0 {
+            return vec![String::new()];
+        }
+
+        let indent = " ".repeat(self.indent_for_prefix(prefix, width));
         let first_prefix = format!("{indent}{prefix}");
-        let continuation_prefix = " ".repeat(first_prefix.chars().count());
-        let first_width = width
-            .saturating_sub(crate::style::visible_len(&first_prefix))
-            .max(1);
+        let continuation_prefix =
+            " ".repeat(visible_len(&first_prefix).min(width.saturating_sub(1)));
+        let first_width = width.saturating_sub(visible_len(&first_prefix)).max(1);
         let continuation_width = width
-            .saturating_sub(crate::style::visible_len(&continuation_prefix))
+            .saturating_sub(visible_len(&continuation_prefix))
             .max(1);
         let mut rows = Vec::new();
-        for line in text.lines() {
+        for line in split_nonempty_lines_preserving_trailing_blank(text) {
             let wrapped = wrap_words(line, first_width);
             if wrapped.is_empty() {
                 rows.push(first_prefix.clone());
@@ -250,8 +289,21 @@ impl SideNotePanel {
         rows
     }
 
-    fn indented(&self, value: &str) -> String {
-        format!("{}{}", " ".repeat(self.indent), value)
+    fn indented_for_width(&self, value: &str, width: usize) -> String {
+        let indent = " ".repeat(self.indent_for_value(value, width));
+        truncate_visible(&format!("{indent}{value}"), width)
+    }
+
+    fn indent_for_prefix(&self, prefix: &str, width: usize) -> usize {
+        self.indent
+            .min(width.saturating_sub(visible_len(prefix).saturating_add(1)))
+            .min(MAX_SIDE_NOTE_PANEL_INDENT)
+    }
+
+    fn indent_for_value(&self, value: &str, width: usize) -> usize {
+        self.indent
+            .min(width.saturating_sub(visible_len(value).min(width)))
+            .min(MAX_SIDE_NOTE_PANEL_INDENT)
     }
 }
 
@@ -307,6 +359,23 @@ mod tests {
     }
 
     #[test]
+    fn answer_preserves_trailing_blank_row() {
+        let panel = SideNotePanel::new("note").answer("one\n");
+        let Element::Box(column) = panel.element::<()>(24) else {
+            panic!("expected column element");
+        };
+        let Element::Text(answer) = &column.children[1] else {
+            panic!("expected answer row");
+        };
+        let Element::Text(blank) = &column.children[2] else {
+            panic!("expected trailing blank answer row");
+        };
+
+        assert_eq!(answer.content, "  one");
+        assert_eq!(blank.content, "  ");
+    }
+
+    #[test]
     fn cjk_text_wraps_by_display_width() {
         let rendered = SideNotePanel::new("提示")
             .question("中文问题 with a long suffix")
@@ -336,6 +405,40 @@ mod tests {
     }
 
     #[test]
+    fn oversized_indent_is_clamped_to_render_width() {
+        let panel = SideNotePanel::new("note")
+            .question("why")
+            .answer("because")
+            .footer("done")
+            .indent(usize::MAX);
+        let rendered = panel.view(8, 6);
+        let prefixed_rows = panel.wrap_prefixed("Q: ", "why", 8);
+
+        assert_eq!(panel.indent, MAX_SIDE_NOTE_PANEL_INDENT);
+        assert!(rendered.lines().all(|line| visible_len(line) == 8));
+        assert!(prefixed_rows.iter().all(|row| visible_len(row) <= 8));
+
+        let Element::Box(column) = panel.element::<()>(8) else {
+            panic!("expected column element");
+        };
+        let Element::Text(title) = &column.children[0] else {
+            panic!("expected title text");
+        };
+        assert!(visible_len(&title.content) <= 8);
+    }
+
+    #[test]
+    fn oversized_body_line_limit_is_clamped() {
+        let panel = SideNotePanel::new("note")
+            .answer("one\ntwo")
+            .max_body_lines(usize::MAX);
+        let rendered = panel.view(24, 3);
+
+        assert_eq!(panel.max_body_lines, MAX_SIDE_NOTE_PANEL_BODY_LINES);
+        assert!(rendered.lines().all(|line| visible_len(line) == 24));
+    }
+
+    #[test]
     fn element_produces_column() {
         let el: Element<()> = sample().element(48);
 
@@ -346,5 +449,64 @@ mod tests {
             }
             _ => panic!("expected Box"),
         }
+    }
+
+    #[test]
+    fn element_with_height_zero_returns_empty_column() {
+        let el: Element<()> = sample().element_with_height(48, 0);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        assert!(column.children.is_empty());
+    }
+
+    #[test]
+    fn element_with_height_limits_rows() {
+        let el: Element<()> = SideNotePanel::new("note")
+            .question("why")
+            .answer("one\ntwo\nthree")
+            .footer("done")
+            .element_with_height(24, 3);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let text = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(column.children.len(), 3);
+        assert!(text.contains("note"), "{text:?}");
+        assert!(text.contains("Q: why"), "{text:?}");
+        assert!(text.contains("one"), "{text:?}");
+        assert!(!text.contains("two"), "{text:?}");
+        assert!(!text.contains("done"), "{text:?}");
+    }
+
+    #[test]
+    fn element_with_height_fill_height_pads_empty_rows() {
+        let el: Element<()> = SideNotePanel::new("note")
+            .answer("ok")
+            .fill_height(true)
+            .element_with_height(20, 4);
+
+        let Element::Box(column) = el else {
+            panic!("expected column");
+        };
+        let rows = column
+            .children
+            .iter()
+            .filter_map(Element::text_content)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], "  note");
+        assert_eq!(rows[1], "  ok");
+        assert_eq!(rows[2], "");
+        assert_eq!(rows[3], "");
     }
 }

@@ -1,0 +1,11 @@
+---
+source: tests/render_snapshots.rs
+expression: plain(&grid)
+---
+Command palette                                 
+workspace actions                               
+    1. @ Open file  find by path                
+  ▸ 2. $ Run tests ⌘T                           
+    3. [✓] Toggle dark mode                     
+    4. Deploy                                   
+Enter select · Esc cancel

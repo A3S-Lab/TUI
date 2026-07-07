@@ -1,6 +1,10 @@
 use crossterm::{cursor, execute, queue, terminal};
 use std::io::{self, Stdout, Write};
 
+pub(crate) fn terminal_row(row: usize) -> Option<u16> {
+    u16::try_from(row).ok()
+}
+
 /// Toggle mouse capture at runtime. Capture ON lets the app read wheel/scroll
 /// events but disables the terminal's native click-drag text selection; OFF
 /// restores it. `Terminal::exit` always disables, so leftover capture can't
@@ -102,7 +106,10 @@ impl Terminal {
         // bare multi-line write makes each line start where the previous ended
         // (a staircase). Position every line at column 0 explicitly.
         for (row, line) in content.lines().enumerate() {
-            queue!(self.stdout, cursor::MoveTo(0, row as u16))?;
+            let Some(row) = terminal_row(row) else {
+                break;
+            };
+            queue!(self.stdout, cursor::MoveTo(0, row))?;
             write!(self.stdout, "{}", line)?;
         }
         self.stdout.flush()
@@ -150,5 +157,17 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         let _ = self.exit();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_row_rejects_values_that_would_wrap() {
+        assert_eq!(terminal_row(u16::MAX as usize), Some(u16::MAX));
+        assert_eq!(terminal_row(u16::MAX as usize + 1), None);
+        assert_eq!(terminal_row(usize::MAX), None);
     }
 }
