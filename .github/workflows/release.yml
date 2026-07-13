@@ -9,7 +9,7 @@ on:
       release_tag:
         description: "Existing semantic-version tag to publish or finalize"
         required: true
-        default: "v0.1.7"
+        default: "v0.1.8"
         type: string
 
 concurrency:

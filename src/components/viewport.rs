@@ -1,8 +1,8 @@
 use crate::element::{BoxElement, Element, FlexDirection, TextElement};
 use crate::event::{MouseEvent, MouseEventKind};
 use crate::style::{
-    next_display_cell_boundary, slice_visible_cols, strip_ansi, truncate_visible, visible_len,
-    Style,
+    ansi_escape_sequence_end, next_display_cell_boundary, slice_visible_cols, strip_ansi,
+    truncate_visible, visible_len, Style,
 };
 
 pub struct Viewport {
@@ -559,23 +559,12 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0;
-    let mut in_escape = false;
     let mut index = 0usize;
 
     while index < s.len() {
-        let c = s[index..].chars().next().unwrap_or_default();
-        if c == '\x1b' {
-            in_escape = true;
-            current.push(c);
-            index += c.len_utf8();
-            continue;
-        }
-        if in_escape {
-            current.push(c);
-            index += c.len_utf8();
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
-            }
+        if let Some(end) = ansi_escape_sequence_end(s, index) {
+            current.push_str(&s[index..end]);
+            index = end;
             continue;
         }
 
@@ -626,9 +615,6 @@ fn continuation_indent(s: &str, width: usize) -> usize {
     let max_indent = width.saturating_sub(1);
     let plain = strip_ansi(s);
     let leading = plain.chars().take_while(|c| *c == ' ').count();
-    if leading == 0 {
-        return 0;
-    }
 
     let rest = &plain[leading..];
     let mut token_end = 0usize;
@@ -914,6 +900,48 @@ mod tests {
             "narrow continuations should retain the gutter text column: {wrapped:?}"
         );
         assert!(wrapped.iter().all(|row| visible_len(row) <= 8));
+    }
+
+    #[test]
+    fn wrapped_full_bleed_gutter_line_aligns_after_marker() {
+        let mut vp = Viewport::new(9, 8);
+        vp.set_content("• abcdefghijklmnop");
+
+        let wrapped = vp
+            .view()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(wrapped[0], "• abcdefg");
+        assert!(
+            wrapped.iter().skip(1).all(|row| row.starts_with("  ")),
+            "full-bleed continuations should retain the gutter text column: {wrapped:?}"
+        );
+        assert!(wrapped.iter().all(|row| visible_len(row) <= 9));
+    }
+
+    #[test]
+    fn wrapped_osc8_link_counts_only_visible_label_columns() {
+        let linked = "\x1b]8;;https://example.com\x1b\\abcdefghijkl\x1b]8;;\x1b\\";
+        let mut vp = Viewport::new(6, 4);
+        vp.set_content(linked);
+
+        let rendered = vp.view();
+        let rows = rendered
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| strip_ansi(row))
+                .collect::<Vec<_>>()
+                .join(""),
+            "abcdefghijkl"
+        );
+        assert!(rows.iter().all(|row| visible_len(row) <= 6), "{rows:?}");
     }
 
     #[test]

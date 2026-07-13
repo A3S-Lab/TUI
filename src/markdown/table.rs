@@ -1,7 +1,7 @@
 use comrak::nodes::{AstNode, NodeTable, NodeValue, TableAlignment};
 
 use super::ansi::{ansi_segments, wrap_styled_text};
-use super::{fit_markdown_line, wrap_text, Markdown, MarkdownLine};
+use super::{fit_markdown_line, Markdown, MarkdownLine};
 use crate::style::{visible_len, Color, Style};
 
 #[derive(Debug)]
@@ -217,43 +217,17 @@ impl Markdown {
         indent: usize,
         width: usize,
     ) {
-        let mut header = String::from("|");
-        for cell in &table.header {
-            header.push(' ');
-            header.push_str(&format!("\x1b[1m{}\x1b[22m", cell.replace('|', "\\|")));
-            header.push_str(" |");
-        }
-        let mut delimiter = String::from("|");
-        for alignment in &table.alignments {
-            delimiter.push_str(match alignment {
-                TableAlignment::None => "---|",
-                TableAlignment::Left => ":---|",
-                TableAlignment::Center => ":---:|",
-                TableAlignment::Right => "---:|",
-            });
-        }
-        self.push_wrapped_table_source_line(output, indent, width, &header);
-        self.push_wrapped_table_source_line(output, indent, width, &delimiter);
-    }
-
-    fn push_wrapped_table_source_line(
-        &self,
-        output: &mut Vec<MarkdownLine>,
-        indent: usize,
-        width: usize,
-        line: &str,
-    ) {
         let available = if width == 0 {
             0
         } else {
             width.saturating_sub(indent).max(1)
         };
-        for wrapped in wrap_text(line, available) {
-            output.push(MarkdownLine::normal(format!(
-                "{}{}",
-                " ".repeat(indent),
-                wrapped
-            )));
+        let indent = " ".repeat(indent);
+        for cell in table.header.iter().filter(|cell| !cell.is_empty()) {
+            let styled = format!("\x1b[1m{cell}\x1b[22m");
+            for wrapped in wrap_styled_text(&styled, available) {
+                output.push(MarkdownLine::normal(format!("{indent}{wrapped}")));
+            }
         }
     }
 }

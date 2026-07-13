@@ -3,6 +3,23 @@ use super::*;
 use crate::element::Element;
 use crate::style::{strip_ansi, visible_len};
 
+fn osc8_targets(rendered: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut rest = rendered;
+    while let Some(start) = rest.find("\x1b]8;;") {
+        rest = &rest[start + "\x1b]8;;".len()..];
+        let Some(end) = rest.find("\x1b\\") else {
+            break;
+        };
+        let target = &rest[..end];
+        if !target.is_empty() {
+            targets.push(target);
+        }
+        rest = &rest[end + 2..];
+    }
+    targets
+}
+
 #[test]
 fn render_plain_text() {
     let md = Markdown::new();
@@ -329,8 +346,37 @@ fn narrow_header_only_table_preserves_all_headers_and_alignment() {
 
     assert!(flattened.contains("Firstheading"), "{output}");
     assert!(flattened.contains("Secondheading"), "{output}");
-    assert!(output.contains(":---"), "{output}");
-    assert!(output.contains("---:"), "{output}");
+    assert!(!output.contains('|'), "{output}");
+    assert!(!output.contains(":---"), "{output}");
+    assert!(!output.contains("---:"), "{output}");
+    assert!(
+        output.lines().all(|line| visible_len(line) <= 12),
+        "{output}"
+    );
+}
+
+#[test]
+fn bare_links_are_not_duplicated_or_extended_into_following_prose() {
+    let url = "https://github.com/A3S-Lab/Code/actions/runs/29246228334";
+    let source = format!("Started: {url}\n({url})。继续。 ");
+    let output = Markdown::new().with_width(52).render(&source);
+    let plain = strip_ansi(&output);
+    let flattened = plain
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+
+    assert_eq!(
+        flattened,
+        source
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    );
+    assert_eq!(flattened.matches(url).count(), 2, "{plain}");
+    let targets = osc8_targets(&output);
+    assert!(targets.len() >= 2, "{output:?}");
+    assert!(targets.iter().all(|target| *target == url), "{targets:?}");
 }
 
 #[test]
@@ -391,10 +437,8 @@ fn table_cells_render_inline_styles_and_resolved_links() {
 
     assert!(output.contains("\x1b[1m"), "{output:?}");
     assert!(output.contains("48;5;236"), "{output:?}");
-    assert!(
-        plain.contains("Docs (https://example.com/reference)"),
-        "{plain}"
-    );
+    assert!(plain.contains("Docs"), "{plain}");
+    assert_eq!(osc8_targets(&output), vec!["https://example.com/reference"]);
     assert!(!plain.contains("[Docs][docs]"), "{plain}");
 }
 
@@ -405,10 +449,8 @@ fn nested_inline_styles_keep_links_and_code_inside_table_cells() {
         .render("| Rich |\n| --- |\n| **[Docs](https://example.com) and `value`** |");
     let plain = strip_ansi(&output);
 
-    assert!(
-        plain.contains("Docs (https://example.com) and value"),
-        "{plain}"
-    );
+    assert!(plain.contains("Docs and value"), "{plain}");
+    assert_eq!(osc8_targets(&output), vec!["https://example.com"]);
     let docs = output
         .lines()
         .flat_map(ansi_segments)

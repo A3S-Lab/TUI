@@ -18,6 +18,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
 - **Rich Components** — 60 ready-to-use components (tables, modals, help panels, text editors, etc.)
+- **Terminal-Native Markdown** — clickable OSC 8 links, responsive tables, and display-width-safe wrapping
 
 ---
 
@@ -414,7 +415,7 @@ let view = table.view(80, 12);
 
 | Component | Use it for | Typical usage |
 | --- | --- | --- |
-| `GutterBlock` | Chat transcript entries with a left marker and optional bubble styling. | Render assistant/user/tool blocks with consistent gutters. |
+| `GutterBlock` | Chat transcript entries with a left marker and optional bubble styling. | Render assistant/user/tool blocks with consistent gutters; full-bleed transcript wrapping keeps continuation rows aligned under the content column. |
 | `PromptLine` | Prompt-prefixed user input or command text. | Keep continuation rows aligned under the prompt glyph. |
 | `WrappedPrefixBlock` | Wrapped reasoning, callouts, and prefixed transcript text. | Use when every wrapped line must align under a marker. |
 | `OutputBlock` | Tool output summaries with status, title, and tail preview. | Display running, completed, failed, and cancelled tool output consistently. |
@@ -496,11 +497,11 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
 | `TextInput` | Single-line fields. | Forward key or paste events into `TextInputMsg`; paste is sanitized to one line and word-level navigation/deletion is built in. |
 | `Textarea` | Multi-line prompt boxes and editors. | Configure width, height, auto-grow, and submit behavior; paste inserts newlines without submitting and word-level navigation/deletion is built in. |
 | `CursorLine` | Editor rows with a visible cursor and width-safe text. | Render the active line in a fixed-width editor panel. |
-| `Viewport` | Scrollable transcript or document content. | Store the viewport state and update it from page keys or mouse wheel events. |
+| `Viewport` | Scrollable transcript or document content. | Store the viewport state and update it from page keys or mouse wheel events; ANSI and OSC 8 sequences do not consume visible columns while wrapping. |
 | `Scrollbar` | Visual scroll position on text views. | Append to a rendered view or render beside a fixed-height panel. |
 | `Paragraph` | Wrapped prose with optional alignment. | Use for descriptions, help text, and detail copy that must fit a width. |
 | `DiffView` | Unified diff display. | Convert edits into `DiffLine` rows and render with add/remove/context styling. |
-| `Markdown` support | Rich transcript and documentation rendering. | Use the markdown renderer for CommonMark content and code highlighting. |
+| `Markdown` support | Rich transcript and documentation rendering. | Use the markdown renderer for CommonMark content, code highlighting, clickable OSC 8 links, and narrow-width table fallback without raw delimiter rows. |
 
 #### Layout, Frames, And Visual Structure
 

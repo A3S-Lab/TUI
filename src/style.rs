@@ -665,27 +665,21 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
     let target = width - 1;
     let mut out = String::new();
     let mut used = 0;
-    let mut saw_ansi = false;
+    let mut saw_sgr = false;
+    let mut hyperlink_open = false;
     let mut index = 0usize;
 
     while index < s.len() {
-        let ch = s[index..].chars().next().unwrap_or_default();
-        if starts_ansi_csi_at(s, index) {
-            saw_ansi = true;
-            out.push(ch);
-            index += ch.len_utf8();
-            let Some(introducer) = s[index..].chars().next() else {
-                break;
-            };
-            out.push(introducer);
-            index += introducer.len_utf8();
-            for next in s[index..].chars() {
-                out.push(next);
-                index += next.len_utf8();
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
+        if let Some(end) = ansi_escape_sequence_end(s, index) {
+            let sequence = &s[index..end];
+            out.push_str(sequence);
+            if sequence.starts_with("\x1b[") {
+                saw_sgr = true;
             }
+            if let Some(target) = osc8_link_target(sequence) {
+                hyperlink_open = !target.is_empty();
+            }
+            index = end;
             continue;
         }
 
@@ -701,8 +695,11 @@ pub fn truncate_visible(s: &str, width: usize) -> String {
     }
 
     out.push('…');
-    if saw_ansi {
+    if saw_sgr {
         out.push_str("\x1b[0m");
+    }
+    if hyperlink_open {
+        out.push_str("\x1b]8;;\x1b\\");
     }
     out
 }
@@ -820,6 +817,9 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
     if start >= value.len() {
         return None;
     }
+    if let Some(end) = ansi_escape_sequence_end(value, start) {
+        return Some((end, 0));
+    }
 
     let mut chars = value[start..].char_indices();
     let (_, ch) = chars.next()?;
@@ -828,7 +828,7 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
 
     if width != 0 {
         for (offset, next) in chars {
-            if starts_ansi_csi_at(value, start + offset) {
+            if ansi_escape_sequence_end(value, start + offset).is_some() {
                 break;
             }
             if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
@@ -867,10 +867,41 @@ pub(crate) fn previous_display_cell_char_span(chars: &[char], cursor: usize) -> 
     display_cell_char_span(chars, start)
 }
 
-fn starts_ansi_csi_at(value: &str, index: usize) -> bool {
-    value
-        .get(index..)
-        .is_some_and(|tail| tail.starts_with("\x1b["))
+pub(crate) fn ansi_escape_sequence_end(value: &str, start: usize) -> Option<usize> {
+    let bytes = value.as_bytes();
+    if bytes.get(start) != Some(&0x1b) {
+        return None;
+    }
+    match bytes.get(start + 1).copied() {
+        Some(b'[') => bytes[start + 2..]
+            .iter()
+            .position(|byte| (0x40..=0x7e).contains(byte))
+            .map(|offset| start + 3 + offset),
+        Some(b']') => {
+            let mut index = start + 2;
+            while index < bytes.len() {
+                if bytes[index] == 0x07 {
+                    return Some(index + 1);
+                }
+                if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'\\') {
+                    return Some(index + 2);
+                }
+                index += 1;
+            }
+            None
+        }
+        Some(_) => Some((start + 2).min(bytes.len())),
+        None => None,
+    }
+}
+
+pub(crate) fn osc8_link_target(sequence: &str) -> Option<&str> {
+    let body = sequence.strip_prefix("\x1b]8;")?;
+    let body = body
+        .strip_suffix("\x1b\\")
+        .or_else(|| body.strip_suffix('\x07'))?;
+    let (_, target) = body.split_once(';')?;
+    Some(target)
 }
 
 /// Return the substring spanning display columns `[from, to)`.
@@ -1029,21 +1060,15 @@ fn split_visible_prefix(value: &str, width: usize) -> (String, String) {
 /// Strip ANSI escape sequences from a string.
 pub fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            out.push(c);
+    let mut index = 0usize;
+    while index < s.len() {
+        if let Some(end) = ansi_escape_sequence_end(s, index) {
+            index = end;
+            continue;
         }
+        let ch = s[index..].chars().next().unwrap_or_default();
+        out.push(ch);
+        index += ch.len_utf8();
     }
     out
 }
@@ -1124,11 +1149,19 @@ mod tests {
     fn visible_len_with_ansi() {
         assert_eq!(visible_len("\x1b[31mhello\x1b[0m"), 5);
         assert_eq!(visible_len("\x1b[1;32mtest\x1b[0m"), 4);
+        assert_eq!(
+            visible_len("\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\"),
+            4
+        );
     }
 
     #[test]
     fn strip_ansi_removes_codes() {
         assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(
+            strip_ansi("\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\"),
+            "link"
+        );
         assert_eq!(strip_ansi("plain"), "plain");
     }
 
@@ -1192,6 +1225,16 @@ mod tests {
         assert_eq!(strip_ansi(&out), "abc…");
         assert!(out.starts_with("\x1b[31m"));
         assert!(out.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn truncate_visible_closes_osc8_hyperlinks() {
+        let linked = "\x1b]8;;https://example.com\x1b\\abcdef\x1b]8;;\x1b\\";
+        let out = truncate_visible(linked, 4);
+
+        assert_eq!(visible_len(&out), 4);
+        assert_eq!(strip_ansi(&out), "abc…");
+        assert!(out.ends_with("\x1b]8;;\x1b\\"), "{out:?}");
     }
 
     #[test]

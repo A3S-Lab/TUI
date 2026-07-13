@@ -1,14 +1,21 @@
 use super::Markdown;
 use crate::element::{BoxElement, Element, FlexDirection, TextElement, TextStyle};
 use crate::style::{
-    next_display_cell_boundary, split_lines_preserving_trailing_blank, Color, Style,
+    ansi_escape_sequence_end, next_display_cell_boundary, osc8_link_target,
+    split_lines_preserving_trailing_blank, Color, Style,
 };
 
 #[derive(Clone)]
 struct StyledGrapheme {
     text: String,
-    style: crate::element::TextStyle,
+    style: RenderStyle,
     width: usize,
+}
+
+#[derive(Clone, Default)]
+struct RenderStyle {
+    text: crate::element::TextStyle,
+    hyperlink: Option<String>,
 }
 
 pub(super) fn wrap_styled_text(text: &str, width: usize) -> Vec<String> {
@@ -16,11 +23,15 @@ pub(super) fn wrap_styled_text(text: &str, width: usize) -> Vec<String> {
         return vec![text.to_string()];
     }
 
-    let mut words = Vec::<(Vec<StyledGrapheme>, Option<crate::element::TextStyle>)>::new();
+    let mut words = Vec::<(Vec<StyledGrapheme>, Option<RenderStyle>)>::new();
     let mut word = Vec::new();
     let mut separator_before = None;
     let mut pending_separator = None;
     for segment in ansi_segments(text) {
+        let segment_style = RenderStyle {
+            text: segment.style.clone(),
+            hyperlink: segment.hyperlink.clone(),
+        };
         let mut offset = 0usize;
         while offset < segment.text.len() {
             let Some((end, cluster_width)) = next_display_cell_boundary(&segment.text, offset)
@@ -33,14 +44,14 @@ pub(super) fn wrap_styled_text(text: &str, width: usize) -> Vec<String> {
                 if !word.is_empty() {
                     words.push((std::mem::take(&mut word), separator_before.take()));
                 }
-                pending_separator.get_or_insert_with(|| segment.style.clone());
+                pending_separator.get_or_insert_with(|| segment_style.clone());
             } else {
                 if word.is_empty() {
                     separator_before = pending_separator.take();
                 }
                 word.push(StyledGrapheme {
                     text: cluster.to_string(),
-                    style: segment.style.clone(),
+                    style: segment_style.clone(),
                     width: cluster_width,
                 });
             }
@@ -99,14 +110,14 @@ pub(super) fn wrap_styled_text(text: &str, width: usize) -> Vec<String> {
 fn render_styled_graphemes(graphemes: Vec<StyledGrapheme>) -> String {
     let mut rendered = String::new();
     let mut run = String::new();
-    let mut run_style = crate::element::TextStyle::default();
+    let mut run_style = RenderStyle::default();
     let mut has_run = false;
     for grapheme in graphemes {
-        if has_run && !same_text_style(&run_style, &grapheme.style) {
+        if has_run && !same_render_style(&run_style, &grapheme.style) {
             rendered.push_str(&render_text_style(&run_style, &run));
             run.clear();
         }
-        if !has_run || !same_text_style(&run_style, &grapheme.style) {
+        if !has_run || !same_render_style(&run_style, &grapheme.style) {
             run_style = grapheme.style;
             has_run = true;
         }
@@ -116,6 +127,10 @@ fn render_styled_graphemes(graphemes: Vec<StyledGrapheme>) -> String {
         rendered.push_str(&render_text_style(&run_style, &run));
     }
     rendered
+}
+
+fn same_render_style(a: &RenderStyle, b: &RenderStyle) -> bool {
+    same_text_style(&a.text, &b.text) && a.hyperlink == b.hyperlink
 }
 
 fn same_text_style(a: &crate::element::TextStyle, b: &crate::element::TextStyle) -> bool {
@@ -129,42 +144,48 @@ fn same_text_style(a: &crate::element::TextStyle, b: &crate::element::TextStyle)
         && a.strikethrough == b.strikethrough
 }
 
-fn render_text_style(style: &crate::element::TextStyle, text: &str) -> String {
+fn render_text_style(style: &RenderStyle, text: &str) -> String {
     let mut terminal_style = Style::new();
-    if let Some(color) = style.fg {
+    if let Some(color) = style.text.fg {
         terminal_style = terminal_style.fg(color);
     }
-    if let Some(color) = style.bg {
+    if let Some(color) = style.text.bg {
         terminal_style = terminal_style.bg(color);
     }
-    if style.bold {
+    if style.text.bold {
         terminal_style = terminal_style.bold();
     }
-    if style.italic {
+    if style.text.italic {
         terminal_style = terminal_style.italic();
     }
-    if style.underline {
+    if style.text.underline {
         terminal_style = terminal_style.underline();
     }
-    if style.reverse {
+    if style.text.reverse {
         terminal_style = terminal_style.reverse();
     }
-    if style.dim {
+    if style.text.dim {
         terminal_style = terminal_style.dim();
     }
-    if style.strikethrough {
+    if style.text.strikethrough {
         terminal_style = terminal_style.strikethrough();
     }
-    if same_text_style(style, &crate::element::TextStyle::default()) {
+    let rendered = if same_text_style(&style.text, &crate::element::TextStyle::default()) {
         text.to_string()
     } else {
         terminal_style.render(text)
+    };
+    if let Some(target) = &style.hyperlink {
+        format!("\x1b]8;;{target}\x1b\\{rendered}\x1b]8;;\x1b\\")
+    } else {
+        rendered
     }
 }
 
 pub(super) struct StyledSegment {
     pub(super) text: String,
     pub(super) style: TextStyle,
+    hyperlink: Option<String>,
 }
 
 impl Markdown {
@@ -224,36 +245,36 @@ pub(super) fn ansi_segments(line: &str) -> Vec<StyledSegment> {
     let mut segments = Vec::new();
     let mut current = String::new();
     let mut style = TextStyle::default();
-    let mut chars = line.chars().peekable();
+    let mut hyperlink = None;
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            let mut sequence = String::new();
-            let mut final_byte = None;
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    final_byte = Some(next);
-                    break;
-                }
-                sequence.push(next);
+    while index < line.len() {
+        if let Some(end) = ansi_escape_sequence_end(line, index) {
+            let sequence = &line[index..end];
+            if let Some(params) = sequence
+                .strip_prefix("\x1b[")
+                .and_then(|value| value.strip_suffix('m'))
+            {
+                push_segment(&mut segments, &mut current, &style, &hyperlink);
+                apply_sgr_sequence(&mut style, params);
+            } else if let Some(target) = osc8_link_target(sequence) {
+                push_segment(&mut segments, &mut current, &style, &hyperlink);
+                hyperlink = (!target.is_empty()).then(|| target.to_string());
             }
-
-            if final_byte == Some('m') {
-                push_segment(&mut segments, &mut current, &style);
-                apply_sgr_sequence(&mut style, &sequence);
-            }
+            index = end;
             continue;
         }
-
+        let ch = line[index..].chars().next().unwrap_or_default();
         current.push(ch);
+        index += ch.len_utf8();
     }
 
-    push_segment(&mut segments, &mut current, &style);
+    push_segment(&mut segments, &mut current, &style, &hyperlink);
     if segments.is_empty() {
         segments.push(StyledSegment {
             text: String::new(),
             style: TextStyle::default(),
+            hyperlink: None,
         });
     }
     segments
@@ -272,7 +293,12 @@ pub(super) fn trailing_background(line: &str) -> Option<Color> {
         .and_then(|segment| segment.style.bg)
 }
 
-fn push_segment(segments: &mut Vec<StyledSegment>, current: &mut String, style: &TextStyle) {
+fn push_segment(
+    segments: &mut Vec<StyledSegment>,
+    current: &mut String,
+    style: &TextStyle,
+    hyperlink: &Option<String>,
+) {
     if current.is_empty() {
         return;
     }
@@ -280,6 +306,7 @@ fn push_segment(segments: &mut Vec<StyledSegment>, current: &mut String, style: 
     segments.push(StyledSegment {
         text: std::mem::take(current),
         style: style.clone(),
+        hyperlink: hyperlink.clone(),
     });
 }
 

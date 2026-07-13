@@ -536,8 +536,14 @@ impl Markdown {
             }
             NodeValue::Link(link) => {
                 let text = self.collect_inline(node);
-                let url = &link.url;
-                parts.push(format!("\x1b[4;34m{text}\x1b[24;39m ({url})"));
+                let (label, suffix, url) = split_autolink_suffix(&text, &link.url);
+                let url = url
+                    .chars()
+                    .filter(|ch| !ch.is_control())
+                    .collect::<String>();
+                parts.push(format!(
+                    "\x1b]8;;{url}\x1b\\\x1b[4;34m{label}\x1b[24;39m\x1b]8;;\x1b\\{suffix}"
+                ));
             }
             NodeValue::SoftBreak | NodeValue::LineBreak => parts.push("\n".to_string()),
             _ => {
@@ -582,6 +588,60 @@ impl Markdown {
     #[cfg(not(feature = "syntax-highlighting"))]
     fn highlight_code(&self, code: &str, _lang: &str) -> String {
         code.to_string()
+    }
+}
+
+fn split_autolink_suffix<'a>(text: &'a str, url: &'a str) -> (&'a str, &'a str, &'a str) {
+    if text != url || !url.starts_with("http://") && !url.starts_with("https://") {
+        return (text, "", url);
+    }
+
+    let mut round = 0usize;
+    let mut square = 0usize;
+    let mut curly = 0usize;
+    let mut boundary = url.len();
+    for (index, ch) in url.char_indices() {
+        match ch {
+            '(' => round += 1,
+            '[' => square += 1,
+            '{' => curly += 1,
+            ')' if round == 0 => {
+                boundary = index;
+                break;
+            }
+            ']' if square == 0 => {
+                boundary = index;
+                break;
+            }
+            '}' if curly == 0 => {
+                boundary = index;
+                break;
+            }
+            ')' => round -= 1,
+            ']' => square -= 1,
+            '}' => curly -= 1,
+            _ => {}
+        }
+    }
+
+    while boundary > 0 {
+        let Some(ch) = url[..boundary].chars().next_back() else {
+            break;
+        };
+        if matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '!' | '?' | '。' | '，' | '；' | '：' | '！' | '？'
+        ) {
+            boundary -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    if boundary == url.len() || boundary == 0 {
+        (text, "", url)
+    } else {
+        (&text[..boundary], &text[boundary..], &url[..boundary])
     }
 }
 
