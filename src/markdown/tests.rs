@@ -159,6 +159,84 @@ fn markdown_instances_share_default_syntax_assets() {
     assert_eq!(themed.theme_name, "InspiredGitHub");
 }
 
+#[cfg(feature = "syntax-highlighting")]
+#[test]
+fn unknown_fence_language_stays_completely_unstyled() {
+    let output = Markdown::new().render("```definitely-not-a-language\nlet value = 42;\n```");
+
+    assert_eq!(strip_ansi(&output), "let value = 42;\n");
+    assert!(!output.contains("\x1b[38;2;"), "{output:?}");
+}
+
+#[cfg(feature = "syntax-highlighting")]
+#[test]
+fn syntax_highlighting_obeys_codex_size_and_line_guardrails() {
+    let md = Markdown::new();
+    let oversized = "x".repeat(MAX_HIGHLIGHT_BYTES + 1);
+    assert_eq!(md.highlight_code(&oversized, "rust"), oversized);
+
+    let too_many_lines = "let value = 1;\n".repeat(MAX_HIGHLIGHT_LINES + 1);
+    assert_eq!(md.highlight_code(&too_many_lines, "rust"), too_many_lines);
+}
+
+#[cfg(feature = "syntax-highlighting")]
+#[test]
+fn syntax_lookup_resolves_common_codex_aliases() {
+    let syntax_set = SyntaxSet::load_defaults_newlines();
+    for alias in [
+        "csharp", "c-sharp", "cppm", "CPPM", "cxxm", "CxXm", "ixx", "IXX", "golang", "python3",
+        "shell",
+    ] {
+        assert!(
+            find_syntax(&syntax_set, alias).is_some(),
+            "alias {alias:?} did not resolve"
+        );
+    }
+    assert!(find_syntax(&syntax_set, "xyzlang").is_none());
+}
+
+#[cfg(feature = "syntax-highlighting")]
+#[test]
+fn highlighted_code_normalizes_crlf_without_stray_carriage_returns() {
+    let highlighted =
+        Markdown::new().highlight_code("fn main() {\r\n    println!(\"hello\");\r\n}\r\n", "rust");
+    let plain = strip_ansi(&highlighted);
+
+    assert!(!plain.contains('\r'), "{plain:?}");
+    assert_eq!(plain, "fn main() {\n    println!(\"hello\");\n}\n");
+}
+
+#[cfg(feature = "syntax-highlighting")]
+#[test]
+fn code_tokens_keep_distinct_foreground_colors() {
+    let output = Markdown::new()
+        .render("```rust\nfn greet() { let answer = format_value(\"hello\", 42); // note\n}\n```");
+    let colors = ["fn", "greet", "hello", "42", "//"].map(|token| {
+        foreground_rgb_before(&output, token)
+            .unwrap_or_else(|| panic!("missing foreground for {token:?} in {output:?}"))
+    });
+
+    for (index, color) in colors.iter().enumerate() {
+        assert!(
+            !colors[..index].contains(color),
+            "token colors must remain distinct: {colors:?}"
+        );
+    }
+}
+
+#[cfg(feature = "syntax-highlighting")]
+fn foreground_rgb_before(rendered: &str, token: &str) -> Option<(u8, u8, u8)> {
+    let token_start = rendered.find(token)?;
+    let prefix = &rendered[..token_start];
+    let marker = "\x1b[38;2;";
+    let start = prefix.rfind(marker)? + marker.len();
+    let end = rendered[start..].find('m')? + start;
+    let mut channels = rendered[start..end]
+        .split(';')
+        .filter_map(|part| part.parse::<u8>().ok());
+    Some((channels.next()?, channels.next()?, channels.next()?))
+}
+
 #[test]
 fn render_bold() {
     let md = Markdown::new();

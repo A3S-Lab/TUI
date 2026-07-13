@@ -37,8 +37,8 @@ impl TaskQueue {
             margin: 2,
             title: "tasks".to_string(),
             divider: '─',
-            running_marker: "⏳".to_string(),
-            queued_marker: "▱".to_string(),
+            running_marker: "●".to_string(),
+            queued_marker: "◦".to_string(),
             show_when_empty: false,
             header_color: Color::BrightBlack,
             running_color: Color::Yellow,
@@ -344,9 +344,9 @@ mod tests {
 
         assert_eq!(rows.len(), 4);
         assert!(rows[0].contains("tasks · ✓ 2 done"));
-        assert!(rows[1].contains("⏳ compile workspace"));
-        assert!(rows[2].contains("▱ first"));
-        assert!(rows[3].contains("▱ later"));
+        assert!(rows[1].contains("● compile workspace"));
+        assert!(rows[2].contains("◦ first"));
+        assert!(rows[3].contains("◦ later"));
         for row in rows {
             assert_eq!(visible_len(row), 48);
         }
@@ -369,8 +369,8 @@ mod tests {
             .view(40);
         let plain = strip_ansi(&view);
 
-        assert!(plain.contains("▱ one"));
-        assert!(!plain.contains("▱ two"));
+        assert!(plain.contains("◦ one"));
+        assert!(!plain.contains("◦ two"));
     }
 
     #[test]
@@ -457,8 +457,8 @@ mod tests {
 
         assert_eq!(queue.max_queued_rows, 1);
         assert_eq!(queue.visible_queued().len(), 1);
-        assert!(plain.contains("▱ one"));
-        assert!(!plain.contains("▱ two"));
+        assert!(plain.contains("◦ one"));
+        assert!(!plain.contains("◦ two"));
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod tests {
         let Element::Text(marker) = &running.children[1] else {
             panic!("expected marker text");
         };
-        assert_eq!(marker.content, "⏳");
+        assert_eq!(marker.content, "●");
         assert_eq!(marker.style.fg, Some(Color::Yellow));
         assert!(marker.style.bold);
     }

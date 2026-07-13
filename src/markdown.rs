@@ -13,13 +13,20 @@ use syntect::easy::HighlightLines;
 #[cfg(feature = "syntax-highlighting")]
 use syntect::highlighting::{Style as SynStyle, ThemeSet};
 #[cfg(feature = "syntax-highlighting")]
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 
 use crate::style::{
     split_lines_preserving_trailing_blank, truncate_visible, visible_len, Color, Style,
 };
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
+
+/// Match Codex's syntax-highlighting guardrails so pathological model output
+/// cannot monopolize the render loop. Oversized blocks remain plain text.
+#[cfg(feature = "syntax-highlighting")]
+const MAX_HIGHLIGHT_BYTES: usize = 512 * 1024;
+#[cfg(feature = "syntax-highlighting")]
+const MAX_HIGHLIGHT_LINES: usize = 10_000;
 
 mod ansi;
 mod table;
@@ -556,10 +563,20 @@ impl Markdown {
 
     #[cfg(feature = "syntax-highlighting")]
     fn highlight_code(&self, code: &str, lang: &str) -> String {
-        let syntax = self
-            .syntax_set
-            .find_syntax_by_token(lang)
-            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+        let exceeds_limits =
+            code.len() > MAX_HIGHLIGHT_BYTES || code.lines().count() > MAX_HIGHLIGHT_LINES;
+        let normalized = normalize_code_newlines(code);
+        let code = normalized.as_ref();
+        if code.is_empty() || exceeds_limits {
+            return code.to_string();
+        }
+
+        // Unknown language tags must stay completely unstyled. Falling back to
+        // syntect's Plain Text grammar still applies the theme foreground and
+        // makes arbitrary fence labels look like successful highlighting.
+        let Some(syntax) = find_syntax(&self.syntax_set, lang) else {
+            return code.to_string();
+        };
 
         let Some(theme) = self
             .theme_set
@@ -574,7 +591,9 @@ impl Markdown {
         let mut output = Vec::new();
 
         for line in split_lines_preserving_trailing_blank(code) {
-            let ranges = h.highlight_line(line, &self.syntax_set).unwrap_or_default();
+            let Ok(ranges) = h.highlight_line(line, &self.syntax_set) else {
+                return code.to_string();
+            };
             let mut styled_line = String::new();
             for (style, text) in ranges {
                 styled_line.push_str(&style_to_ansi(&style, text));
@@ -587,8 +606,46 @@ impl Markdown {
 
     #[cfg(not(feature = "syntax-highlighting"))]
     fn highlight_code(&self, code: &str, _lang: &str) -> String {
-        code.to_string()
+        normalize_code_newlines(code).into_owned()
     }
+}
+
+fn normalize_code_newlines(code: &str) -> std::borrow::Cow<'_, str> {
+    if code.contains('\r') {
+        std::borrow::Cow::Owned(code.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(code)
+    }
+}
+
+#[cfg(feature = "syntax-highlighting")]
+fn find_syntax<'a>(syntax_set: &'a SyntaxSet, lang: &str) -> Option<&'a SyntaxReference> {
+    let lang = lang.trim();
+    if lang.is_empty() {
+        return None;
+    }
+
+    let normalized = lang.to_ascii_lowercase();
+    let patched = match normalized.as_str() {
+        "csharp" | "c-sharp" => "cs",
+        "cppm" | "cxxm" | "ixx" => "cpp",
+        "golang" => "go",
+        "python3" => "python",
+        "shell" => "bash",
+        _ => lang,
+    };
+
+    syntax_set
+        .find_syntax_by_token(patched)
+        .or_else(|| syntax_set.find_syntax_by_name(patched))
+        .or_else(|| {
+            let lower = patched.to_ascii_lowercase();
+            syntax_set
+                .syntaxes()
+                .iter()
+                .find(|syntax| syntax.name.to_ascii_lowercase() == lower)
+        })
+        .or_else(|| syntax_set.find_syntax_by_extension(lang))
 }
 
 fn split_autolink_suffix<'a>(text: &'a str, url: &'a str) -> (&'a str, &'a str, &'a str) {

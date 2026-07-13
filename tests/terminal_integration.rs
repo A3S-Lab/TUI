@@ -628,9 +628,9 @@ fn task_queue_renders_pinned_queue_through_layout_and_paint() {
 
     assert!(plain.contains("tasks · ✓ 1 done"), "{plain:?}");
     assert!(plain.contains("compile workspace"), "{plain:?}");
-    assert!(plain.contains("▱ run checks"), "{plain:?}");
-    assert!(plain.contains("▱ write docs"), "{plain:?}");
-    assert_eq!(grid.get(2, 1).ch, '⏳');
+    assert!(plain.contains("◦ run checks"), "{plain:?}");
+    assert!(plain.contains("◦ write docs"), "{plain:?}");
+    assert_eq!(grid.get(2, 1).ch, '●');
     assert_eq!(grid.get(2, 1).fg, Some(Color::Yellow));
     assert!(grid.get(2, 1).bold);
 }

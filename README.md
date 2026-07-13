@@ -18,7 +18,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
 - **Rich Components** — 60 ready-to-use components (tables, modals, help panels, text editors, etc.)
-- **Terminal-Native Markdown** — clickable OSC 8 links, responsive tables, and display-width-safe wrapping
+- **Terminal-Native Markdown** — clickable OSC 8 links, responsive tables, display-width-safe wrapping, and guarded multi-color code highlighting
 
 ---
 
@@ -256,6 +256,10 @@ Available features:
 
 Turning off `syntax-highlighting` keeps markdown rendering available but renders
 code block contents as plain text.
+
+Recognized fenced-code languages use foreground-only syntax colors. Unknown
+language tags and blocks larger than 512 KiB or 10,000 lines stay unstyled so
+streaming transcripts remain predictable and responsive.
 
 ---
 
