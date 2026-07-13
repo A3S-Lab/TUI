@@ -1,11 +1,13 @@
 [package]
 name = "a3s-tui"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 authors = ["A3S Lab"]
 license = "MIT"
 description = "TEA (The Elm Architecture) framework for terminal user interfaces"
-repository = "https://github.com/A3S-Lab/a3s"
+repository = "https://github.com/A3S-Lab/TUI"
+documentation = "https://docs.rs/a3s-tui"
+readme = "README.md"
 keywords = ["tui", "terminal", "elm-architecture", "tea", "async"]
 categories = ["command-line-interface", "asynchronous"]
 
