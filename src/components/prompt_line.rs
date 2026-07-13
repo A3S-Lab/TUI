@@ -1,5 +1,5 @@
-use crate::element::{BoxElement, Element, FlexDirection, TextElement};
-use crate::style::{fit_visible, visible_len, Color, Style};
+use crate::element::{BoxElement, Dimension, Element, FlexDirection, TextElement};
+use crate::style::{fit_visible, truncate_visible, visible_len, Color, Style};
 use crate::theme::{Theme, ThemeRole};
 
 const MAX_PROMPT_LINE_CONTINUATION_INDENT: usize = u16::MAX as usize;
@@ -20,6 +20,7 @@ pub struct PromptLine {
     continuation_indent: Option<usize>,
     prompt_style: Option<Style>,
     text_style: Option<Style>,
+    background_color: Option<Color>,
 }
 
 impl PromptLine {
@@ -32,6 +33,7 @@ impl PromptLine {
             continuation_indent: None,
             prompt_style: None,
             text_style: None,
+            background_color: None,
         }
     }
 
@@ -76,6 +78,11 @@ impl PromptLine {
         self
     }
 
+    pub fn background_color(mut self, color: Color) -> Self {
+        self.background_color = Some(color);
+        self
+    }
+
     pub fn with_theme(mut self, theme: &Theme) -> Self {
         self.prompt_style = Some(theme.foreground_style(ThemeRole::Primary).bold());
         self.text_style = Some(theme.foreground_style(ThemeRole::Foreground));
@@ -93,11 +100,7 @@ impl PromptLine {
     pub fn view(&self) -> String {
         self.render_lines()
             .into_iter()
-            .map(|line| {
-                self.width
-                    .map(|width| fit_visible(&line, width))
-                    .unwrap_or(line)
-            })
+            .map(|line| self.fit_rendered_line(line))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -122,57 +125,59 @@ impl PromptLine {
             .enumerate()
             .map(|(index, line)| {
                 if index == 0 {
-                    let prompt = match &self.prompt_style {
-                        Some(style) => style.render(&self.prompt),
-                        None => self.prompt.clone(),
-                    };
+                    let prompt = self.render_piece(&self.prompt, self.prompt_style.as_ref());
                     let text = self.render_text(&line);
-                    format!("{}{prompt}{text}", " ".repeat(margin))
+                    let margin = self.render_piece(&" ".repeat(margin), None);
+                    format!("{margin}{prompt}{text}")
                 } else {
-                    format!(
-                        "{}{}",
-                        " ".repeat(continuation_indent),
-                        self.render_text(&line)
-                    )
+                    let indent = self.render_piece(&" ".repeat(continuation_indent), None);
+                    format!("{indent}{}", self.render_text(&line))
                 }
             })
             .collect()
     }
 
     fn element_line<Msg>(&self, index: usize, line: String) -> Element<Msg> {
+        let mut row = BoxElement::new().direction(FlexDirection::Row);
+        if let Some(background) = self.background_color {
+            row = row.bg(background);
+            if let Some(width) = self.width {
+                row = row.width(Dimension::Points(width as f32));
+            }
+        }
+
         if index == 0 {
             let mut prompt = TextElement::new(self.prompt.as_str());
             if let Some(style) = &self.prompt_style {
                 prompt = apply_text_style(prompt, style);
             }
+            prompt = self.apply_background(prompt);
 
             let mut text = TextElement::new(line);
             if let Some(style) = &self.text_style {
                 text = apply_text_style(text, style);
             }
+            text = self.apply_background(text);
 
             Element::Box(
-                BoxElement::new()
-                    .direction(FlexDirection::Row)
-                    .child(Element::Text(TextElement::new(
-                        " ".repeat(self.margin_for_render()),
-                    )))
-                    .child(Element::Text(prompt))
-                    .child(Element::Text(text)),
+                row.child(Element::Text(self.apply_background(TextElement::new(
+                    " ".repeat(self.margin_for_render()),
+                ))))
+                .child(Element::Text(prompt))
+                .child(Element::Text(text)),
             )
         } else {
             let mut text = TextElement::new(line);
             if let Some(style) = &self.text_style {
                 text = apply_text_style(text, style);
             }
+            text = self.apply_background(text);
 
             Element::Box(
-                BoxElement::new()
-                    .direction(FlexDirection::Row)
-                    .child(Element::Text(TextElement::new(
-                        " ".repeat(self.continuation_indent_for_render()),
-                    )))
-                    .child(Element::Text(text)),
+                row.child(Element::Text(self.apply_background(TextElement::new(
+                    " ".repeat(self.continuation_indent_for_render()),
+                ))))
+                .child(Element::Text(text)),
             )
         }
     }
@@ -191,10 +196,36 @@ impl PromptLine {
     }
 
     fn render_text(&self, text: &str) -> String {
-        match &self.text_style {
-            Some(style) => style.render(text),
-            None => text.to_string(),
+        self.render_piece(text, self.text_style.as_ref())
+    }
+
+    fn render_piece(&self, text: &str, style: Option<&Style>) -> String {
+        let mut style = style.cloned().unwrap_or_default();
+        if let Some(background) = self.background_color {
+            style = style.bg(background);
         }
+        style.render(text)
+    }
+
+    fn fit_rendered_line(&self, line: String) -> String {
+        let Some(width) = self.width else {
+            return line;
+        };
+        if self.background_color.is_none() {
+            return fit_visible(&line, width);
+        }
+
+        let line = truncate_visible(&line, width);
+        let padding = width.saturating_sub(visible_len(&line));
+        let padding = self.render_piece(&" ".repeat(padding), None);
+        format!("{line}{padding}")
+    }
+
+    fn apply_background(&self, mut text: TextElement) -> TextElement {
+        if let Some(background) = self.background_color {
+            text = text.bg(background);
+        }
+        text
     }
 
     fn continuation_indent_width(&self) -> usize {
@@ -287,6 +318,52 @@ mod tests {
         assert_eq!(strip_ansi(&rendered), " ? research mode");
         assert!(rendered.contains("\x1b[1;36m? \x1b[0m"));
         assert!(rendered.contains("\x1b[97mresearch mode\x1b[0m"));
+    }
+
+    #[test]
+    fn background_fills_full_width_while_preserving_prompt_and_text_styles() {
+        let background = Color::Rgb(31, 31, 31);
+        let line = PromptLine::new("❯ ")
+            .text("cargo test\n--all")
+            .margin(2)
+            .width(16)
+            .prompt_color(Color::Cyan)
+            .text_color(Color::BrightWhite)
+            .background_color(background);
+        let rendered = line.view();
+        let rows = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| visible_len(row) == 16));
+        assert_eq!(strip_ansi(rows[0]), "  ❯ cargo test  ");
+        assert_eq!(strip_ansi(rows[1]), "    --all       ");
+        assert!(rendered.contains("\x1b[1;36;48;2;31;31;31m❯ \x1b[0m"));
+        assert!(rendered.contains("\x1b[97;48;2;31;31;31mcargo test\x1b[0m"));
+        assert!(rendered.contains("\x1b[48;2;31;31;31m  \x1b[0m"));
+
+        let Element::Box(column) = line.element::<()>() else {
+            panic!("expected column element");
+        };
+        for child in &column.children {
+            let Element::Box(row) = child else {
+                panic!("expected row element");
+            };
+            assert_eq!(row.style.bg, Some(background));
+            assert_eq!(row.style.width, Dimension::Points(16.0));
+        }
+        let Element::Box(first_row) = &column.children[0] else {
+            panic!("expected first row");
+        };
+        let Element::Text(prompt) = &first_row.children[1] else {
+            panic!("expected prompt text");
+        };
+        let Element::Text(text) = &first_row.children[2] else {
+            panic!("expected input text");
+        };
+        assert_eq!(prompt.style.fg, Some(Color::Cyan));
+        assert_eq!(prompt.style.bg, Some(background));
+        assert_eq!(text.style.fg, Some(Color::BrightWhite));
+        assert_eq!(text.style.bg, Some(background));
     }
 
     #[test]

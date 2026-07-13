@@ -11,6 +11,8 @@ pub enum ChecklistStatus {
     Active,
     Done,
     Error,
+    Skipped,
+    Cancelled,
 }
 
 impl ChecklistStatus {
@@ -20,6 +22,8 @@ impl ChecklistStatus {
             ChecklistStatus::Active => '◼',
             ChecklistStatus::Done => '✔',
             ChecklistStatus::Error => '✗',
+            ChecklistStatus::Skipped => '↷',
+            ChecklistStatus::Cancelled => '⊘',
         }
     }
 }
@@ -62,6 +66,14 @@ impl ChecklistItem {
 
     pub fn error(self) -> Self {
         self.status(ChecklistStatus::Error)
+    }
+
+    pub fn skipped(self) -> Self {
+        self.status(ChecklistStatus::Skipped)
+    }
+
+    pub fn cancelled(self) -> Self {
+        self.status(ChecklistStatus::Cancelled)
     }
 
     pub fn glyph(mut self, glyph: char) -> Self {
@@ -107,6 +119,8 @@ pub struct Checklist {
     active_color: Color,
     done_color: Color,
     error_color: Color,
+    skipped_color: Color,
+    cancelled_color: Color,
     text_color: Color,
     strikethrough_done: bool,
 }
@@ -121,6 +135,8 @@ impl Checklist {
             active_color: Color::Yellow,
             done_color: Color::BrightBlack,
             error_color: Color::Red,
+            skipped_color: Color::BrightBlack,
+            cancelled_color: Color::BrightBlack,
             text_color: Color::White,
             strikethrough_done: true,
         }
@@ -169,6 +185,16 @@ impl Checklist {
         self
     }
 
+    pub fn skipped_color(mut self, color: Color) -> Self {
+        self.skipped_color = color;
+        self
+    }
+
+    pub fn cancelled_color(mut self, color: Color) -> Self {
+        self.cancelled_color = color;
+        self
+    }
+
     pub fn text_color(mut self, color: Color) -> Self {
         self.text_color = color;
         self
@@ -184,6 +210,8 @@ impl Checklist {
         self.active_color = theme.color(ThemeRole::Warning);
         self.done_color = theme.color(ThemeRole::Success);
         self.error_color = theme.color(ThemeRole::Error);
+        self.skipped_color = theme.color(ThemeRole::Muted);
+        self.cancelled_color = theme.color(ThemeRole::Muted);
         self.text_color = theme.color(ThemeRole::Foreground);
         self
     }
@@ -300,6 +328,8 @@ impl Checklist {
                 ChecklistStatus::Active => self.active_color,
                 ChecklistStatus::Done => self.done_color,
                 ChecklistStatus::Error => self.error_color,
+                ChecklistStatus::Skipped => self.skipped_color,
+                ChecklistStatus::Cancelled => self.cancelled_color,
             })
     }
 
@@ -309,6 +339,8 @@ impl Checklist {
             ChecklistStatus::Active => self.active_color,
             ChecklistStatus::Done => self.done_color,
             ChecklistStatus::Error => self.error_color,
+            ChecklistStatus::Skipped => self.skipped_color,
+            ChecklistStatus::Cancelled => self.cancelled_color,
         })
     }
 
@@ -350,6 +382,8 @@ mod tests {
             ChecklistItem::new("implement").active(),
             ChecklistItem::new("verify").done(),
             ChecklistItem::new("ship").error(),
+            ChecklistItem::new("optional").skipped(),
+            ChecklistItem::new("obsolete").cancelled(),
         ]);
 
         let plain = strip_ansi(&checklist.view(40, 8));
@@ -358,6 +392,8 @@ mod tests {
         assert!(plain.contains("◼ implement"));
         assert!(plain.contains("✔ verify"));
         assert!(plain.contains("✗ ship"));
+        assert!(plain.contains("↷ optional"));
+        assert!(plain.contains("⊘ obsolete"));
     }
 
     #[test]

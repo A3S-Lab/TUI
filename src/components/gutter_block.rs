@@ -135,12 +135,33 @@ impl GutterBlock {
                 .width
                 .map(|width| width.saturating_sub(margin_width))
                 .unwrap_or_else(|| visible_len(&inner));
-            let fitted = fit_visible(&inner, inner_width);
-            let mut style = Style::new().bg(background);
-            if let Some(color) = self.content_color {
-                style = style.fg(color);
+            let prefix = if index == 0 {
+                format!("{}{}", self.marker, self.gap)
+            } else {
+                " ".repeat(visible_len(&self.marker) + visible_len(&self.gap))
+            };
+            let prefix_width = visible_len(&prefix);
+            if prefix_width >= inner_width {
+                let fitted = fit_visible(&inner, inner_width);
+                return format!("{margin}{}", Style::new().bg(background).render(&fitted));
             }
-            return format!("{margin}{}", style.render(&fitted));
+
+            let content_width = inner_width.saturating_sub(prefix_width);
+            let content = fit_visible(&strip_ansi(line), content_width);
+            let prefix = if index == 0 {
+                format!(
+                    "{}{}",
+                    self.marker_style().bg(background).render(&self.marker),
+                    Style::new().bg(background).render(&self.gap)
+                )
+            } else {
+                Style::new().bg(background).render(&prefix)
+            };
+            let mut content_style = Style::new().bg(background);
+            if let Some(color) = self.content_color {
+                content_style = content_style.fg(color);
+            }
+            return format!("{margin}{prefix}{}", content_style.render(&content));
         }
 
         let prefix = if index == 0 {
@@ -164,38 +185,53 @@ impl GutterBlock {
     }
 
     fn element_line<Msg>(&self, index: usize, line: &str) -> Element<Msg> {
-        if self.background_color.is_some() {
-            let plain = strip_ansi(&self.render_line(index, line));
-            let mut text = TextElement::new(plain);
-            if let Some(color) = self.content_color {
-                text = text.fg(color);
-            }
-            if let Some(background) = self.background_color {
-                text = text.bg(background);
-            }
-            return Element::Text(text);
-        }
-
         let mut children = vec![Element::Text(TextElement::new(
             " ".repeat(self.margin_for_render()),
         ))];
+        let background = self.background_color;
         if index == 0 {
             let mut marker = TextElement::new(self.marker.clone()).fg(self.marker_color);
             if self.marker_bold {
                 marker = marker.bold();
             }
+            if let Some(background) = background {
+                marker = marker.bg(background);
+            }
             children.push(Element::Text(marker));
-            children.push(Element::Text(TextElement::new(self.gap.clone())));
+            let mut gap = TextElement::new(self.gap.clone());
+            if let Some(background) = background {
+                gap = gap.bg(background);
+            }
+            children.push(Element::Text(gap));
         } else {
-            children.push(Element::Text(TextElement::new(
-                " ".repeat(visible_len(&self.marker) + visible_len(&self.gap)),
-            )));
+            let mut prefix =
+                TextElement::new(" ".repeat(visible_len(&self.marker) + visible_len(&self.gap)));
+            if let Some(background) = background {
+                prefix = prefix.bg(background);
+            }
+            children.push(Element::Text(prefix));
         }
 
-        let plain = strip_ansi(line);
+        let prefix_width = visible_len(&self.marker) + visible_len(&self.gap);
+        let content_width = self
+            .width
+            .map(|width| {
+                width
+                    .saturating_sub(self.margin_for_render())
+                    .saturating_sub(prefix_width)
+            })
+            .unwrap_or_else(|| visible_len(&strip_ansi(line)));
+        let plain = if background.is_some() {
+            fit_visible(&strip_ansi(line), content_width)
+        } else {
+            strip_ansi(line)
+        };
         let mut content = TextElement::new(plain);
         if let Some(color) = self.content_color {
             content = content.fg(color);
+        }
+        if let Some(background) = background {
+            content = content.bg(background);
         }
         children.push(Element::Text(content));
 
@@ -279,20 +315,41 @@ mod tests {
     }
 
     #[test]
-    fn background_width_renders_user_bubble_shape() {
-        let rendered = GutterBlock::new("hello\nworld")
+    fn background_keeps_marker_and_content_styles_separate_across_full_width() {
+        let block = GutterBlock::new("hello\nworld")
             .margin(2)
             .width(12)
+            .marker_color(Color::Green)
             .content_color(Color::White)
-            .background_color(Color::Rgb(38, 45, 64))
-            .view();
+            .background_color(Color::Rgb(38, 45, 64));
+        let rendered = block.view();
         let rows = rendered.lines().collect::<Vec<_>>();
 
         assert_eq!(rows.len(), 2);
-        assert!(rows[0].starts_with("  \x1b[37;48;2;38;45;64m"));
+        assert!(rendered.contains("\x1b[1;32;48;2;38;45;64m●\x1b[0m"));
+        assert!(rendered.contains("\x1b[37;48;2;38;45;64mhello   \x1b[0m"));
         assert_eq!(visible_len(rows[0]), 12);
         assert_eq!(strip_ansi(rows[0]), "  ● hello   ");
         assert_eq!(strip_ansi(rows[1]), "    world   ");
+
+        let Element::Box(column) = block.element::<()>() else {
+            panic!("expected column element");
+        };
+        let Element::Box(first_row) = &column.children[0] else {
+            panic!("expected first row");
+        };
+        let Element::Text(marker) = &first_row.children[1] else {
+            panic!("expected marker text");
+        };
+        let Element::Text(content) = &first_row.children[3] else {
+            panic!("expected content text");
+        };
+        assert_eq!(marker.style.fg, Some(Color::Green));
+        assert_eq!(marker.style.bg, Some(Color::Rgb(38, 45, 64)));
+        assert!(marker.style.bold);
+        assert_eq!(content.style.fg, Some(Color::White));
+        assert_eq!(content.style.bg, Some(Color::Rgb(38, 45, 64)));
+        assert_eq!(content.content, "hello   ");
     }
 
     #[test]

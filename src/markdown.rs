@@ -3,6 +3,9 @@
 //! Supports CommonMark via comrak. Code highlighting is enabled by the
 //! `syntax-highlighting` crate feature.
 
+#[cfg(feature = "syntax-highlighting")]
+use std::sync::{Arc, OnceLock};
+
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::{parse_document, Arena, Options};
 #[cfg(feature = "syntax-highlighting")]
@@ -13,30 +16,174 @@ use syntect::highlighting::{Style as SynStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
 use crate::style::{
-    fit_visible, next_display_cell_boundary, split_lines_preserving_trailing_blank,
-    truncate_visible, visible_len, Color, Style,
+    split_lines_preserving_trailing_blank, truncate_visible, visible_len, Color, Style,
 };
 
 const MAX_MARKDOWN_WIDTH: usize = u16::MAX as usize;
 
+mod ansi;
+mod table;
+
+use ansi::wrap_styled_text;
+
+/// Background active on the final rendered cell of an ANSI-styled line.
+/// Useful when adjacent chrome must visually continue a full-row surface.
+pub fn trailing_ansi_background(line: &str) -> Option<Color> {
+    ansi::trailing_background(line)
+}
+pub(crate) use ansi::{rendered_markdown_element, split_rendered_lines};
+
+#[cfg(feature = "syntax-highlighting")]
+struct DefaultSyntaxAssets {
+    syntax_set: Arc<SyntaxSet>,
+    theme_set: Arc<ThemeSet>,
+}
+
+#[cfg(feature = "syntax-highlighting")]
+fn default_syntax_assets() -> &'static DefaultSyntaxAssets {
+    static DEFAULTS: OnceLock<DefaultSyntaxAssets> = OnceLock::new();
+    DEFAULTS.get_or_init(|| DefaultSyntaxAssets {
+        syntax_set: Arc::new(SyntaxSet::load_defaults_newlines()),
+        theme_set: Arc::new(ThemeSet::load_defaults()),
+    })
+}
+
 pub struct Markdown {
     width: usize,
     #[cfg(feature = "syntax-highlighting")]
-    syntax_set: SyntaxSet,
+    syntax_set: Arc<SyntaxSet>,
     #[cfg(feature = "syntax-highlighting")]
-    theme_set: ThemeSet,
+    theme_set: Arc<ThemeSet>,
     #[cfg(feature = "syntax-highlighting")]
     theme_name: String,
 }
 
+/// Source-aware Markdown output used by clients that need to preserve lines
+/// whose whitespace is semantically significant.
+#[derive(Debug, Clone)]
+pub struct RenderedMarkdown {
+    text: String,
+    non_wrapping_line_indices: Vec<usize>,
+    line_metadata: Vec<RenderedLineMetadata>,
+}
+
+/// One-based source-line range that produced a rendered terminal row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceLineRange {
+    start: usize,
+    end: usize,
+}
+
+impl SourceLineRange {
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    pub fn contains(&self, line: usize) -> bool {
+        self.start <= line && line <= self.end
+    }
+}
+
+/// Source and layout semantics for one rendered Markdown row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderedLineMetadata {
+    source: Option<SourceLineRange>,
+    non_wrapping: bool,
+    table: bool,
+}
+
+impl RenderedLineMetadata {
+    pub fn source(&self) -> Option<SourceLineRange> {
+        self.source
+    }
+
+    pub fn is_non_wrapping(&self) -> bool {
+        self.non_wrapping
+    }
+
+    pub fn is_table(&self) -> bool {
+        self.table
+    }
+}
+
+impl RenderedMarkdown {
+    /// Return the rendered ANSI text.
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    /// Consume the metadata wrapper and return the rendered ANSI text.
+    pub fn into_text(self) -> String {
+        self.text
+    }
+
+    /// Zero-based rendered rows that must not be reflowed by a downstream
+    /// viewport pass. Today these are code-block rows, matching Codex CLI's
+    /// copy/paste-preserving behavior.
+    pub fn non_wrapping_line_indices(&self) -> &[usize] {
+        &self.non_wrapping_line_indices
+    }
+
+    /// Metadata aligned one-for-one with `self.as_str().lines()`.
+    pub fn line_metadata(&self) -> &[RenderedLineMetadata] {
+        &self.line_metadata
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkdownLineKind {
+    Normal,
+    NonWrapping,
+}
+
+#[derive(Debug)]
+struct MarkdownLine {
+    text: String,
+    kind: MarkdownLineKind,
+    source: Option<SourceLineRange>,
+    table: bool,
+}
+
+struct ListItemMarker<'a> {
+    text: &'a str,
+    width: usize,
+    dim: bool,
+}
+
+impl MarkdownLine {
+    fn normal(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: MarkdownLineKind::Normal,
+            source: None,
+            table: false,
+        }
+    }
+
+    fn non_wrapping(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: MarkdownLineKind::NonWrapping,
+            source: None,
+            table: false,
+        }
+    }
+}
+
 impl Markdown {
     pub fn new() -> Self {
+        #[cfg(feature = "syntax-highlighting")]
+        let defaults = default_syntax_assets();
         Self {
             width: 80,
             #[cfg(feature = "syntax-highlighting")]
-            syntax_set: SyntaxSet::load_defaults_newlines(),
+            syntax_set: Arc::clone(&defaults.syntax_set),
             #[cfg(feature = "syntax-highlighting")]
-            theme_set: ThemeSet::load_defaults(),
+            theme_set: Arc::clone(&defaults.theme_set),
             #[cfg(feature = "syntax-highlighting")]
             theme_name: "base16-eighties.dark".to_string(),
         }
@@ -47,19 +194,26 @@ impl Markdown {
         self
     }
 
-    pub fn with_theme(mut self, name: &str) -> Self {
+    pub fn with_theme(self, name: &str) -> Self {
         #[cfg(feature = "syntax-highlighting")]
         {
-            self.theme_name = name.to_string();
+            let mut markdown = self;
+            markdown.theme_name = name.to_string();
+            markdown
         }
         #[cfg(not(feature = "syntax-highlighting"))]
         {
             let _ = name;
+            self
         }
-        self
     }
 
     pub fn render(&self, input: &str) -> String {
+        self.render_with_metadata(input).into_text()
+    }
+
+    /// Render Markdown while retaining source-aware row layout metadata.
+    pub fn render_with_metadata(&self, input: &str) -> RenderedMarkdown {
         let arena = Arena::new();
         let mut options = Options::default();
         options.extension.table = true;
@@ -69,71 +223,113 @@ impl Markdown {
         let root = parse_document(&arena, input, &options);
 
         let mut output = Vec::new();
-        self.render_node(root, &mut output, 0);
-        output.join("\n")
+        self.render_node(root, &mut output, 0, self.width);
+        let text = output
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered_line_count = text.lines().count();
+        let non_wrapping_line_indices = output
+            .iter()
+            .take(rendered_line_count)
+            .enumerate()
+            .filter_map(|(index, line)| {
+                (line.kind == MarkdownLineKind::NonWrapping).then_some(index)
+            })
+            .collect();
+        let line_metadata = output
+            .iter()
+            .take(rendered_line_count)
+            .map(|line| RenderedLineMetadata {
+                source: line.source,
+                non_wrapping: line.kind == MarkdownLineKind::NonWrapping,
+                table: line.table,
+            })
+            .collect();
+        RenderedMarkdown {
+            text,
+            non_wrapping_line_indices,
+            line_metadata,
+        }
     }
 
-    fn render_node<'a>(&self, node: &'a AstNode<'a>, output: &mut Vec<String>, depth: usize) {
+    fn render_node<'a>(
+        &self,
+        node: &'a AstNode<'a>,
+        output: &mut Vec<MarkdownLine>,
+        indent: usize,
+        width: usize,
+    ) {
+        let output_start = output.len();
+        let (source, table_node) = {
+            let data = node.data.borrow();
+            (
+                SourceLineRange {
+                    start: data.sourcepos.start.line,
+                    end: data.sourcepos.end.line,
+                },
+                matches!(data.value, NodeValue::Table(_)),
+            )
+        };
         match &node.data.borrow().value {
             NodeValue::Document => {
                 for child in node.children() {
-                    self.render_node(child, output, depth);
+                    self.render_node(child, output, indent, width);
                 }
             }
             NodeValue::Heading(heading) => {
-                // Clean heading: bold + colour, no literal "#" (Claude-style). A
-                // left bar marks h1/h2 for a little hierarchy.
                 let text = self.collect_inline(node);
-                let lead = if heading.level <= 2 { "▌ " } else { "" };
-                let label = format!("{lead}{text}");
-                let label = if self.width == 0 {
-                    label
-                } else {
-                    truncate_visible(&label, self.width)
-                };
-                let styled = Style::new()
-                    .bold()
-                    .fg(heading_color(heading.level))
-                    .render(&label);
-                output.push(styled);
-                output.push(String::new());
+                let label = format!("{} {text}", "#".repeat(heading.level as usize));
+                for line in wrap_text(&label, width.saturating_sub(indent)) {
+                    let styled = Style::new()
+                        .bold()
+                        .fg(heading_color(heading.level))
+                        .render(&line);
+                    output.push(MarkdownLine::normal(fit_markdown_line(
+                        format!("{}{styled}", " ".repeat(indent)),
+                        width,
+                    )));
+                }
+                output.push(MarkdownLine::normal(String::new()));
             }
             NodeValue::Paragraph => {
                 let text = self.collect_inline(node);
-                let wrapped = wrap_text(&text, self.width.saturating_sub(depth * 2));
+                let wrapped = wrap_text(&text, width.saturating_sub(indent));
                 for line in wrapped {
-                    output.push(fit_markdown_line(
-                        format!("{}{}", " ".repeat(depth * 2), line),
-                        self.width,
-                    ));
+                    output.push(MarkdownLine::normal(fit_markdown_line(
+                        format!("{}{}", " ".repeat(indent), line),
+                        width,
+                    )));
                 }
                 // No trailing blank line — keeps chat messages tight (a model that
                 // writes one sentence per paragraph would otherwise be double-spaced).
             }
             NodeValue::CodeBlock(cb) => {
-                let lang = cb.info.clone();
+                let lang = cb.info.split([',', ' ', '\t']).next().unwrap_or_default();
                 let code = cb.literal.clone();
-                let highlighted = self.highlight_code(&code, &lang);
+                let highlighted = self.highlight_code(&code, lang);
+                let code = highlighted.strip_suffix('\n').unwrap_or(&highlighted);
 
-                let border_style = Style::new().fg(Color::BrightBlack);
-                let label = if lang.is_empty() {
-                    "code"
-                } else {
-                    lang.as_str()
-                };
-                let top = border_style.render(&code_block_header(label, self.width));
-                let bottom = border_style.render(&code_block_footer(self.width));
-
-                output.push(top);
-                for line in split_lines_preserving_trailing_blank(&highlighted) {
-                    output.push(code_block_body_line(line, self.width));
+                if !code.is_empty() {
+                    if output.last().is_some_and(|line| !line.text.is_empty()) {
+                        output.push(MarkdownLine::normal(String::new()));
+                    }
+                    let code_indent = indent.saturating_add(usize::from(!cb.fenced) * 4);
+                    let indent = " ".repeat(code_indent);
+                    for line in split_lines_preserving_trailing_blank(code) {
+                        output.push(MarkdownLine::non_wrapping(format!("{indent}{line}")));
+                    }
+                    // This trailing separator is invisible at end-of-document,
+                    // but gives a following block Codex's normal vertical gap.
+                    // It is deliberately not a code row, so an unterminated
+                    // fence never exposes a speculative footer to scrollback.
+                    output.push(MarkdownLine::normal(String::new()));
                 }
-                output.push(bottom);
-                output.push(String::new());
             }
             NodeValue::List(_) => {
                 for child in node.children() {
-                    self.render_node(child, output, depth);
+                    self.render_node(child, output, indent, width);
                 }
             }
             // Task-list item ("- [x]" / "- [ ]") — render as a plan checklist.
@@ -144,95 +340,76 @@ impl Markdown {
                     Style::new().fg(Color::BrightBlack).render("□")
                 };
                 // Same structure as a list item: first paragraph is the checkbox
-                // label, the rest renders recursively at depth+1.
-                self.render_item_body(node, output, depth, &mark, 1, checked.is_none());
+                // label, while subsequent blocks inherit the exact marker
+                // continuation indent.
+                self.render_item_body(
+                    node,
+                    output,
+                    indent,
+                    width,
+                    ListItemMarker {
+                        text: &mark,
+                        width: 1,
+                        dim: checked.is_none(),
+                    },
+                );
             }
             NodeValue::Item(item) => {
                 let bullet = if item.list_type == comrak::nodes::ListType::Ordered {
                     format!("{}.", item.start)
                 } else {
-                    "•".to_string()
+                    "-".to_string()
                 };
                 let bw = visible_len(&bullet);
                 let bullet_style = Style::new().fg(Color::Rgb(122, 162, 247)).render(&bullet);
                 // The item's first paragraph is its bulleted label; every other
                 // block child (nested list, code block, extra paragraph) renders
-                // through the normal recursive path at depth+1. (Flattening the
+                // through the normal recursive path. (Flattening the
                 // whole subtree into the label is what rendered nested lists twice.)
-                self.render_item_body(node, output, depth, &bullet_style, bw, false);
+                self.render_item_body(
+                    node,
+                    output,
+                    indent,
+                    width,
+                    ListItemMarker {
+                        text: &bullet_style,
+                        width: bw,
+                        dim: false,
+                    },
+                );
             }
             NodeValue::BlockQuote => {
-                let text = self.collect_inline_from_children(node);
-                let bar = Style::new().fg(Color::BrightBlack).render("│");
-                if self.width == 0 {
-                    let styled_text = Style::new().italic().fg(Color::White).render(&text);
-                    output.push(format!("{} {}", bar, styled_text));
-                } else if self.width == 1 {
-                    output.push(bar);
+                let inner_width = if width == 0 {
+                    0
                 } else {
-                    for line in wrap_text(&text, self.width - 2) {
-                        let styled_text = Style::new().italic().fg(Color::White).render(&line);
-                        output.push(format!("{} {}", bar, styled_text));
-                    }
+                    width.saturating_sub(2)
+                };
+                let mut quoted = Vec::new();
+                for child in node.children() {
+                    self.render_node(child, &mut quoted, indent, inner_width);
+                }
+                for line in quoted {
+                    output.push(prefix_blockquote_line(line, indent, width));
                 }
             }
             NodeValue::ThematicBreak => {
                 let rule = Style::new()
                     .fg(Color::BrightBlack)
-                    .render(&"─".repeat(self.width));
-                output.push(rule);
-                output.push(String::new());
+                    .render(&"─".repeat(width));
+                output.push(MarkdownLine::normal(rule));
+                output.push(MarkdownLine::normal(String::new()));
             }
-            NodeValue::Table(_) => {
-                let mut rows: Vec<Vec<String>> = Vec::new();
-                for row in node.children() {
-                    if matches!(&row.data.borrow().value, NodeValue::TableRow(_)) {
-                        rows.push(
-                            row.children()
-                                .map(|cell| self.collect_inline(cell).trim().to_string())
-                                .collect(),
-                        );
-                    }
-                }
-                if rows.is_empty() {
-                    return;
-                }
-                let ncols = rows.iter().map(Vec::len).max().unwrap_or(0);
-                let mut widths = vec![0usize; ncols];
-                for r in &rows {
-                    for (i, c) in r.iter().enumerate() {
-                        widths[i] = widths[i].max(visible_len(c));
-                    }
-                }
-                let widths = constrain_table_widths(&widths, self.width);
-                let border = Style::new().fg(Color::BrightBlack);
-                let rule = |l: &str, m: &str, r: &str| -> String {
-                    let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
-                    fit_markdown_line(
-                        border.render(&format!("{l}{}{r}", segs.join(m))),
-                        self.width,
-                    )
-                };
-                let bar = border.render("│");
-                output.push(rule("┌", "┬", "┐"));
-                for (ri, cells) in rows.iter().enumerate() {
-                    let mut line = bar.clone();
-                    for (i, w) in widths.iter().enumerate() {
-                        let c = cells.get(i).map(String::as_str).unwrap_or("");
-                        line.push_str(&format!(" {} ", fit_visible(c, *w)));
-                        line.push_str(&bar);
-                    }
-                    output.push(fit_markdown_line(line, self.width));
-                    if ri == 0 {
-                        output.push(rule("├", "┼", "┤"));
-                    }
-                }
-                output.push(rule("└", "┴", "┘"));
-            }
+            NodeValue::Table(table) => self.render_table(node, table, output, indent, width),
             _ => {
                 for child in node.children() {
-                    self.render_node(child, output, depth);
+                    self.render_node(child, output, indent, width);
                 }
+            }
+        }
+        for line in &mut output[output_start..] {
+            if line.source.is_none() {
+                line.source = Some(source);
+                line.table = table_node;
             }
         }
     }
@@ -242,82 +419,88 @@ impl Markdown {
     /// `bw` is its visible width.
     fn push_list_item(
         &self,
-        output: &mut Vec<String>,
-        depth: usize,
+        output: &mut Vec<MarkdownLine>,
+        indent: usize,
+        width: usize,
         bullet: &str,
         bw: usize,
         text: &str,
     ) {
-        let prefix_w = depth * 2 + bw + 1;
-        let indent = " ".repeat(depth * 2);
+        let prefix_w = indent + bw + 1;
+        let indent_text = " ".repeat(indent);
         let hang = " ".repeat(prefix_w);
-        let avail = self.width.saturating_sub(prefix_w).max(8);
+        if width != 0 && prefix_w >= width && !text.is_empty() {
+            output.push(MarkdownLine::normal(fit_markdown_line(
+                format!("{indent_text}{bullet}"),
+                width,
+            )));
+            output.extend(
+                wrap_text(text, width)
+                    .into_iter()
+                    .map(|line| MarkdownLine::normal(fit_markdown_line(line, width))),
+            );
+            return;
+        }
+
+        let avail = if width == 0 {
+            0
+        } else {
+            width.saturating_sub(prefix_w)
+        };
         let wrapped = wrap_text(text, avail);
         for (i, line) in wrapped.iter().enumerate() {
             if i == 0 {
-                output.push(fit_markdown_line(
-                    format!("{indent}{bullet} {line}"),
-                    self.width,
-                ));
+                output.push(MarkdownLine::normal(fit_markdown_line(
+                    format!("{indent_text}{bullet} {line}"),
+                    width,
+                )));
             } else {
-                output.push(fit_markdown_line(format!("{hang}{line}"), self.width));
+                output.push(MarkdownLine::normal(fit_markdown_line(
+                    format!("{hang}{line}"),
+                    width,
+                )));
             }
         }
     }
 
     /// Render a list-item body: the item's first paragraph becomes the bulleted
     /// label; every other block child (nested list, code block, extra paragraph)
-    /// renders through the normal recursive path at `depth + 1`. This is the
+    /// renders through the normal recursive path at its structural indent. This is the
     /// single source of truth for item layout — no subtree flattening, so a
     /// nested list renders once (as a sub-list), never also jammed into the label.
     /// `dim` greys the label (unchecked task items).
     fn render_item_body<'a>(
         &self,
         node: &'a AstNode<'a>,
-        output: &mut Vec<String>,
-        depth: usize,
-        bullet: &str,
-        bw: usize,
-        dim: bool,
+        output: &mut Vec<MarkdownLine>,
+        indent: usize,
+        width: usize,
+        marker: ListItemMarker<'_>,
     ) {
         let mut labeled = false;
         for child in node.children() {
             if !labeled && matches!(&child.data.borrow().value, NodeValue::Paragraph) {
                 let text = self.collect_inline(child);
-                let text = if dim {
+                let text = if marker.dim {
                     Style::new().fg(Color::BrightBlack).render(&text)
                 } else {
                     text
                 };
-                self.push_list_item(output, depth, bullet, bw, &text);
+                self.push_list_item(output, indent, width, marker.text, marker.width, &text);
                 labeled = true;
             } else {
-                self.render_node(child, output, depth + 1);
+                let child_indent = if matches!(&child.data.borrow().value, NodeValue::List(_)) {
+                    indent.saturating_add(4)
+                } else {
+                    indent.saturating_add(marker.width).saturating_add(1)
+                };
+                self.render_node(child, output, child_indent, width);
             }
         }
         // An item that starts with a sub-list (no leading paragraph) still gets a
         // bullet so the nesting reads correctly.
         if !labeled {
-            self.push_list_item(output, depth, bullet, bw, "");
-        }
-    }
-
-    fn collect_text<'a>(&self, node: &'a AstNode<'a>) -> String {
-        let mut text = String::new();
-        self.collect_text_inner(node, &mut text);
-        text
-    }
-
-    fn collect_text_inner<'a>(&self, node: &'a AstNode<'a>, buf: &mut String) {
-        match &node.data.borrow().value {
-            NodeValue::Text(t) => buf.push_str(t),
-            NodeValue::Code(c) => buf.push_str(&c.literal),
-            NodeValue::SoftBreak | NodeValue::LineBreak => buf.push(' '),
-            _ => {
-                for child in node.children() {
-                    self.collect_text_inner(child, buf);
-                }
-            }
+            self.push_list_item(output, indent, width, marker.text, marker.width, "");
         }
     }
 
@@ -329,20 +512,6 @@ impl Markdown {
         parts.join("")
     }
 
-    fn collect_inline_from_children<'a>(&self, node: &'a AstNode<'a>) -> String {
-        let mut parts = Vec::new();
-        for child in node.children() {
-            if matches!(&child.data.borrow().value, NodeValue::Paragraph) {
-                for inner in child.children() {
-                    self.collect_inline_node(inner, &mut parts);
-                }
-            } else {
-                self.collect_inline_node(child, &mut parts);
-            }
-        }
-        parts.join("")
-    }
-
     fn collect_inline_node<'a>(&self, node: &'a AstNode<'a>, parts: &mut Vec<String>) {
         match &node.data.borrow().value {
             NodeValue::Text(t) => {
@@ -350,29 +519,27 @@ impl Markdown {
             }
             NodeValue::Code(c) => {
                 let code_text = &c.literal;
-                let styled = format!("\x1b[48;5;236m\x1b[33m {} \x1b[0m", code_text);
+                let styled = format!("\x1b[48;5;236m\x1b[33m {} \x1b[39;49m", code_text);
                 parts.push(styled);
             }
             NodeValue::Strong => {
-                let inner = self.collect_text(node);
-                parts.push(format!("\x1b[1m{}\x1b[0m", inner));
+                let inner = self.collect_inline(node);
+                parts.push(format!("\x1b[1m{inner}\x1b[22m"));
             }
             NodeValue::Emph => {
-                let inner = self.collect_text(node);
-                parts.push(format!("\x1b[3m{}\x1b[0m", inner));
+                let inner = self.collect_inline(node);
+                parts.push(format!("\x1b[3m{inner}\x1b[23m"));
             }
             NodeValue::Strikethrough => {
-                let inner = self.collect_text(node);
-                parts.push(format!("\x1b[9m{}\x1b[0m", inner));
+                let inner = self.collect_inline(node);
+                parts.push(format!("\x1b[9m{inner}\x1b[29m"));
             }
             NodeValue::Link(link) => {
-                let text = self.collect_text(node);
+                let text = self.collect_inline(node);
                 let url = &link.url;
-                parts.push(format!("\x1b[4;34m{}\x1b[0m ({})", text, url));
+                parts.push(format!("\x1b[4;34m{text}\x1b[24;39m ({url})"));
             }
-            NodeValue::SoftBreak | NodeValue::LineBreak => {
-                parts.push(" ".to_string());
-            }
+            NodeValue::SoftBreak | NodeValue::LineBreak => parts.push("\n".to_string()),
             _ => {
                 for child in node.children() {
                     self.collect_inline_node(child, parts);
@@ -424,6 +591,35 @@ impl Default for Markdown {
     }
 }
 
+/// Add one structural quote level without flattening the rendered child block.
+/// The marker is inserted after the containing list's base indentation, so
+/// both `> - item` and `- item / > quote` retain their compound prefixes.
+fn prefix_blockquote_line(mut line: MarkdownLine, indent: usize, width: usize) -> MarkdownLine {
+    if line.text.is_empty() {
+        return line;
+    }
+
+    let bar = Style::new().fg(Color::BrightBlack).render("│");
+    if width == 1 {
+        line.text = bar;
+        return line;
+    }
+    if width == 2 {
+        line.text = format!("{bar} ");
+        return line;
+    }
+
+    let insertion = line
+        .text
+        .as_bytes()
+        .iter()
+        .take(indent)
+        .take_while(|byte| **byte == b' ')
+        .count();
+    line.text.insert_str(insertion, &format!("{bar} "));
+    line
+}
+
 // Tokyo Night heading palette (cohesive, low-saturation RGB).
 fn heading_color(level: u8) -> Color {
     match level {
@@ -441,80 +637,6 @@ fn style_to_ansi(style: &SynStyle, text: &str) -> String {
     format!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text)
 }
 
-fn code_block_header(label: &str, width: usize) -> String {
-    match width {
-        0 => String::new(),
-        1 => "┌".to_string(),
-        2 => "┌─".to_string(),
-        3 => "┌─ ".to_string(),
-        _ => {
-            let label = truncate_visible(label, width - 4);
-            let prefix = format!("┌─ {label} ");
-            format!(
-                "{prefix}{}",
-                "─".repeat(width.saturating_sub(visible_len(&prefix)))
-            )
-        }
-    }
-}
-
-fn code_block_footer(width: usize) -> String {
-    match width {
-        0 => String::new(),
-        _ => format!("└{}", "─".repeat(width.saturating_sub(1))),
-    }
-}
-
-fn code_block_body_line(line: &str, width: usize) -> String {
-    match width {
-        0 => String::new(),
-        1 => "│".to_string(),
-        _ => format!("│ {}", truncate_visible(line, width - 2)),
-    }
-}
-
-fn constrain_table_widths(widths: &[usize], max_width: usize) -> Vec<usize> {
-    if max_width == 0 || widths.is_empty() {
-        return widths.to_vec();
-    }
-
-    let overhead = widths.len().saturating_mul(3).saturating_add(1);
-    if overhead >= max_width {
-        return vec![0; widths.len()];
-    }
-
-    let mut budget = max_width - overhead;
-    if widths.iter().sum::<usize>() <= budget {
-        return widths.to_vec();
-    }
-
-    let mut constrained = vec![0; widths.len()];
-    for (i, width) in widths.iter().enumerate() {
-        if budget == 0 {
-            break;
-        }
-        if *width > 0 {
-            constrained[i] = 1;
-            budget -= 1;
-        }
-    }
-
-    while budget > 0 {
-        let Some((index, _)) = widths
-            .iter()
-            .enumerate()
-            .filter(|(index, width)| constrained[*index] < **width)
-            .max_by_key(|(index, width)| width.saturating_sub(constrained[*index]))
-        else {
-            break;
-        };
-        constrained[index] += 1;
-        budget -= 1;
-    }
-
-    constrained
-}
-
 fn fit_markdown_line(line: String, width: usize) -> String {
     if width == 0 {
         line
@@ -525,49 +647,16 @@ fn fit_markdown_line(line: String, width: usize) -> String {
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
-        return vec![text.to_string()];
+        return text.split('\n').map(str::to_string).collect();
     }
 
     let mut lines = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-
-    for word in text.split_whitespace() {
-        let word_width = visible_len(word);
-        let separator_width = if current.is_empty() { 0 } else { 1 };
-        if word_width > width {
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-                current_width = 0;
-            }
-
-            for part in split_visible_word(word, width) {
-                let part_width = visible_len(&part);
-                if part_width >= width {
-                    lines.push(part);
-                } else {
-                    current = part;
-                    current_width = part_width;
-                }
-            }
-            continue;
+    for source_line in text.split('\n') {
+        if source_line.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wrap_styled_text(source_line, width));
         }
-
-        if current_width + word_width + separator_width > width && !current.is_empty() {
-            lines.push(current);
-            current = String::new();
-            current_width = 0;
-        }
-        if !current.is_empty() {
-            current.push(' ');
-            current_width += 1;
-        }
-        current.push_str(word);
-        current_width += word_width;
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
     }
 
     if lines.is_empty() {
@@ -577,568 +666,5 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-fn split_visible_word(word: &str, width: usize) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0usize;
-    let mut index = 0usize;
-
-    while index < word.len() {
-        let ch = word[index..].chars().next().unwrap_or_default();
-        if ch == '\x1b' && word[index + ch.len_utf8()..].starts_with('[') {
-            current.push(ch);
-            let escape_start = index + ch.len_utf8();
-            for (offset, next) in word[escape_start..].char_indices() {
-                current.push(next);
-                index = escape_start + offset + next.len_utf8();
-                if next.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        let Some((end, ch_width)) = next_display_cell_boundary(word, index) else {
-            break;
-        };
-        let cell = &word[index..end];
-        index = end;
-
-        if ch_width == 0 {
-            current.push_str(cell);
-            continue;
-        }
-
-        if ch_width > width {
-            if !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
-                current_width = 0;
-            }
-            parts.push(truncate_visible(cell, width));
-            continue;
-        }
-        if current_width > 0 && current_width + ch_width > width {
-            parts.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-        current.push_str(cell);
-        current_width += ch_width;
-        if current_width >= width {
-            parts.push(std::mem::take(&mut current));
-            current_width = 0;
-        }
-    }
-
-    if !current.is_empty() {
-        parts.push(current);
-    }
-
-    parts
-}
-
-// Element-based rendering for the new Ink-like architecture
-use crate::element::{BoxElement, Element, FlexDirection, TextElement, TextStyle};
-
-struct StyledSegment {
-    text: String,
-    style: TextStyle,
-}
-
-impl Markdown {
-    pub fn render_element<Msg>(&self, input: &str) -> Element<Msg> {
-        let rendered = self.render(input);
-        let children: Vec<Element<Msg>> = split_rendered_lines(&rendered)
-            .into_iter()
-            .map(ansi_line_element)
-            .collect();
-
-        Element::Box(
-            BoxElement::new()
-                .direction(FlexDirection::Column)
-                .children(children),
-        )
-    }
-}
-
-pub(crate) fn split_rendered_lines(rendered: &str) -> Vec<&str> {
-    if rendered.is_empty() {
-        Vec::new()
-    } else {
-        split_lines_preserving_trailing_blank(rendered)
-    }
-}
-
-fn ansi_line_element<Msg>(line: &str) -> Element<Msg> {
-    let segments = ansi_segments(line);
-    if segments.len() == 1 {
-        let Some(segment) = segments.into_iter().next() else {
-            return Element::Text(TextElement::new(""));
-        };
-        return Element::Text(segment_text(segment));
-    }
-
-    Element::Box(
-        BoxElement::new().direction(FlexDirection::Row).children(
-            segments
-                .into_iter()
-                .map(|segment| Element::Text(segment_text(segment)))
-                .collect(),
-        ),
-    )
-}
-
-fn segment_text(segment: StyledSegment) -> TextElement {
-    let mut text = TextElement::new(segment.text);
-    text.style = segment.style;
-    text
-}
-
-fn ansi_segments(line: &str) -> Vec<StyledSegment> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut style = TextStyle::default();
-    let mut chars = line.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            let mut sequence = String::new();
-            let mut final_byte = None;
-            for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
-                    final_byte = Some(next);
-                    break;
-                }
-                sequence.push(next);
-            }
-
-            if final_byte == Some('m') {
-                push_segment(&mut segments, &mut current, &style);
-                apply_sgr_sequence(&mut style, &sequence);
-            }
-            continue;
-        }
-
-        current.push(ch);
-    }
-
-    push_segment(&mut segments, &mut current, &style);
-    if segments.is_empty() {
-        segments.push(StyledSegment {
-            text: String::new(),
-            style: TextStyle::default(),
-        });
-    }
-    segments
-}
-
-fn push_segment(segments: &mut Vec<StyledSegment>, current: &mut String, style: &TextStyle) {
-    if current.is_empty() {
-        return;
-    }
-
-    segments.push(StyledSegment {
-        text: std::mem::take(current),
-        style: style.clone(),
-    });
-}
-
-fn apply_sgr_sequence(style: &mut TextStyle, sequence: &str) {
-    if sequence.is_empty() {
-        *style = TextStyle::default();
-        return;
-    }
-
-    let codes: Vec<u16> = sequence
-        .split(';')
-        .filter_map(|part| {
-            if part.is_empty() {
-                Some(0)
-            } else {
-                part.parse().ok()
-            }
-        })
-        .collect();
-    if codes.is_empty() {
-        *style = TextStyle::default();
-        return;
-    }
-
-    let mut index = 0usize;
-    while index < codes.len() {
-        match codes[index] {
-            0 => *style = TextStyle::default(),
-            1 => style.bold = true,
-            2 => style.dim = true,
-            3 => style.italic = true,
-            4 => style.underline = true,
-            7 => style.reverse = true,
-            9 => style.strikethrough = true,
-            22 => {
-                style.bold = false;
-                style.dim = false;
-            }
-            23 => style.italic = false,
-            24 => style.underline = false,
-            27 => style.reverse = false,
-            29 => style.strikethrough = false,
-            30..=37 | 90..=97 => style.fg = basic_sgr_color(codes[index]),
-            39 => style.fg = None,
-            40..=47 | 100..=107 => style.bg = basic_sgr_color(codes[index] - 10),
-            49 => style.bg = None,
-            38 | 48 => {
-                let is_fg = codes[index] == 38;
-                if let Some((color, consumed)) = extended_sgr_color(&codes[index + 1..]) {
-                    if is_fg {
-                        style.fg = Some(color);
-                    } else {
-                        style.bg = Some(color);
-                    }
-                    index += consumed;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-}
-
-fn basic_sgr_color(code: u16) -> Option<Color> {
-    match code {
-        30 => Some(Color::Black),
-        31 => Some(Color::Red),
-        32 => Some(Color::Green),
-        33 => Some(Color::Yellow),
-        34 => Some(Color::Blue),
-        35 => Some(Color::Magenta),
-        36 => Some(Color::Cyan),
-        37 => Some(Color::White),
-        90 => Some(Color::BrightBlack),
-        91 => Some(Color::BrightRed),
-        92 => Some(Color::BrightGreen),
-        93 => Some(Color::BrightYellow),
-        94 => Some(Color::BrightBlue),
-        95 => Some(Color::BrightMagenta),
-        96 => Some(Color::BrightCyan),
-        97 => Some(Color::BrightWhite),
-        _ => None,
-    }
-}
-
-fn extended_sgr_color(codes: &[u16]) -> Option<(Color, usize)> {
-    match codes {
-        [5, value, ..] => Some((Color::Ansi256((*value).min(u8::MAX as u16) as u8), 2)),
-        [2, r, g, b, ..] => Some((
-            Color::Rgb(
-                (*r).min(u8::MAX as u16) as u8,
-                (*g).min(u8::MAX as u16) as u8,
-                (*b).min(u8::MAX as u16) as u8,
-            ),
-            4,
-        )),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::style::{strip_ansi, visible_len};
-
-    #[test]
-    fn render_plain_text() {
-        let md = Markdown::new();
-        let output = md.render("hello world");
-        let plain = strip_ansi(&output);
-        assert!(plain.contains("hello world"));
-    }
-
-    #[test]
-    fn render_heading() {
-        let md = Markdown::new();
-        let output = md.render("# Title");
-        let plain = strip_ansi(&output);
-        assert!(plain.contains("Title"));
-    }
-
-    #[test]
-    fn heading_respects_configured_width() {
-        let md = Markdown::new().with_width(8);
-        let output = md.render("# abcdefghijklmnopqrstuvwxyz");
-        let heading = output.lines().next().unwrap();
-
-        assert!(visible_len(heading) <= 8, "{heading:?}");
-    }
-
-    #[test]
-    fn render_code_block() {
-        let md = Markdown::new();
-        let output = md.render("```\nlet x = 1;\n```");
-        let plain = strip_ansi(&output);
-        assert!(plain.contains("let x = 1"));
-    }
-
-    #[test]
-    fn render_code_block_preserves_trailing_blank_body_line() {
-        let md = Markdown::new();
-        let output = md.render("```rust\nlet x = 1;\n```");
-        let plain = strip_ansi(&output);
-        let rows = plain.lines().collect::<Vec<_>>();
-
-        assert!(rows[0].starts_with("┌─ rust"));
-        assert_eq!(rows[1], "│ let x = 1;");
-        assert_eq!(rows[2], "│ ");
-        assert!(rows[3].starts_with("└"));
-    }
-
-    #[test]
-    fn code_block_header_fits_width_without_language() {
-        let md = Markdown::new().with_width(12);
-        let output = md.render("```\ntext\n```");
-        let top = output.lines().next().unwrap();
-
-        assert_eq!(visible_len(top), 12);
-    }
-
-    #[test]
-    fn code_block_header_uses_language_display_width() {
-        let md = Markdown::new().with_width(12);
-        let output = md.render("```文件\ntext\n```");
-        let top = output.lines().next().unwrap();
-
-        assert_eq!(visible_len(top), 12);
-    }
-
-    #[test]
-    fn code_block_footer_respects_zero_width() {
-        let md = Markdown::new().with_width(0);
-        let output = md.render("```\ntext\n```");
-        let footer = output.lines().last().unwrap();
-
-        assert_eq!(visible_len(footer), 0);
-    }
-
-    #[test]
-    fn code_block_body_lines_respect_width() {
-        let md = Markdown::new().with_width(8);
-        let output = md.render("```\nabcdefghijklmnopqrstuvwxyz\n```");
-
-        for line in output.lines() {
-            assert!(visible_len(line) <= 8, "{line:?}");
-        }
-    }
-
-    #[cfg(feature = "syntax-highlighting")]
-    #[test]
-    fn render_code_block_without_themes_falls_back_to_plain_text() {
-        let md = Markdown {
-            width: 80,
-            syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::new(),
-            theme_name: "missing-theme".to_string(),
-        };
-
-        let output = md.render("```rust\nlet x = 1;\n```");
-        let plain = strip_ansi(&output);
-
-        assert!(plain.contains("let x = 1"));
-    }
-
-    #[test]
-    fn render_bold() {
-        let md = Markdown::new();
-        let output = md.render("**bold text**");
-        assert!(output.contains("bold text"));
-    }
-
-    #[test]
-    fn render_list() {
-        let md = Markdown::new();
-        let output = md.render("- item 1\n- item 2");
-        let plain = strip_ansi(&output);
-        assert!(plain.contains("item 1"));
-        assert!(plain.contains("item 2"));
-    }
-
-    #[test]
-    fn list_items_respect_configured_width() {
-        let md = Markdown::new().with_width(8);
-        let output = md.render("- abcdefghijklmnopqrstuvwxyz");
-
-        for line in output.lines() {
-            assert!(visible_len(line) <= 8, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn nested_paragraphs_respect_configured_width() {
-        let md = Markdown::new().with_width(2);
-        let output = md.render("- item\n\n  continuation text");
-
-        for line in output.lines() {
-            assert!(visible_len(line) <= 2, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn table_respects_configured_width() {
-        let md = Markdown::new().with_width(12);
-        let output =
-            md.render("| Name | Value |\n| --- | --- |\n| alpha | abcdefghijklmnopqrstuvwxyz |");
-
-        for line in output.lines() {
-            assert!(visible_len(line) <= 12, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn nested_list_item_not_duplicated() {
-        // A nested list must render ONCE (as a sub-list), not also flattened into
-        // the parent item's text — regression for "paragraph + its ordered list".
-        let md = Markdown::new();
-        let output = md.render("1. Parent\n   1. Child A\n   2. Child B");
-        let plain = strip_ansi(&output);
-        assert_eq!(
-            plain.matches("Child A").count(),
-            1,
-            "nested item rendered twice:\n{plain}"
-        );
-        assert_eq!(plain.matches("Child B").count(), 1);
-    }
-
-    #[test]
-    fn render_blockquote() {
-        let md = Markdown::new();
-        let output = md.render("> quoted text");
-        let plain = strip_ansi(&output);
-        assert!(plain.contains("quoted text"));
-    }
-
-    #[test]
-    fn blockquote_wraps_to_configured_width() {
-        let md = Markdown::new().with_width(8);
-        let output = md.render("> abcdefghijklmnopqrstuvwxyz");
-        let plain = strip_ansi(&output);
-
-        assert_eq!(
-            plain
-                .lines()
-                .map(|line| line.trim_start_matches("│ "))
-                .collect::<String>(),
-            "abcdefghijklmnopqrstuvwxyz"
-        );
-        assert!(output.lines().count() > 1);
-        for line in output.lines() {
-            assert!(visible_len(line) <= 8, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn render_element_produces_box() {
-        let md = Markdown::new();
-        let el: Element<()> = md.render_element("# Hello\n\nWorld");
-        match el {
-            Element::Box(b) => assert!(!b.children.is_empty()),
-            _ => panic!("expected Box"),
-        }
-    }
-
-    #[test]
-    fn render_element_preserves_heading_style() {
-        let md = Markdown::new();
-        let el: Element<()> = md.render_element("# Hello");
-
-        let Element::Box(box_el) = el else {
-            panic!("expected Box");
-        };
-        let Element::Text(text) = &box_el.children[0] else {
-            panic!("expected heading text");
-        };
-
-        assert!(text.style.bold);
-        assert_eq!(text.style.fg, Some(Color::Rgb(122, 162, 247)));
-        assert!(!text.content.contains('\x1b'));
-    }
-
-    #[test]
-    fn render_element_preserves_trailing_blank_rows() {
-        let md = Markdown::new();
-        let el: Element<()> = md.render_element("# Hello");
-
-        let Element::Box(box_el) = el else {
-            panic!("expected Box");
-        };
-
-        assert_eq!(box_el.children.len(), 2);
-        let Element::Text(blank) = &box_el.children[1] else {
-            panic!("expected trailing blank text row");
-        };
-        assert_eq!(blank.content, "");
-    }
-
-    #[test]
-    fn with_width_wraps() {
-        let md = Markdown::new().with_width(10);
-        let output = md.render("this is a long sentence that should wrap");
-        let lines: Vec<&str> = output.lines().collect();
-        assert!(lines.len() > 1);
-    }
-
-    #[test]
-    fn paragraph_hard_breaks_long_word_by_display_width() {
-        let md = Markdown::new().with_width(8);
-        let output = md.render("abcdefghijklmnopqrstuvwxyz");
-        let plain = strip_ansi(&output);
-
-        assert_eq!(
-            plain.lines().collect::<String>(),
-            "abcdefghijklmnopqrstuvwxyz"
-        );
-        for line in output.lines() {
-            assert!(visible_len(line) <= 8, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn wrap_text_hard_break_keeps_zero_width_marks_with_base_glyph() {
-        let lines = wrap_text("e\u{301}e\u{301}e", 1);
-
-        assert!(lines.iter().all(|line| visible_len(line) <= 1));
-        assert_eq!(lines, vec!["e\u{301}", "e\u{301}", "e"]);
-    }
-
-    #[test]
-    fn wrap_text_hard_break_packs_zero_width_marks_by_display_width() {
-        let lines = wrap_text("e\u{301}e\u{301}e", 2);
-
-        assert!(lines.iter().all(|line| visible_len(line) <= 2));
-        assert_eq!(lines, vec!["e\u{301}e\u{301}", "e"]);
-    }
-
-    #[test]
-    fn paragraph_clips_wide_glyphs_at_single_column_width() {
-        let md = Markdown::new().with_width(1);
-        let output = md.render("中文");
-
-        for line in output.lines() {
-            assert!(visible_len(line) <= 1, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn oversized_width_is_clamped() {
-        let md = Markdown::new().with_width(usize::MAX);
-
-        assert_eq!(md.width, MAX_MARKDOWN_WIDTH);
-        assert!(md.render("hello").contains("hello"));
-    }
-
-    #[test]
-    fn wrap_text_basic() {
-        let lines = wrap_text("hello world foo bar", 10);
-        assert!(lines.len() >= 2);
-        for line in &lines {
-            assert!(crate::style::visible_len(line) <= 10);
-        }
-    }
-}
+mod tests;

@@ -84,6 +84,7 @@ pub struct Timeline {
     fill_height: bool,
     item_color: Color,
     selected_fg: Color,
+    selected_bg: Option<Color>,
     section_color: Color,
     time_color: Color,
     preview_color: Color,
@@ -102,6 +103,7 @@ impl Timeline {
             fill_height: false,
             item_color: Color::Cyan,
             selected_fg: Color::Black,
+            selected_bg: None,
             section_color: Color::BrightBlack,
             time_color: Color::BrightBlack,
             preview_color: Color::White,
@@ -180,6 +182,14 @@ impl Timeline {
 
     pub fn selected_fg(mut self, color: Color) -> Self {
         self.selected_fg = color;
+        self
+    }
+
+    /// Override the selected row background independently from the item's
+    /// semantic marker color. Without an override, the historical behavior of
+    /// using the item color is preserved.
+    pub fn selected_bg(mut self, color: Color) -> Self {
+        self.selected_bg = Some(color);
         self
     }
 
@@ -274,6 +284,9 @@ impl Timeline {
         let color = item.color.unwrap_or(self.item_color);
         let plain = self.item_plain(item, width);
         if selected {
+            if let Some(background) = self.selected_bg {
+                return self.render_layered_selected_item(item, color, background, width);
+            }
             return Style::new()
                 .fg(self.selected_fg)
                 .bg(color)
@@ -304,6 +317,9 @@ impl Timeline {
             ),
             TimelineRow::Item(item) if selected => {
                 let color = item.color.unwrap_or(self.item_color);
+                if let Some(background) = self.selected_bg {
+                    return self.layered_selected_item_element(item, color, background, width);
+                }
                 Element::Text(
                     TextElement::new(fit_visible(&self.item_plain(item, width), width))
                         .fg(self.selected_fg)
@@ -322,6 +338,7 @@ impl Timeline {
                     &mut children,
                     " ".repeat(self.margin_for_width(width)),
                     None,
+                    None,
                     &mut used,
                     width,
                 );
@@ -329,6 +346,7 @@ impl Timeline {
                     &mut children,
                     format!(" {}", self.marker),
                     Some(color),
+                    None,
                     &mut used,
                     width,
                 );
@@ -336,6 +354,7 @@ impl Timeline {
                     &mut children,
                     format!(" {time}"),
                     Some(self.time_color),
+                    None,
                     &mut used,
                     width,
                 );
@@ -343,6 +362,7 @@ impl Timeline {
                     &mut children,
                     format!("  {badge}"),
                     Some(color),
+                    None,
                     &mut used,
                     width,
                 );
@@ -350,6 +370,7 @@ impl Timeline {
                     &mut children,
                     format!("  {preview}"),
                     Some(self.preview_color),
+                    None,
                     &mut used,
                     width,
                 );
@@ -367,6 +388,7 @@ impl Timeline {
         children: &mut Vec<Element<Msg>>,
         text: String,
         fg: Option<Color>,
+        bg: Option<Color>,
         used: &mut usize,
         width: usize,
     ) {
@@ -385,7 +407,97 @@ impl Timeline {
         if let Some(color) = fg {
             text = text.fg(color);
         }
+        if let Some(color) = bg {
+            text = text.bg(color);
+        }
         children.push(Element::Text(text));
+    }
+
+    fn render_layered_selected_item(
+        &self,
+        item: &TimelineItem,
+        semantic: Color,
+        background: Color,
+        width: usize,
+    ) -> String {
+        let mut used = 0usize;
+        let mut rendered = String::new();
+        for (text, foreground) in self.selected_item_segments(item, semantic, width) {
+            let remaining = width.saturating_sub(used);
+            if remaining == 0 {
+                break;
+            }
+            let text = truncate_visible(&text, remaining);
+            used = used.saturating_add(visible_len(&text));
+            let mut style = Style::new().bg(background);
+            if let Some(foreground) = foreground {
+                style = style.fg(foreground);
+            }
+            rendered.push_str(&style.render(&text));
+        }
+        if used < width {
+            rendered.push_str(
+                &Style::new()
+                    .bg(background)
+                    .render(&" ".repeat(width - used)),
+            );
+        }
+        rendered
+    }
+
+    fn layered_selected_item_element<Msg>(
+        &self,
+        item: &TimelineItem,
+        semantic: Color,
+        background: Color,
+        width: usize,
+    ) -> Element<Msg> {
+        let mut children = Vec::new();
+        let mut used = 0usize;
+        for (text, foreground) in self.selected_item_segments(item, semantic, width) {
+            Self::push_limited_text(
+                &mut children,
+                text,
+                foreground,
+                Some(background),
+                &mut used,
+                width,
+            );
+        }
+        if used < width {
+            Self::push_limited_text(
+                &mut children,
+                " ".repeat(width - used),
+                None,
+                Some(background),
+                &mut used,
+                width,
+            );
+        }
+        Element::Box(
+            BoxElement::new()
+                .direction(FlexDirection::Row)
+                .children(children),
+        )
+    }
+
+    fn selected_item_segments(
+        &self,
+        item: &TimelineItem,
+        semantic: Color,
+        width: usize,
+    ) -> Vec<(String, Option<Color>)> {
+        let preview_width = self.preview_width(width);
+        let time = self.fit_slot(&item.time, self.time_width_for_width(width), true);
+        let badge = self.fit_slot(&item.badge, self.badge_width_for_width(width), false);
+        let preview = truncate_visible(&item.preview, preview_width);
+        vec![
+            (" ".repeat(self.margin_for_width(width)), None),
+            (format!(" {}", self.marker), Some(semantic)),
+            (format!(" {time}"), Some(self.time_color)),
+            (format!("  {badge}"), Some(semantic)),
+            (format!("  {preview}"), Some(self.selected_fg)),
+        ]
     }
 
     fn item_plain(&self, item: &TimelineItem, width: usize) -> String {
@@ -550,6 +662,42 @@ mod tests {
         assert!(rows[2].contains("risk"));
         assert!(rendered.lines().all(|line| visible_len(line) == 56));
         assert!(rendered.contains("\x1b[30;43m"));
+    }
+
+    #[test]
+    fn selected_background_can_be_decoupled_from_item_semantics() {
+        let background = Color::Rgb(42, 46, 52);
+        let timeline = sample_timeline()
+            .selected_item(0)
+            .selected_fg(Color::White)
+            .selected_bg(background);
+        let rendered = timeline.view(48, 3);
+        assert!(rendered.contains("48;2;42;46;52"), "{rendered:?}");
+        assert!(
+            rendered.contains("36;48;2;42;46;52"),
+            "semantic item color should survive selection: {rendered:?}"
+        );
+
+        let Element::Box(column) = timeline.element::<()>(48, 3) else {
+            panic!("expected column");
+        };
+        let Element::Box(selected) = &column.children[1] else {
+            panic!("expected selected item");
+        };
+        let marker = selected
+            .children
+            .iter()
+            .find_map(|child| match child {
+                Element::Text(text) if text.content.contains('●') => Some(text),
+                _ => None,
+            })
+            .expect("selected marker");
+        assert_eq!(marker.style.fg, Some(Color::Cyan));
+        assert_eq!(marker.style.bg, Some(background));
+        assert!(selected.children.iter().all(|child| match child {
+            Element::Text(text) => text.style.bg == Some(background),
+            _ => false,
+        }));
     }
 
     #[test]

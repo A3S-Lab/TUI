@@ -72,6 +72,9 @@ pub enum ToolLogStatus {
     Exit(i32),
     Failed,
     Cancelled,
+    Denied,
+    TimedOut,
+    Interrupted,
 }
 
 impl ToolLogStatus {
@@ -81,6 +84,9 @@ impl ToolLogStatus {
             Self::Exit(code) => format!("exit {code}"),
             Self::Failed => "failed".to_string(),
             Self::Cancelled => "cancelled".to_string(),
+            Self::Denied => "denied".to_string(),
+            Self::TimedOut => "timed out".to_string(),
+            Self::Interrupted => "interrupted".to_string(),
         }
     }
 }
@@ -377,9 +383,12 @@ impl ToolLogView {
     fn status_color(&self, status: ToolLogStatus) -> Color {
         match status {
             ToolLogStatus::Ok => self.ok_color,
-            ToolLogStatus::Exit(_) | ToolLogStatus::Failed | ToolLogStatus::Cancelled => {
-                self.error_color
-            }
+            ToolLogStatus::Exit(_)
+            | ToolLogStatus::Failed
+            | ToolLogStatus::Cancelled
+            | ToolLogStatus::Denied
+            | ToolLogStatus::TimedOut
+            | ToolLogStatus::Interrupted => self.error_color,
         }
     }
 }
@@ -633,6 +642,30 @@ mod tests {
         assert_eq!(view.muted_color, theme.color(ThemeRole::Muted));
         assert_eq!(view.output_color, theme.color(ThemeRole::Foreground));
         assert_eq!(view.title_color, theme.color(ThemeRole::Primary));
+    }
+
+    #[test]
+    fn terminal_statuses_have_distinct_labels_and_use_error_color() {
+        let statuses = [
+            (ToolLogStatus::Denied, "denied"),
+            (ToolLogStatus::TimedOut, "timed out"),
+            (ToolLogStatus::Interrupted, "interrupted"),
+        ];
+        let mut view = ToolLogView::new().status_colors(Color::Green, Color::Magenta);
+
+        for (status, label) in statuses {
+            assert_eq!(status.label(), label);
+            assert_eq!(view.status_color(status), Color::Magenta);
+            view.add_record(ToolLogRecord::new(label, status));
+        }
+
+        let rendered = strip_ansi(&view.view(48, 8));
+        for (_, label) in statuses {
+            assert!(
+                rendered.contains(&format!("· {label}")),
+                "missing status label {label:?}: {rendered}"
+            );
+        }
     }
 
     #[test]

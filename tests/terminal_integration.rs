@@ -298,7 +298,7 @@ fn markdown_heading_style_paints_through_element_tree() {
     let element: Element<()> = Markdown::new().render_element("# Hello");
     let grid = render(&element, 20, 2);
 
-    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert_eq!(grid.get(0, 0).ch, '#');
     assert!(grid.get(0, 0).bold);
     assert_eq!(grid.get(0, 0).fg, Some(Color::Rgb(122, 162, 247)));
 }
@@ -315,7 +315,7 @@ fn markdown_trailing_blank_row_offsets_following_sibling() {
     );
     let grid = render(&element, 20, 3);
 
-    assert_eq!(grid.get(0, 0).ch, '▌');
+    assert_eq!(grid.get(0, 0).ch, '#');
     assert_eq!(grid.get(0, 1).ch, ' ');
     assert_eq!(grid.get(0, 2).ch, 'N');
 }

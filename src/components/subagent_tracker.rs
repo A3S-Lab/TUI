@@ -14,6 +14,7 @@ const MAX_SUBAGENT_RUNNING_ROWS: usize = u16::MAX as usize;
 pub struct SubagentTracker {
     title: String,
     slug: Option<String>,
+    show_slug: bool,
     rows: Vec<SubagentRow>,
     max_running_rows: usize,
     margin: usize,
@@ -30,6 +31,7 @@ impl SubagentTracker {
         Self {
             title: title.into(),
             slug: None,
+            show_slug: true,
             rows: Vec::new(),
             max_running_rows: 4,
             margin: 2,
@@ -47,6 +49,14 @@ impl SubagentTracker {
         if !slug.trim().is_empty() {
             self.slug = Some(slug);
         }
+        self
+    }
+
+    /// Control whether the machine-oriented slug is shown beside the title.
+    /// Interactive agent panes normally prefer the user-facing title only;
+    /// durable workflow views can keep the slug for correlation.
+    pub fn show_slug(mut self, show: bool) -> Self {
+        self.show_slug = show;
         self
     }
 
@@ -159,6 +169,9 @@ impl SubagentTracker {
                 .into_iter()
                 .map(|row| self.render_child(row, width)),
         );
+        if let Some(hidden) = self.hidden_running_rows() {
+            lines.push(self.render_hidden_running(hidden, width));
+        }
         lines
     }
 
@@ -173,11 +186,19 @@ impl SubagentTracker {
         let left = self.child_left(row, width, &right);
         self.render_aligned(
             left,
-            row_color(row, self.active_color, self.error_color),
+            row_color(row, self.active_color, self.muted_color, self.error_color),
             false,
             right,
             width,
         )
+    }
+
+    fn render_hidden_running(&self, hidden: usize, width: usize) -> String {
+        let label = format!(
+            "{}… +{hidden} more running",
+            " ".repeat(self.child_indent_for_width(width))
+        );
+        Style::new().fg(self.muted_color).render(&label)
     }
 
     fn render_aligned(
@@ -205,12 +226,16 @@ impl SubagentTracker {
     }
 
     fn summary_left(&self, width: usize, right: &str) -> String {
+        let label = if self.show_slug {
+            format!("{}  {}", self.slug_text(), self.title.trim())
+        } else {
+            self.title.trim().to_string()
+        };
         let raw = format!(
-            "{}{} {}  {}",
+            "{}{} {}",
             " ".repeat(self.margin_for_width(width)),
             self.marker,
-            self.slug_text(),
-            self.title.trim()
+            label
         );
         fit_left(&raw, width, right)
     }
@@ -228,7 +253,7 @@ impl SubagentTracker {
 
     fn summary_status(&self) -> String {
         let total = self.rows.len();
-        let done = self.rows.iter().filter(|row| row.done).count();
+        let done = self.rows.iter().filter(|row| row.is_done()).count();
         let running = total.saturating_sub(done);
         let tokens = self
             .rows
@@ -252,9 +277,19 @@ impl SubagentTracker {
     fn running_rows(&self) -> Vec<&SubagentRow> {
         self.rows
             .iter()
-            .filter(|row| !row.done)
+            .filter(|row| row.status == SubagentRowStatus::Running)
             .take(self.max_running_rows)
             .collect()
+    }
+
+    fn hidden_running_rows(&self) -> Option<usize> {
+        let running = self
+            .rows
+            .iter()
+            .filter(|row| row.status == SubagentRowStatus::Running)
+            .count();
+        let hidden = running.saturating_sub(self.max_running_rows);
+        (hidden > 0).then_some(hidden)
     }
 
     fn element_rows<Msg>(&self) -> Vec<Element<Msg>> {
@@ -264,17 +299,30 @@ impl SubagentTracker {
                 .into_iter()
                 .map(|row| self.child_element(row)),
         );
+        if let Some(hidden) = self.hidden_running_rows() {
+            rows.push(Element::Text(
+                TextElement::new(format!(
+                    "{}… +{hidden} more running",
+                    " ".repeat(self.child_indent_for_element())
+                ))
+                .fg(self.muted_color),
+            ));
+        }
         rows
     }
 
     fn summary_element<Msg>(&self) -> Element<Msg> {
         let right = self.summary_status();
+        let label = if self.show_slug {
+            format!("{}  {}", self.slug_text(), self.title.trim())
+        } else {
+            self.title.trim().to_string()
+        };
         let left = format!(
-            "{}{} {}  {}",
+            "{}{} {}",
             " ".repeat(self.margin_for_element()),
             self.marker,
-            self.slug_text(),
-            self.title.trim()
+            label
         );
         row_element(left, self.accent_color, true, right, self.muted_color)
     }
@@ -289,7 +337,7 @@ impl SubagentTracker {
         );
         row_element(
             left,
-            row_color(row, self.active_color, self.error_color),
+            row_color(row, self.active_color, self.muted_color, self.error_color),
             false,
             row.metadata(),
             self.muted_color,
@@ -322,13 +370,43 @@ impl SubagentTracker {
     }
 }
 
+/// Lifecycle state rendered for one parallel subagent row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentRowStatus {
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    TrackingLost,
+}
+
+impl SubagentRowStatus {
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, Self::Running)
+    }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::Succeeded)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::TrackingLost => "tracking lost",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubagentRow {
     agent: String,
     description: String,
-    done: bool,
-    success: bool,
+    status: SubagentRowStatus,
     elapsed: Option<String>,
+    elapsed_seconds: Option<u64>,
     tokens: u64,
 }
 
@@ -337,24 +415,43 @@ impl SubagentRow {
         Self {
             agent: agent.into(),
             description: description.into(),
-            done: false,
-            success: true,
+            status: SubagentRowStatus::Running,
             elapsed: None,
+            elapsed_seconds: None,
             tokens: 0,
         }
     }
 
+    /// Compatibility builder for callers that previously supplied only a
+    /// terminal success flag.
     pub fn done(mut self, success: bool) -> Self {
-        self.done = true;
-        self.success = success;
+        self.status = if success {
+            SubagentRowStatus::Succeeded
+        } else {
+            SubagentRowStatus::Failed
+        };
+        self
+    }
+
+    pub fn status(mut self, status: SubagentRowStatus) -> Self {
+        self.status = status;
         self
     }
 
     pub fn elapsed(mut self, elapsed: impl Into<String>) -> Self {
         let elapsed = elapsed.into();
         if !elapsed.is_empty() {
+            self.elapsed_seconds = parse_elapsed_seconds(&elapsed);
             self.elapsed = Some(elapsed);
         }
+        self
+    }
+
+    /// Set elapsed time without asking the component to parse host-formatted
+    /// text. The tracker remains responsible for a consistent display format.
+    pub fn elapsed_seconds(mut self, elapsed_seconds: u64) -> Self {
+        self.elapsed_seconds = Some(elapsed_seconds);
+        self.elapsed = Some(fmt_elapsed_seconds(elapsed_seconds));
         self
     }
 
@@ -372,15 +469,23 @@ impl SubagentRow {
     }
 
     pub fn is_done(&self) -> bool {
-        self.done
+        self.status.is_terminal()
     }
 
     pub fn is_success(&self) -> bool {
-        self.success
+        self.status.is_success()
+    }
+
+    pub fn status_value(&self) -> SubagentRowStatus {
+        self.status
     }
 
     pub fn elapsed_value(&self) -> Option<&str> {
         self.elapsed.as_deref()
+    }
+
+    pub fn elapsed_seconds_value(&self) -> Option<u64> {
+        self.elapsed_seconds
     }
 
     pub fn tokens_value(&self) -> u64 {
@@ -390,9 +495,13 @@ impl SubagentRow {
     fn metadata(&self) -> String {
         let elapsed = self.elapsed.as_deref().unwrap_or("0.0s");
         if self.tokens > 0 {
-            format!("{elapsed} · ↓ {} tokens", fmt_tokens(self.tokens))
+            format!(
+                "{} · {elapsed} · ↓ {} tokens",
+                self.status.label(),
+                fmt_tokens(self.tokens)
+            )
         } else {
-            elapsed.to_string()
+            format!("{} · {elapsed}", self.status.label())
         }
     }
 }
@@ -418,11 +527,18 @@ fn row_element<Msg>(
     )
 }
 
-fn row_color(row: &SubagentRow, active_color: Color, error_color: Color) -> Color {
-    if row.done && !row.success {
-        error_color
-    } else {
-        active_color
+fn row_color(
+    row: &SubagentRow,
+    active_color: Color,
+    muted_color: Color,
+    error_color: Color,
+) -> Color {
+    match row.status {
+        SubagentRowStatus::Running => active_color,
+        SubagentRowStatus::Failed => error_color,
+        SubagentRowStatus::Succeeded
+        | SubagentRowStatus::Cancelled
+        | SubagentRowStatus::TrackingLost => muted_color,
     }
 }
 
@@ -435,8 +551,10 @@ fn fit_left(left: &str, width: usize, right: &str) -> String {
 fn aggregate_elapsed(rows: &[SubagentRow]) -> String {
     let max_seconds = rows
         .iter()
-        .filter_map(|row| row.elapsed.as_deref())
-        .filter_map(parse_elapsed_seconds)
+        .filter_map(|row| {
+            row.elapsed_seconds
+                .or_else(|| row.elapsed.as_deref().and_then(parse_elapsed_seconds))
+        })
         .max()
         .unwrap_or(0);
     fmt_elapsed_seconds(max_seconds)
@@ -444,22 +562,34 @@ fn aggregate_elapsed(rows: &[SubagentRow]) -> String {
 
 fn parse_elapsed_seconds(text: &str) -> Option<u64> {
     let text = text.trim();
-    if let Some(raw) = text.strip_suffix("ms") {
-        let millis = raw.trim().parse::<f64>().ok()?;
-        return ceil_elapsed_seconds(millis / 1000.0);
-    }
-    if let Some(raw) = text.strip_suffix('s') {
-        let seconds = raw.trim().parse::<f64>().ok()?;
-        return ceil_elapsed_seconds(seconds);
-    }
-    if let Some(raw) = text.strip_suffix('m') {
-        let minutes = raw.trim().parse::<f64>().ok()?;
-        return ceil_elapsed_seconds(minutes * 60.0);
-    }
     if let Some((minutes, seconds)) = text.split_once(':') {
         let minutes = minutes.trim().parse::<u64>().ok()?;
         let seconds = seconds.trim().parse::<u64>().ok()?;
         return Some(minutes.saturating_mul(60).saturating_add(seconds));
+    }
+
+    let mut total = 0.0f64;
+    let mut parts = 0usize;
+    for part in text.split_whitespace() {
+        total += parse_elapsed_part_seconds(part)?;
+        parts += 1;
+    }
+    (parts > 0).then_some(())?;
+    ceil_elapsed_seconds(total)
+}
+
+fn parse_elapsed_part_seconds(part: &str) -> Option<f64> {
+    if let Some(raw) = part.strip_suffix("ms") {
+        return raw.trim().parse::<f64>().ok().map(|value| value / 1000.0);
+    }
+    if let Some(raw) = part.strip_suffix('s') {
+        return raw.trim().parse::<f64>().ok();
+    }
+    if let Some(raw) = part.strip_suffix('m') {
+        return raw.trim().parse::<f64>().ok().map(|value| value * 60.0);
+    }
+    if let Some(raw) = part.strip_suffix('h') {
+        return raw.trim().parse::<f64>().ok().map(|value| value * 3600.0);
     }
     None
 }
@@ -479,8 +609,10 @@ fn ceil_elapsed_seconds(seconds: f64) -> Option<u64> {
 fn fmt_elapsed_seconds(seconds: u64) -> String {
     if seconds < 60 {
         format!("{:.1}s", seconds as f64)
+    } else if seconds < 3600 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
     } else {
-        format!("{}m{}s", seconds / 60, seconds % 60)
+        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
     }
 }
 
@@ -557,6 +689,77 @@ mod tests {
     }
 
     #[test]
+    fn running_rows_render_explicit_status_and_numeric_elapsed_time() {
+        let row = SubagentRow::new("researcher", "collect evidence")
+            .elapsed_seconds(65)
+            .tokens(720);
+        let view = SubagentTracker::new("research").row(row.clone()).view(80);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(row.status_value(), SubagentRowStatus::Running);
+        assert_eq!(row.elapsed_seconds_value(), Some(65));
+        assert_eq!(row.elapsed_value(), Some("1m 05s"));
+        assert!(plain.contains("running · 1m 05s · ↓ 720 tokens"), "{plain}");
+        assert!(plain.contains("1 running · 0/1 done · 1m 05s"), "{plain}");
+    }
+
+    #[test]
+    fn legacy_cli_elapsed_formats_remain_parseable() {
+        assert_eq!(parse_elapsed_seconds("1m 05s"), Some(65));
+        assert_eq!(parse_elapsed_seconds("1h 32m"), Some(5_520));
+        assert_eq!(parse_elapsed_seconds("1h 02m 03s"), Some(3_723));
+
+        let rows = vec![
+            SubagentRow::new("one", "minute").elapsed("1m 05s"),
+            SubagentRow::new("two", "hour").elapsed("1h 32m"),
+        ];
+        assert_eq!(aggregate_elapsed(&rows), "1h 32m");
+    }
+
+    #[test]
+    fn overflow_is_reported_as_one_muted_summary_row() {
+        let tracker = SubagentTracker::new("many")
+            .max_running_rows(2)
+            .muted_color(Color::BrightBlack)
+            .row(SubagentRow::new("one", "first"))
+            .row(SubagentRow::new("two", "second"))
+            .row(SubagentRow::new("three", "third"))
+            .row(SubagentRow::new("four", "fourth"));
+        let view = tracker.view(72);
+        let plain = strip_ansi(&view);
+
+        assert_eq!(plain.lines().count(), 4);
+        assert!(plain.contains("one  first"), "{plain}");
+        assert!(plain.contains("two  second"), "{plain}");
+        assert!(!plain.contains("three  third"), "{plain}");
+        assert!(plain.contains("… +2 more running"), "{plain}");
+        assert!(
+            view.contains(&format!(
+                "\x1b[{}m… +2 more running",
+                Color::BrightBlack.fg_ansi()
+            )) || view.contains(&Color::BrightBlack.fg_ansi()),
+            "{view:?}"
+        );
+    }
+
+    #[test]
+    fn typed_terminal_statuses_keep_done_builder_compatibility() {
+        let succeeded = SubagentRow::new("one", "done").done(true);
+        let failed = SubagentRow::new("two", "failed").done(false);
+        let cancelled = SubagentRow::new("three", "cancelled").status(SubagentRowStatus::Cancelled);
+        let tracking_lost =
+            SubagentRow::new("four", "lost").status(SubagentRowStatus::TrackingLost);
+
+        assert!(succeeded.is_done());
+        assert!(succeeded.is_success());
+        assert_eq!(failed.status_value(), SubagentRowStatus::Failed);
+        assert!(failed.is_done());
+        assert!(!failed.is_success());
+        assert!(cancelled.is_done());
+        assert!(tracking_lost.is_done());
+    }
+
+    #[test]
     fn empty_tracker_renders_no_rows() {
         let tracker = SubagentTracker::new("No work");
 
@@ -604,6 +807,19 @@ mod tests {
         assert_eq!(tracker.active_color, theme.color(ThemeRole::Secondary));
         assert_eq!(tracker.muted_color, theme.color(ThemeRole::Muted));
         assert_eq!(tracker.error_color, theme.color(ThemeRole::Error));
+    }
+
+    #[test]
+    fn interactive_tracker_can_hide_redundant_slug() {
+        let view = SubagentTracker::new("Audit message stream")
+            .slug("audit-message-stream")
+            .show_slug(false)
+            .row(SubagentRow::new("reviewer", "inspect cards").elapsed_seconds(3))
+            .view(72);
+        let plain = strip_ansi(&view);
+
+        assert!(plain.contains("Audit message stream"), "{plain}");
+        assert!(!plain.contains("audit-message-stream"), "{plain}");
     }
 
     #[test]
@@ -708,11 +924,12 @@ mod tests {
         assert_eq!(tracker.running_rows().len(), 1);
         assert!(plain.contains("one  first"));
         assert!(!plain.contains("two  second"));
+        assert!(plain.contains("… +1 more running"));
 
         let Element::Box(column) = tracker.element::<()>() else {
             panic!("expected column");
         };
-        assert_eq!(column.children.len(), 2);
+        assert_eq!(column.children.len(), 3);
     }
 
     #[test]

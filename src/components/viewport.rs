@@ -8,10 +8,18 @@ use crate::style::{
 pub struct Viewport {
     content: String,
     lines: Vec<String>,
+    partition: Option<ContentPartition>,
     offset: usize,
     width: u16,
     height: u16,
     auto_scroll: bool,
+}
+
+struct ContentPartition {
+    prefix: String,
+    suffix: String,
+    prefix_line_count: usize,
+    suffix_was_empty: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +118,7 @@ impl Viewport {
         Self {
             content: String::new(),
             lines: Vec::new(),
+            partition: None,
             offset: 0,
             width,
             height,
@@ -128,6 +137,7 @@ impl Viewport {
     }
 
     pub fn set_content(&mut self, content: &str) {
+        self.partition = None;
         self.content.clear();
         self.content.push_str(content);
         self.rewrap_content();
@@ -137,8 +147,112 @@ impl Viewport {
     }
 
     pub fn append(&mut self, content: &str) {
+        self.materialize_partition();
         self.content.push_str(content);
         self.rewrap_content();
+        if self.auto_scroll {
+            self.scroll_to_bottom();
+        }
+    }
+
+    /// Replace a mutable suffix while retaining the already-wrapped prefix.
+    ///
+    /// Streaming transcript callers use this to update only the active
+    /// Markdown tail. When a newline-terminated `prefix` is unchanged, its
+    /// wrapped rows stay in place and only `suffix` is wrapped again. Both raw
+    /// parts are retained so a terminal resize can still perform a
+    /// source-backed full reflow.
+    pub fn set_content_parts(&mut self, prefix: &str, suffix: &str) {
+        // A non-newline boundary can fall in the middle of a wrapped row or an
+        // ANSI-styled span. Wrapping the parts independently would then differ
+        // from wrapping their concatenation, so keep the combined source and
+        // perform a full reflow. Newline-terminated prefixes use the safe
+        // incremental path below.
+        if !prefix.ends_with('\n') {
+            self.partition = None;
+            self.content.clear();
+            self.content.push_str(prefix);
+            self.content.push_str(suffix);
+            self.rewrap_content();
+            if self.auto_scroll {
+                self.scroll_to_bottom();
+            }
+            return;
+        }
+
+        let suffix_is_empty = suffix.is_empty();
+        let reuse_prefix = self.partition.as_ref().is_some_and(|partition| {
+            partition.prefix == prefix && partition.suffix_was_empty == suffix_is_empty
+        });
+        let append_to_prefix = self.partition.as_ref().and_then(|partition| {
+            (partition.suffix_was_empty == suffix_is_empty
+                && !partition.prefix.is_empty()
+                && partition.prefix.ends_with('\n')
+                && prefix.len() > partition.prefix.len()
+                && prefix.starts_with(&partition.prefix))
+            .then_some((
+                partition.prefix.len(),
+                partition.prefix_line_count,
+                partition.suffix_was_empty,
+            ))
+        });
+
+        if reuse_prefix {
+            let prefix_line_count = self
+                .partition
+                .as_ref()
+                .map_or(0, |partition| partition.prefix_line_count);
+            self.lines.truncate(prefix_line_count);
+            self.lines.extend(wrap_content(suffix, self.width as usize));
+            if let Some(partition) = &mut self.partition {
+                partition.suffix.clear();
+                partition.suffix.push_str(suffix);
+            }
+        } else if let Some((old_prefix_len, old_prefix_line_count, old_suffix_was_empty)) =
+            append_to_prefix
+        {
+            // Stable streaming rows only append to a newline-terminated
+            // prefix. Retain its wrapped rows, remove the synthetic trailing
+            // blank row when the old suffix was empty, and wrap only the new
+            // prefix fragment plus the mutable suffix.
+            let mut retained = old_prefix_line_count;
+            if old_suffix_was_empty
+                && retained > 0
+                && self.lines.get(retained - 1).is_some_and(String::is_empty)
+            {
+                retained -= 1;
+            }
+            self.lines.truncate(retained);
+            let appended = &prefix[old_prefix_len..];
+            let mut appended_lines = wrap_content(appended, self.width as usize);
+            trim_partition_boundary(&mut appended_lines, appended, suffix);
+            self.lines.extend(appended_lines);
+            let prefix_line_count = self.lines.len();
+            self.lines.extend(wrap_content(suffix, self.width as usize));
+            if let Some(partition) = &mut self.partition {
+                partition.prefix.clear();
+                partition.prefix.push_str(prefix);
+                partition.suffix.clear();
+                partition.suffix.push_str(suffix);
+                partition.prefix_line_count = prefix_line_count;
+                partition.suffix_was_empty = suffix_is_empty;
+            }
+        } else {
+            let mut prefix_lines = wrap_content(prefix, self.width as usize);
+            trim_partition_boundary(&mut prefix_lines, prefix, suffix);
+            let prefix_line_count = prefix_lines.len();
+            prefix_lines.extend(wrap_content(suffix, self.width as usize));
+            self.lines = prefix_lines;
+            self.partition = Some(ContentPartition {
+                prefix: prefix.to_string(),
+                suffix: suffix.to_string(),
+                prefix_line_count,
+                suffix_was_empty: suffix_is_empty,
+            });
+            self.content.clear();
+        }
+
+        self.clamp_offset();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
@@ -147,13 +261,24 @@ impl Viewport {
     pub fn clear(&mut self) {
         self.content.clear();
         self.lines.clear();
+        self.partition = None;
         self.offset = 0;
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {
         self.width = width;
         self.height = height;
-        self.rewrap_content();
+        if let Some(partition) = &mut self.partition {
+            let mut prefix_lines = wrap_content(&partition.prefix, width as usize);
+            trim_partition_boundary(&mut prefix_lines, &partition.prefix, &partition.suffix);
+            partition.prefix_line_count = prefix_lines.len();
+            partition.suffix_was_empty = partition.suffix.is_empty();
+            prefix_lines.extend(wrap_content(&partition.suffix, width as usize));
+            self.lines = prefix_lines;
+        } else {
+            self.rewrap_content();
+        }
+        self.clamp_offset();
         if self.auto_scroll {
             self.scroll_to_bottom();
         }
@@ -207,6 +332,16 @@ impl Viewport {
 
     pub fn at_bottom(&self) -> bool {
         self.offset >= self.max_offset()
+    }
+
+    /// Current top row in the fully wrapped content.
+    pub fn scroll_offset(&self) -> usize {
+        self.offset.min(self.max_offset())
+    }
+
+    /// Restore a previously captured top row, clamped to current content.
+    pub fn set_scroll_offset(&mut self, offset: usize) {
+        self.offset = offset.min(self.max_offset());
     }
 
     /// Handle mouse scroll events.
@@ -283,6 +418,26 @@ impl Viewport {
 
     fn rewrap_content(&mut self) {
         self.lines = wrap_content(&self.content, self.width as usize);
+        self.clamp_offset();
+    }
+
+    fn clamp_offset(&mut self) {
+        self.offset = self.offset.min(self.max_offset());
+    }
+
+    fn materialize_partition(&mut self) {
+        let Some(partition) = self.partition.take() else {
+            return;
+        };
+        self.content.clear();
+        self.content.push_str(&partition.prefix);
+        self.content.push_str(&partition.suffix);
+    }
+}
+
+fn trim_partition_boundary(lines: &mut Vec<String>, prefix: &str, suffix: &str) {
+    if !suffix.is_empty() && prefix.ends_with('\n') && lines.last().is_some_and(String::is_empty) {
+        lines.pop();
     }
 }
 
@@ -397,12 +552,9 @@ pub fn highlight_selection_range(view: &str, range: SelectionRange, style: &Styl
 fn wrap_line(s: &str, width: usize) -> Vec<String> {
     // The gutter prefixes content with leading spaces (the left margin); keep
     // that indent on wrapped continuation lines so they don't fall back to the
-    // screen edge.
-    let indent = s
-        .chars()
-        .take_while(|c| *c == ' ')
-        .count()
-        .min(width.saturating_sub(8));
+    // screen edge. When the row uses a symbolic gutter marker (`  ● text`),
+    // continue under the text column rather than under the marker.
+    let indent = continuation_indent(s, width);
     let pad = " ".repeat(indent);
     let mut lines = Vec::new();
     let mut current = String::new();
@@ -466,9 +618,63 @@ fn wrap_line(s: &str, width: usize) -> Vec<String> {
     lines
 }
 
+fn continuation_indent(s: &str, width: usize) -> usize {
+    // Always leave at least one display column for content.  The previous
+    // eight-column reserve dropped the indent entirely in very narrow
+    // viewports (for example an 8-column transcript row), so gutter-wrapped
+    // continuation lines jumped back to column zero.
+    let max_indent = width.saturating_sub(1);
+    let plain = strip_ansi(s);
+    let leading = plain.chars().take_while(|c| *c == ' ').count();
+    if leading == 0 {
+        return 0;
+    }
+
+    let rest = &plain[leading..];
+    let mut token_end = 0usize;
+    for (index, ch) in rest.char_indices() {
+        if ch.is_whitespace() {
+            break;
+        }
+        token_end = index + ch.len_utf8();
+    }
+    if token_end == 0 {
+        return leading.min(max_indent);
+    }
+
+    let token = &rest[..token_end];
+    if token.chars().any(char::is_alphanumeric) || visible_len(token) > 4 {
+        return leading.min(max_indent);
+    }
+
+    let gap_width = rest[token_end..]
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .map(|ch| visible_len(&ch.to_string()))
+        .sum::<usize>();
+    if gap_width == 0 {
+        return leading.min(max_indent);
+    }
+
+    leading
+        .saturating_add(visible_len(token))
+        .saturating_add(gap_width)
+        .min(max_indent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_content_parts_match_full(width: u16, prefix: &str, suffix: &str) {
+        let mut partitioned = Viewport::new(width, 20).with_auto_scroll(false);
+        partitioned.set_content_parts(prefix, suffix);
+
+        let mut full = Viewport::new(width, 20).with_auto_scroll(false);
+        full.set_content(&format!("{prefix}{suffix}"));
+
+        assert_eq!(partitioned.lines, full.lines);
+    }
 
     #[test]
     fn set_content_and_view() {
@@ -477,6 +683,96 @@ mod tests {
         let view = vp.view();
         assert!(view.contains("line1"));
         assert!(view.contains("line3"));
+    }
+
+    #[test]
+    fn partitioned_content_matches_full_content_and_replaces_only_suffix_rows() {
+        let prefix = "history one\nhistory two\n\n";
+        let mut partitioned = Viewport::new(12, 20).with_auto_scroll(false);
+        partitioned.set_content_parts(prefix, "live alpha\nlive beta");
+
+        let mut full = Viewport::new(12, 20).with_auto_scroll(false);
+        full.set_content(&format!("{prefix}live alpha\nlive beta"));
+        assert_eq!(partitioned.lines, full.lines);
+
+        let prefix_line_count = partitioned
+            .partition
+            .as_ref()
+            .expect("partition should be retained")
+            .prefix_line_count;
+        let prefix_rows = partitioned.lines[..prefix_line_count].to_vec();
+        partitioned.set_content_parts(prefix, "replacement tail that wraps");
+
+        assert_eq!(
+            &partitioned.lines[..prefix_line_count],
+            prefix_rows.as_slice(),
+            "stable prefix rows must remain in place"
+        );
+        let mut replaced_full = Viewport::new(12, 20).with_auto_scroll(false);
+        replaced_full.set_content(&format!("{prefix}replacement tail that wraps"));
+        assert_eq!(partitioned.lines, replaced_full.lines);
+    }
+
+    #[test]
+    fn partitioned_content_joins_plain_text_across_non_newline_boundary() {
+        assert_content_parts_match_full(5, "abc", "def");
+    }
+
+    #[test]
+    fn partitioned_content_joins_ansi_text_across_non_newline_boundary() {
+        assert_content_parts_match_full(4, "\x1b[31mab", "cd\x1b[0mef");
+    }
+
+    #[test]
+    fn partitioned_content_joins_wide_text_across_non_newline_boundary() {
+        assert_content_parts_match_full(4, "你", "好ab");
+    }
+
+    #[test]
+    fn partitioned_content_reflows_both_regions_after_resize() {
+        let prefix = "stable history line that wraps\n\n";
+        let suffix = "mutable tail line that also wraps";
+        let mut partitioned = Viewport::new(24, 20).with_auto_scroll(false);
+        partitioned.set_content_parts(prefix, suffix);
+
+        partitioned.resize(10, 20);
+
+        let mut full = Viewport::new(10, 20).with_auto_scroll(false);
+        full.set_content(&format!("{prefix}{suffix}"));
+        assert_eq!(partitioned.lines, full.lines);
+    }
+
+    #[test]
+    fn partitioned_content_appends_stable_prefix_before_replacing_tail() {
+        let mut partitioned = Viewport::new(12, 20).with_auto_scroll(false);
+        partitioned.set_content_parts("history one\n", "live tail");
+        partitioned.set_content_parts(
+            "history one\nstable answer row that wraps\n",
+            "replacement tail",
+        );
+
+        let mut full = Viewport::new(12, 20).with_auto_scroll(false);
+        full.set_content("history one\nstable answer row that wraps\nreplacement tail");
+        assert_eq!(partitioned.lines, full.lines);
+        assert_eq!(
+            partitioned
+                .partition
+                .as_ref()
+                .expect("partition")
+                .prefix_line_count,
+            4
+        );
+    }
+
+    #[test]
+    fn append_materializes_partition_without_losing_content() {
+        let mut viewport = Viewport::new(80, 10).with_auto_scroll(false);
+        viewport.set_content_parts("history\n", "tail");
+
+        viewport.append("\nappended");
+
+        assert!(viewport.partition.is_none());
+        assert_eq!(viewport.lines, vec!["history", "tail", "appended"]);
     }
 
     #[test]
@@ -513,6 +809,52 @@ mod tests {
     }
 
     #[test]
+    fn content_shrink_clamps_raw_offset_before_followup_scroll() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("zero\none\ntwo\nthree\nfour\nfive\nsix\nseven");
+        vp.update(ViewportMsg::ScrollDown(usize::MAX));
+        assert_eq!(vp.offset, 6);
+
+        vp.set_content("zero\none\ntwo\nthree");
+
+        assert_eq!(vp.offset, 2, "raw offset should clamp during shrink");
+        vp.update(ViewportMsg::ScrollUp(1));
+        assert_eq!(vp.offset, 1);
+        vp.update(ViewportMsg::ScrollDown(1));
+        assert_eq!(vp.offset, 2);
+    }
+
+    #[test]
+    fn partitioned_content_shrink_clamps_raw_offset_before_followup_scroll() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content_parts("zero\none\n", "two\nthree\nfour\nfive\nsix\nseven");
+        vp.update(ViewportMsg::ScrollDown(usize::MAX));
+        assert_eq!(vp.offset, 6);
+
+        vp.set_content_parts("zero\none\n", "two\nthree");
+
+        assert_eq!(vp.offset, 2, "raw offset should clamp during shrink");
+        vp.update(ViewportMsg::ScrollUp(1));
+        assert_eq!(vp.offset, 1);
+        vp.update(ViewportMsg::ScrollDown(1));
+        assert_eq!(vp.offset, 2);
+    }
+
+    #[test]
+    fn captured_scroll_offset_can_be_restored_after_content_reflow() {
+        let mut vp = Viewport::new(12, 3).with_auto_scroll(false);
+        vp.set_content("zero\none\ntwo\nthree\nfour\nfive");
+        vp.set_scroll_offset(2);
+        assert_eq!(vp.scroll_offset(), 2);
+        assert!(vp.view().starts_with("two"));
+
+        vp.set_content("prefix\nzero\none\ntwo\nthree\nfour\nfive");
+        vp.set_scroll_offset(3);
+        assert_eq!(vp.scroll_offset(), 3);
+        assert!(vp.view().starts_with("two"));
+    }
+
+    #[test]
     fn scroll_percent_clamps_stale_offset_after_shrink() {
         let mut vp = Viewport::new(80, 5).with_auto_scroll(false);
         vp.set_content(
@@ -538,6 +880,40 @@ mod tests {
         let wrapped: Vec<&str> = view.lines().filter(|l| !l.trim().is_empty()).collect();
         assert!(wrapped.len() >= 2, "long line wrapped");
         assert!(wrapped[1].starts_with("    "), "continuation keeps indent");
+    }
+
+    #[test]
+    fn wrapped_gutter_line_aligns_continuation_after_marker() {
+        let mut vp = Viewport::new(15, 6);
+        vp.set_content("  ● abcdefghijklmnopqrstuv");
+
+        let view = vp.view();
+        let wrapped: Vec<&str> = view.lines().filter(|l| !l.trim().is_empty()).collect();
+
+        assert_eq!(wrapped[0], "  ● abcdefghijk");
+        assert!(
+            wrapped.iter().skip(1).all(|row| row.starts_with("    ")),
+            "continuations should align under gutter text: {wrapped:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_gutter_line_keeps_alignment_at_minimum_transcript_width() {
+        let mut vp = Viewport::new(8, 8);
+        vp.set_content("  • abcdefghijkl");
+
+        let view = vp.view();
+        let wrapped: Vec<&str> = view
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+
+        assert_eq!(wrapped[0], "  • abcd");
+        assert!(
+            wrapped.iter().skip(1).all(|row| row.starts_with("    ")),
+            "narrow continuations should retain the gutter text column: {wrapped:?}"
+        );
+        assert!(wrapped.iter().all(|row| visible_len(row) <= 8));
     }
 
     #[test]

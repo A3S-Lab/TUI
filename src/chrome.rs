@@ -397,9 +397,16 @@ mod tests {
         else {
             panic!("expected diff column");
         };
-        let Element::Text(diff_header) = &diff.children[0] else {
-            panic!("expected diff header");
+        let Element::Box(diff_header) = &diff.children[0] else {
+            panic!("expected styled diff header row");
         };
-        assert_eq!(diff_header.style.fg, Some(theme.color(ThemeRole::Primary)));
+        let Element::Text(bullet) = &diff_header.children[0] else {
+            panic!("expected diff header bullet");
+        };
+        let Element::Text(action) = &diff_header.children[1] else {
+            panic!("expected diff header action");
+        };
+        assert_eq!(bullet.style.fg, Some(theme.color(ThemeRole::Primary)));
+        assert_eq!(action.style.fg, Some(theme.color(ThemeRole::Primary)));
     }
 }

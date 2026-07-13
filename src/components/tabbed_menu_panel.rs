@@ -607,29 +607,40 @@ impl TabbedMenuPanel {
     }
 
     fn render_tabs(&self, width: usize) -> String {
-        let chips = self
-            .tabs
-            .iter()
-            .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
-            .collect::<Vec<_>>();
-        ChipStrip::new(chips)
-            .active(self.normalized_active_tab())
-            .margin(self.indent_for_width(width))
-            .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
+        self.tab_strip(self.indent_for_width(width))
             .view(width as u16)
     }
 
     fn tabs_element<Msg>(&self) -> Element<Msg> {
+        self.tab_strip(self.indent_for_element()).element()
+    }
+
+    fn tab_strip(&self, margin: usize) -> ChipStrip {
+        let active = self.normalized_active_tab();
         let chips = self
             .tabs
             .iter()
-            .map(|tab| Chip::new(tab.label.clone()).color(tab.color))
+            .enumerate()
+            .map(|(index, tab)| {
+                let chip = Chip::new(tab.label.clone());
+                if index == active {
+                    chip.color(tab.color)
+                } else {
+                    chip
+                }
+            })
             .collect::<Vec<_>>();
+        let active_bg = self
+            .tabs
+            .get(active)
+            .map_or(self.muted_color, |tab| tab.color);
+
         ChipStrip::new(chips)
-            .active(self.normalized_active_tab())
-            .margin(self.indent_for_element())
+            .active(active)
+            .margin(margin)
             .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
-            .element()
+            .active_colors(self.selected_fg, active_bg)
+            .inactive_color(self.muted_color)
     }
 
     fn item_text_element(
@@ -982,6 +993,54 @@ mod tests {
         assert_eq!(panel.selected_bg, Some(theme.color(ThemeRole::Highlight)));
         assert_eq!(panel.disabled_color, theme.color(ThemeRole::Muted));
         assert_eq!(panel.tabs[0].color_value(), Color::Cyan);
+    }
+
+    #[test]
+    fn themed_string_tabs_use_selected_and_muted_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let rendered = sample().with_theme(&theme).view(64, 8);
+        let active_background = sample().tabs[1].color_value();
+
+        assert!(rendered.contains(
+            &Style::new()
+                .fg(theme.color(ThemeRole::Muted))
+                .render(" a3s-code ")
+        ));
+        assert!(rendered.contains(
+            &Style::new()
+                .fg(theme.color(ThemeRole::Foreground))
+                .bg(active_background)
+                .bold()
+                .render(" Codex ")
+        ));
+        assert!(!rendered.contains(&Style::new().fg(Color::Cyan).render(" a3s-code ")));
+    }
+
+    #[test]
+    fn themed_element_tabs_use_selected_and_muted_semantic_colors() {
+        let theme = Theme::tokyo_night();
+        let panel = sample().with_theme(&theme);
+        let active_background = panel.tabs[1].color_value();
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected panel column");
+        };
+        let Element::Box(tabs) = &column.children[1] else {
+            panic!("expected tab strip");
+        };
+        let Element::Text(inactive) = &tabs.children[1] else {
+            panic!("expected inactive tab");
+        };
+        let Element::Text(active) = &tabs.children[3] else {
+            panic!("expected active tab");
+        };
+
+        assert_eq!(inactive.content, " a3s-code ");
+        assert_eq!(inactive.style.fg, Some(theme.color(ThemeRole::Muted)));
+        assert_eq!(inactive.style.bg, None);
+        assert_eq!(active.content, " Codex ");
+        assert_eq!(active.style.fg, Some(theme.color(ThemeRole::Foreground)));
+        assert_eq!(active.style.bg, Some(active_background));
+        assert!(active.style.bold);
     }
 
     #[test]
