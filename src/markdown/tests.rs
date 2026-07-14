@@ -56,6 +56,24 @@ fn heading_respects_configured_width() {
 }
 
 #[test]
+fn section_heading_has_one_blank_row_before_and_after() {
+    let output = strip_ansi(
+        &Markdown::new().render("Previous section body.\n\n## Next section\n\nNext section body."),
+    );
+
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec![
+            "Previous section body.",
+            "",
+            "## Next section",
+            "",
+            "Next section body."
+        ]
+    );
+}
+
+#[test]
 fn render_code_block() {
     let md = Markdown::new();
     let output = md.render("```\nlet x = 1;\n```");

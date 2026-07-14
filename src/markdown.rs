@@ -286,6 +286,14 @@ impl Markdown {
                 }
             }
             NodeValue::Heading(heading) => {
+                // Codex keeps section boundaries readable in a dense chat
+                // transcript: a heading owns one blank row on both sides.
+                // Paragraphs intentionally have no trailing gap, so add the
+                // leading separator here without doubling an existing blank
+                // from a code block, table, or preceding heading.
+                if output.last().is_some_and(|line| !line.text.is_empty()) {
+                    output.push(MarkdownLine::normal(String::new()));
+                }
                 let text = self.collect_inline(node);
                 let label = format!("{} {text}", "#".repeat(heading.level as usize));
                 for line in wrap_text(&label, width.saturating_sub(indent)) {
