@@ -357,7 +357,7 @@ generally follow one or more of these shapes:
 | Component | Use it for | Typical usage |
 | --- | --- | --- |
 | `Tabs` | A compact horizontal tab row where each tab changes a view. | Keep the active tab in app state; call the tab mouse handler when capture is enabled. |
-| `TabbedMenuPanel` | Account/model pickers and other tabbed command menus. | Build tabs with `TabbedMenuTab`, add tab-specific `TabbedMenuItem` rows, then handle tab clicks and row selection. |
+| `TabbedMenuPanel` | Account/model pickers and other tabbed command menus. | Build tabs with `TabbedMenuTab`; enable `inactive_tabs_use_tab_color` for provider identity and set `active_tab_foreground` when bright brand backgrounds need a dark label. |
 | `MenuPanel` | Slash menus, asset pickers, plugin toggles, and short overlay menus. | Create `MenuItem` rows, set `selected` and `scroll`, render a bounded `view`, then process `MenuPanelMsg`. |
 | `TreePicker` | File pickers and flattened hierarchy selection. | Build `TreePickerItem::branch` and `TreePickerItem::leaf` rows from your model; handle open, close, selected, and cancelled messages. |
 | `Select` | Small single-choice controls where only a selected index matters. | Store the selected index in app state and use the returned `SelectMsg` to update it. |
@@ -382,6 +382,23 @@ let rendered = menu.view(64, 10).lines().collect::<Vec<_>>();
 if let Some(MenuPanelMsg::Selected(index)) = menu.handle_key(&key) {
     // Run the selected command.
 }
+```
+
+Provider pickers can retain every tab's brand color without changing the
+default muted-tab behavior used by other menus:
+
+```rust
+use a3s_tui::components::{TabbedMenuItem, TabbedMenuPanel, TabbedMenuTab};
+use a3s_tui::style::Color;
+
+let providers = TabbedMenuPanel::new(vec![
+    TabbedMenuTab::new("Codex", Color::Rgb(16, 163, 127))
+        .item(TabbedMenuItem::new("gpt-5-codex")),
+    TabbedMenuTab::new("Claude", Color::Rgb(217, 119, 87))
+        .item(TabbedMenuItem::new("claude-opus")),
+])
+.inactive_tabs_use_tab_color(true)
+.active_tab_foreground(Color::Black);
 ```
 
 #### Tables, Timelines, And Structured Data
@@ -514,7 +531,7 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
 | `PanelFrame` | Titled fixed-size panels with focus-aware borders. | Wrap file browsers, previews, and split panes. |
 | `SplitPane` | Two-column layouts such as file tree plus editor. | Provide left and right rendered rows and let the component bound widths. |
 | `Modal` | Centered overlay dialogs. | Use for blocking dialogs that should sit above the current screen. |
-| `TextOverlay` | Inject overlay rows into an existing rendered frame. | Compose slash menus, pickers, and prompts above the input area. |
+| `TextOverlay` | Inject overlay rows into an existing rendered frame. | Replace full rows by default, or use `at_column` / `centered` to preserve surrounding frame content. |
 | `Divider` | Horizontal separators in Element or line-rendered views. | Use `divider`, `divider_line`, or width-aware variants between sections. |
 | `SectionHeader` | Panel section headings with metadata and divider rows. | Use above grouped rows in detail and activity panels. |
 | `StatusBar` | Header/footer bars with left, center, and right regions. | Use for screen titles, active mode, or panel hints. |
@@ -551,6 +568,11 @@ let frame = TextOverlay::new(rows)
     .width(width as usize)
     .apply(&frame);
 ```
+
+Use `.at_column(column)` to replace only the occupied cells from a fixed display
+column, or `.centered()` to center the widest overlay row while preserving the
+base frame on both sides. Both modes retain ANSI styles and OSC 8 links in the
+uncovered content.
 
 Use a full-screen panel when the content needs sustained browsing:
 
@@ -631,7 +653,7 @@ See `examples/chat.rs` for a complete chat UI with:
 Run `cargo bench --bench rendering` to measure hot rendering paths:
 - display-width helpers with ANSI and CJK text
 - `ActivityBlock`, `ChipStrip`, `ConnectorBlock`, `CursorLine`, `DataTable`, `DetailPanel`, `DiffView`, `GutterBlock`, `HelpPanel`, `InputBorder`, `LevelSlider`, `LogView`, `MenuPanel`, `ModeLine`, `OutputBlock`, `PanelFrame`, `PromptLine`, `Scrollbar`, `SectionHeader`, `SessionStatus`, `ShimmerText`, `SplitPane`, `StatusBar`, `SubagentTracker`, `Tabs`, `TaskQueue`, `TextOverlay`, `Timeline`, `ToolStatusLine`, `WrappedPrefixBlock`, and viewport selection string rendering
-- mixed markdown rendering with task lists and code blocks
+- mixed Markdown rendering, including deterministic 10 KiB, 100 KiB, and 1 MiB throughput cases
 
 ### Integration Tests
 

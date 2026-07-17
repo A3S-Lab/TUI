@@ -159,6 +159,8 @@ pub struct TabbedMenuPanel {
     selected_bg: Option<Color>,
     disabled_color: Color,
     items_use_tab_color: bool,
+    inactive_tabs_use_tab_color: bool,
+    active_tab_foreground: Option<Color>,
     footer: Option<String>,
 }
 
@@ -186,6 +188,8 @@ impl TabbedMenuPanel {
             selected_bg: None,
             disabled_color: Color::BrightBlack,
             items_use_tab_color: false,
+            inactive_tabs_use_tab_color: false,
+            active_tab_foreground: None,
             footer: None,
         }
         .clamped()
@@ -297,6 +301,25 @@ impl TabbedMenuPanel {
 
     pub fn items_use_tab_color(mut self, enabled: bool) -> Self {
         self.items_use_tab_color = enabled;
+        self
+    }
+
+    /// Render inactive tabs with their configured tab colors.
+    ///
+    /// Inactive tabs use [`Self::muted_color`] by default. Enable this for
+    /// source pickers where every tab color communicates provider identity.
+    pub fn inactive_tabs_use_tab_color(mut self, enabled: bool) -> Self {
+        self.inactive_tabs_use_tab_color = enabled;
+        self
+    }
+
+    /// Set the active tab's foreground without changing selected item text.
+    ///
+    /// By default the active tab shares [`Self::selected_fg`]. A separate
+    /// foreground keeps bright brand-color tab backgrounds readable while
+    /// selected list rows retain their own foreground.
+    pub fn active_tab_foreground(mut self, color: Color) -> Self {
+        self.active_tab_foreground = Some(color);
         self
     }
 
@@ -623,7 +646,7 @@ impl TabbedMenuPanel {
             .enumerate()
             .map(|(index, tab)| {
                 let chip = Chip::new(tab.label.clone());
-                if index == active {
+                if index == active || self.inactive_tabs_use_tab_color {
                     chip.color(tab.color)
                 } else {
                     chip
@@ -639,7 +662,10 @@ impl TabbedMenuPanel {
             .active(active)
             .margin(margin)
             .gap(self.tab_gap.min(MAX_TABBED_MENU_PANEL_TAB_GAP))
-            .active_colors(self.selected_fg, active_bg)
+            .active_colors(
+                self.active_tab_foreground.unwrap_or(self.selected_fg),
+                active_bg,
+            )
             .inactive_color(self.muted_color)
     }
 
@@ -1041,6 +1067,50 @@ mod tests {
         assert_eq!(active.style.fg, Some(theme.color(ThemeRole::Foreground)));
         assert_eq!(active.style.bg, Some(active_background));
         assert!(active.style.bold);
+    }
+
+    #[test]
+    fn inactive_tabs_can_use_their_configured_colors() {
+        let panel = sample().inactive_tabs_use_tab_color(true);
+        let rendered = panel.view(64, 8);
+
+        assert!(rendered.contains(&Style::new().fg(Color::Cyan).render(" a3s-code ")));
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected panel column");
+        };
+        let Element::Box(tabs) = &column.children[1] else {
+            panic!("expected tab strip");
+        };
+        let Element::Text(inactive) = &tabs.children[1] else {
+            panic!("expected inactive tab");
+        };
+
+        assert_eq!(inactive.style.fg, Some(Color::Cyan));
+    }
+
+    #[test]
+    fn active_tab_foreground_is_independent_from_selected_item_foreground() {
+        let panel = sample()
+            .selected_colors(Color::White, Color::Blue)
+            .active_tab_foreground(Color::Black);
+
+        let Element::Box(column) = panel.element::<()>() else {
+            panic!("expected panel column");
+        };
+        let Element::Box(tabs) = &column.children[1] else {
+            panic!("expected tab strip");
+        };
+        let Element::Text(active_tab) = &tabs.children[3] else {
+            panic!("expected active tab");
+        };
+        let Element::Text(selected_item) = &column.children[3] else {
+            panic!("expected selected item");
+        };
+
+        assert_eq!(active_tab.style.fg, Some(Color::Black));
+        assert_eq!(selected_item.style.fg, Some(Color::White));
+        assert_eq!(selected_item.style.bg, Some(Color::Blue));
     }
 
     #[test]
