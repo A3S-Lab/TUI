@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use a3s_tui::components::{
     highlight_selection, selected_text, ActivityBlock, CellAlign, Chip, ChipStrip, ChoicePrompt,
     ConnectorBlock, CursorLine, DataColumn, DataRow, DataTable, DetailPanel, DiffView, GutterBlock,
@@ -11,7 +13,9 @@ use a3s_tui::components::{
 };
 use a3s_tui::markdown::Markdown;
 use a3s_tui::style::{fit_visible, truncate_visible, wrap_words_compact, Color, Style};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{
+    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
+};
 
 fn bench_text_helpers(c: &mut Criterion) {
     let styled = Style::new()
@@ -249,6 +253,41 @@ fn bench_components(c: &mut Criterion) {
     });
 }
 
+const MARKDOWN_DOCUMENT_SIZES: [usize; 3] = [10 * 1024, 100 * 1024, 1024 * 1024];
+const MARKDOWN_SAMPLE: &str = r#"## Streaming transcript
+
+The terminal renders **Markdown**, `inline code`, links, and 中文 text at a fixed width.
+
+- [x] Preserve semantic source
+- [ ] Bound every terminal row
+
+| Component | State | Detail |
+| --- | --- | --- |
+| parser | ready | CommonMark with tables |
+| renderer | active | ANSI and CJK width |
+
+```rust
+fn render(source: &str) -> String {
+    source.lines().collect::<Vec<_>>().join("\n")
+}
+```
+
+> Repeated sections model a long assistant response without random input.
+
+"#;
+
+fn markdown_document(target_bytes: usize) -> String {
+    let mut document = String::with_capacity(target_bytes);
+    while document.len() + MARKDOWN_SAMPLE.len() <= target_bytes {
+        document.push_str(MARKDOWN_SAMPLE);
+    }
+    if document.len() < target_bytes {
+        document.push_str(&"x".repeat(target_bytes - document.len()));
+    }
+    assert_eq!(document.len(), target_bytes);
+    document
+}
+
 fn bench_markdown(c: &mut Criterion) {
     let markdown = Markdown::new().with_width(96);
     let input = r#"# Roadmap
@@ -270,6 +309,24 @@ pub fn render(output: &str) -> String {
     c.bench_function("markdown/render_mixed_content", |b| {
         b.iter(|| markdown.render(black_box(input)))
     });
+
+    let documents = MARKDOWN_DOCUMENT_SIZES
+        .into_iter()
+        .map(|bytes| (bytes, markdown_document(bytes)))
+        .collect::<Vec<_>>();
+    let mut group = c.benchmark_group("markdown/render_document");
+    group.measurement_time(Duration::from_secs(10));
+    group.sampling_mode(SamplingMode::Flat);
+    group.sample_size(10);
+    for (bytes, document) in &documents {
+        group.throughput(Throughput::Bytes(*bytes as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}KiB", bytes / 1024)),
+            document,
+            |b, document| b.iter(|| markdown.render(black_box(document.as_str()))),
+        );
+    }
+    group.finish();
 }
 
 fn sample_table() -> DataTable {
