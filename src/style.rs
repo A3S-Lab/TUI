@@ -1,5 +1,6 @@
 //! Color, style, and text formatting utilities.
 
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -813,6 +814,7 @@ pub fn center_visible(s: &str, width: usize) -> String {
     format!("{}{}{}", " ".repeat(left), truncated, " ".repeat(right))
 }
 
+/// Return the byte boundary and width of the next ANSI sequence or grapheme.
 pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(usize, usize)> {
     if start >= value.len() {
         return None;
@@ -821,24 +823,8 @@ pub(crate) fn next_display_cell_boundary(value: &str, start: usize) -> Option<(u
         return Some((end, 0));
     }
 
-    let mut chars = value[start..].char_indices();
-    let (_, ch) = chars.next()?;
-    let width = UnicodeWidthChar::width(ch).unwrap_or(0);
-    let mut end = start + ch.len_utf8();
-
-    if width != 0 {
-        for (offset, next) in chars {
-            if ansi_escape_sequence_end(value, start + offset).is_some() {
-                break;
-            }
-            if UnicodeWidthChar::width(next).unwrap_or(0) != 0 {
-                break;
-            }
-            end = start + offset + next.len_utf8();
-        }
-    }
-
-    Some((end, width))
+    let grapheme = value[start..].graphemes(true).next()?;
+    Some((start + grapheme.len(), UnicodeWidthStr::width(grapheme)))
 }
 
 pub(crate) fn display_cell_char_span(chars: &[char], cursor: usize) -> (usize, usize) {
@@ -1253,6 +1239,22 @@ mod tests {
 
         assert_eq!(out, "e\u{301}…");
         assert_eq!(visible_len(&out), 2);
+    }
+
+    #[test]
+    fn truncate_visible_keeps_emoji_presentation_sequences_within_width() {
+        let out = truncate_visible("✏️abc", 3);
+
+        assert_eq!(out, "✏️…");
+        assert_eq!(visible_len(&out), 3);
+    }
+
+    #[test]
+    fn truncate_visible_does_not_split_emoji_zwj_graphemes() {
+        let out = truncate_visible("👩‍💻abc", 3);
+
+        assert_eq!(out, "👩‍💻…");
+        assert_eq!(visible_len(&out), 3);
     }
 
     #[test]
