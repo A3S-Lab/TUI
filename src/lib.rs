@@ -92,6 +92,7 @@ pub mod renderer;
 pub mod streaming;
 pub mod style;
 pub mod terminal;
+pub mod terminal_profile;
 pub mod theme;
 
 pub use animation::{Easing, FrameAnimation, Transition};
@@ -115,4 +116,8 @@ pub use layout::{Constraint, Direction, Layout};
 pub use model::{ElementModel, Model};
 pub use program::{Program, ProgramBuilder};
 pub use style::{Align, Border, Color, Style};
+pub use terminal_profile::{
+    TerminalColorLevel, TerminalDisplayMode, TerminalFamily, TerminalMultiplexer, TerminalProfile,
+    TerminalSupport,
+};
 pub use theme::Theme;
