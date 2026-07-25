@@ -136,6 +136,11 @@ impl Viewport {
         self.auto_scroll = auto;
     }
 
+    /// Whether new content should keep the viewport pinned to the bottom.
+    pub fn auto_scroll_enabled(&self) -> bool {
+        self.auto_scroll
+    }
+
     pub fn set_content(&mut self, content: &str) {
         self.partition = None;
         self.content.clear();
@@ -808,6 +813,27 @@ mod tests {
         assert_eq!(vp.offset, 1);
         vp.update(ViewportMsg::ScrollDown(1));
         assert_eq!(vp.offset, 2);
+    }
+
+    #[test]
+    fn content_reflow_does_not_resume_paused_auto_scroll_at_bottom() {
+        let mut vp = Viewport::new(80, 2).with_auto_scroll(false);
+        vp.set_content("zero\none\ntwo\nthree\nfour");
+        vp.set_scroll_offset(2);
+        assert!(!vp.at_bottom());
+
+        // A streaming Markdown reflow can temporarily reduce the content
+        // enough that the preserved offset happens to equal the new bottom.
+        vp.set_content("zero\none\ntwo\nthree");
+        assert!(vp.at_bottom());
+        assert!(!vp.auto_scroll_enabled());
+
+        // Growing content again must keep the user's paused position instead
+        // of silently following the new tail.
+        vp.set_content("zero\none\ntwo\nthree\nfour\nfive");
+        assert_eq!(vp.scroll_offset(), 2);
+        assert!(!vp.at_bottom());
+        assert!(!vp.auto_scroll_enabled());
     }
 
     #[test]
