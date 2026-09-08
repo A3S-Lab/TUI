@@ -1,5 +1,12 @@
 # A3S TUI
 
+<p align="center">
+  <strong>Language / 语言:</strong>
+  <a href="README.md">English</a> ·
+  <a href="README.zh-CN.md">中文</a>
+</p>
+
+
 **TEA (The Elm Architecture) framework for terminal user interfaces**
 
 A3S TUI is a Rust library for building terminal applications using The Elm Architecture pattern. It combines declarative UI with Flexbox layout, incremental rendering, and a rich component library.
