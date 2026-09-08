@@ -1,5 +1,4 @@
-# A3S 途易
-
+# A3S TUI
 <p align="center">
   <strong>Language / 语言:</strong>
   <a href="README.md">English</a> ·
@@ -11,11 +10,11 @@
 A3S TUI 是一个 Rust 库，用于使用 Elm 架构模式构建终端应用程序。它将声明式 UI 与 Flexbox 布局、增量渲染和丰富的组件库结合在一起。
 
 [![crates.io](https://img.shields.io/crates/v/a3s-tui)](https://crates.io/crates/a3s-tui)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)]（许可证）
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
 
-＃＃ 为什么
+## 为什么
 
 大多数终端 UI 库强制您手动管理状态、布局和渲染。 A3S TUI 为终端带来了现代 UI 模式：
 
@@ -269,9 +268,9 @@ a3s-tui = { version = "0.1", default-features = false }
 
 ---
 
-＃＃ 特征
+## 特征
 
-＃＃＃ 架构
+### 架构
 
 - **TEA 模式** — 具有不可变状态的模型-更新-视图循环
 - **元素树** — 用于声明式 UI 的类似虚拟 DOM 的树结构
@@ -279,7 +278,7 @@ a3s-tui = { version = "0.1", default-features = false }
 - **增量渲染** - 线差异算法最大限度地减少终端重绘
 - **异步运行时** — 由 Tokio 提供支持的非阻塞事件循环
 
-＃＃＃ 成分
+### 成分
 
 |组件|描述 |
 |------------|-------------|
@@ -674,7 +673,7 @@ impl ElementModel for Demo {
 
 ---
 
-＃＃ 架构
+## 架构
 
 ### 茶流
 
@@ -778,7 +777,7 @@ ElementProgramBuilder::new(model)
 
 ---
 
-＃＃ 比较
+## 比较
 
 |特色| a3s-tui |拉图伊 |草书 |
 |--------|---------|---------|---------|
@@ -824,7 +823,7 @@ ElementProgramBuilder::new(model)
 
 ---
 
-＃＃ 执照
+## 执照
 
 MIT 许可证 - 有关详细信息，请参阅[LICENSE](LICENSE)。
 
