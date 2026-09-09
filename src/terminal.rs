@@ -1,3 +1,4 @@
+use crossterm::style::{Color as CtColor, ResetColor, SetBackgroundColor};
 use crossterm::{cursor, execute, queue, terminal};
 use std::io::{self, Stdout, Write};
 
@@ -23,12 +24,16 @@ pub struct Terminal {
     alt_screen: bool,
     mouse_support: bool,
     raw_mode: bool,
+    /// When set, erase/default background uses this RGB so host theme charcoal
+    /// cannot bleed through unpainted cells after `Clear` / SGR 0.
+    canvas_rgb: Option<(u8, u8, u8)>,
 }
 
 pub struct TerminalOptions {
     pub alt_screen: bool,
     pub mouse_support: bool,
     pub raw_mode: bool,
+    pub canvas_rgb: Option<(u8, u8, u8)>,
 }
 
 impl Default for TerminalOptions {
@@ -37,6 +42,7 @@ impl Default for TerminalOptions {
             alt_screen: true,
             mouse_support: false,
             raw_mode: true,
+            canvas_rgb: None,
         }
     }
 }
@@ -48,6 +54,7 @@ impl Terminal {
             alt_screen: options.alt_screen,
             mouse_support: options.mouse_support,
             raw_mode: options.raw_mode,
+            canvas_rgb: options.canvas_rgb,
         })
     }
 
@@ -65,15 +72,22 @@ impl Terminal {
         // a stream of keystrokes, so multi-line paste fills the input rather than
         // submitting line by line. Harmless where unsupported.
         let _ = execute!(self.stdout, crossterm::event::EnableBracketedPaste);
-        // Kitty keyboard protocol where supported → modified keys like
-        // Shift+Enter are reported distinctly. Terminals without it ignore this.
-        if matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
-            let _ = execute!(
-                self.stdout,
-                crossterm::event::PushKeyboardEnhancementFlags(
-                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                )
-            );
+        // Kitty keyboard protocol: modified keys like Shift+Enter are reported
+        // distinctly where supported. Always push — unsupported terminals ignore
+        // the sequence. Do NOT call `supports_keyboard_enhancement()` here:
+        // crossterm's probe waits up to 2s for a primary-device reply, which
+        // blocks alternate-screen takeover and delays the welcome logo.
+        let _ = execute!(
+            self.stdout,
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
+        );
+        // OSC 11: make the terminal's *default* background match the app canvas
+        // so SGR 0 / unstyled padding no longer reveals the host theme.
+        if let Some((r, g, b)) = self.canvas_rgb {
+            let _ = write!(self.stdout, "\x1b]11;#{r:02x}{g:02x}{b:02x}\x07");
+            let _ = execute!(self.stdout, SetBackgroundColor(CtColor::Rgb { r, g, b }));
         }
         execute!(self.stdout, cursor::Hide)?;
         Ok(())
@@ -87,6 +101,11 @@ impl Terminal {
         // toggled capture on at runtime via `set_mouse_capture`.
         let _ = execute!(self.stdout, crossterm::event::DisableMouseCapture);
         let _ = execute!(self.stdout, crossterm::event::DisableBracketedPaste);
+        if self.canvas_rgb.is_some() {
+            // OSC 111 restores the terminal's default background.
+            let _ = write!(self.stdout, "\x1b]111\x07");
+            let _ = execute!(self.stdout, ResetColor);
+        }
         if self.alt_screen {
             execute!(self.stdout, terminal::LeaveAlternateScreen)?;
         }
@@ -97,11 +116,23 @@ impl Terminal {
     }
 
     pub fn draw(&mut self, content: &str) -> io::Result<()> {
-        queue!(
-            self.stdout,
-            cursor::MoveTo(0, 0),
-            terminal::Clear(terminal::ClearType::All),
-        )?;
+        // Erase with the canvas color. Without this, Clear fills the host
+        // theme background (often charcoal ~#15181d) and it shows through any
+        // cell that is not explicitly painted.
+        if let Some((r, g, b)) = self.canvas_rgb {
+            queue!(
+                self.stdout,
+                SetBackgroundColor(CtColor::Rgb { r, g, b }),
+                cursor::MoveTo(0, 0),
+                terminal::Clear(terminal::ClearType::All),
+            )?;
+        } else {
+            queue!(
+                self.stdout,
+                cursor::MoveTo(0, 0),
+                terminal::Clear(terminal::ClearType::All),
+            )?;
+        }
         // Raw mode: '\n' is line-feed only and does NOT reset the column, so a
         // bare multi-line write makes each line start where the previous ended
         // (a staircase). Position every line at column 0 explicitly.

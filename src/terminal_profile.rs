@@ -168,11 +168,10 @@ impl TerminalProfile {
             stdout: std::io::stdout().is_terminal(),
             stderr: std::io::stderr().is_terminal(),
         };
-        let enhanced_keyboard = match crossterm::terminal::supports_keyboard_enhancement() {
-            Ok(true) => TerminalSupport::Supported,
-            Ok(false) => TerminalSupport::Unsupported,
-            Err(_) => TerminalSupport::Unknown,
-        };
+        // Infer from environment only. Crossterm's runtime probe waits up to 2s
+        // for a device-attribute reply and must not run on interactive paths
+        // (welcome banner / `/terminal` diagnostics).
+        let enhanced_keyboard = keyboard_enhancement_from_env(|name| std::env::var(name).ok());
         Self::detect_with(|name| std::env::var(name).ok(), io, enhanced_keyboard)
     }
 
@@ -332,6 +331,22 @@ fn sanitize_env_value(value: &str) -> Option<String> {
         .take(MAX_ENV_VALUE_CHARS)
         .collect::<String>();
     (!value.is_empty()).then_some(value)
+}
+
+/// Classify Kitty-style keyboard enhancement from process environment only.
+///
+/// Avoids crossterm's interactive device-attribute probe (up to 2s timeout).
+fn keyboard_enhancement_from_env(lookup: impl Fn(&str) -> Option<String>) -> TerminalSupport {
+    let term = env_value(&lookup, "TERM");
+    let term_program = env_value(&lookup, "TERM_PROGRAM");
+    let family = detect_family(&lookup, term.as_deref(), term_program.as_deref());
+    match family {
+        TerminalFamily::Kitty | TerminalFamily::WezTerm | TerminalFamily::Ghostty => {
+            TerminalSupport::Supported
+        }
+        TerminalFamily::Dumb | TerminalFamily::AppleTerminal => TerminalSupport::Unsupported,
+        _ => TerminalSupport::Unknown,
+    }
 }
 
 fn detect_multiplexer(
@@ -547,6 +562,48 @@ mod tests {
         assert_eq!(profile.enhanced_keyboard(), TerminalSupport::Unsupported);
         assert_eq!(profile.mouse_capture(), TerminalSupport::Unsupported);
         assert_eq!(profile.bracketed_paste(), TerminalSupport::Unsupported);
+    }
+
+    #[test]
+    fn keyboard_enhancement_infers_from_term_program_without_device_probe() {
+        assert_eq!(
+            keyboard_enhancement_from_env(|name| match name {
+                "TERM" => Some("xterm-kitty".into()),
+                "TERM_PROGRAM" => Some("kitty".into()),
+                _ => None,
+            }),
+            TerminalSupport::Supported
+        );
+        assert_eq!(
+            keyboard_enhancement_from_env(|name| match name {
+                "TERM_PROGRAM" => Some("WezTerm".into()),
+                "TERM" => Some("xterm-256color".into()),
+                _ => None,
+            }),
+            TerminalSupport::Supported
+        );
+        assert_eq!(
+            keyboard_enhancement_from_env(|name| match name {
+                "TERM" => Some("dumb".into()),
+                _ => None,
+            }),
+            TerminalSupport::Unsupported
+        );
+        assert_eq!(
+            keyboard_enhancement_from_env(|name| match name {
+                "TERM" => Some("xterm-256color".into()),
+                "TERM_PROGRAM" => Some("Apple_Terminal".into()),
+                _ => None,
+            }),
+            TerminalSupport::Unsupported
+        );
+        assert_eq!(
+            keyboard_enhancement_from_env(|name| match name {
+                "TERM" => Some("xterm-256color".into()),
+                _ => None,
+            }),
+            TerminalSupport::Unknown
+        );
     }
 
     #[test]

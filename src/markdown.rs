@@ -29,6 +29,7 @@ const MAX_HIGHLIGHT_BYTES: usize = 512 * 1024;
 const MAX_HIGHLIGHT_LINES: usize = 10_000;
 
 mod ansi;
+mod sequence;
 mod table;
 
 use ansi::wrap_styled_text;
@@ -192,7 +193,7 @@ impl Markdown {
             #[cfg(feature = "syntax-highlighting")]
             theme_set: Arc::clone(&defaults.theme_set),
             #[cfg(feature = "syntax-highlighting")]
-            theme_name: "base16-eighties.dark".to_string(),
+            theme_name: "base16-ocean.dark".to_string(),
         }
     }
 
@@ -286,17 +287,14 @@ impl Markdown {
                 }
             }
             NodeValue::Heading(heading) => {
-                // Codex keeps section boundaries readable in a dense chat
-                // transcript: a heading owns one blank row on both sides.
-                // Paragraphs intentionally have no trailing gap, so add the
-                // leading separator here without doubling an existing blank
-                // from a code block, table, or preceding heading.
+                // Cursor-like headings: styled title text without ATX `#`
+                // markers. Markers belong in source Markdown, not the chat
+                // transcript chrome.
                 if output.last().is_some_and(|line| !line.text.is_empty()) {
                     output.push(MarkdownLine::normal(String::new()));
                 }
                 let text = self.collect_inline(node);
-                let label = format!("{} {text}", "#".repeat(heading.level as usize));
-                for line in wrap_text(&label, width.saturating_sub(indent)) {
+                for line in wrap_text(&text, width.saturating_sub(indent)) {
                     let styled = Style::new()
                         .bold()
                         .fg(heading_color(heading.level))
@@ -323,6 +321,24 @@ impl Markdown {
             NodeValue::CodeBlock(cb) => {
                 let lang = cb.info.split([',', ' ', '\t']).next().unwrap_or_default();
                 let code = cb.literal.clone();
+
+                // Mermaid sequenceDiagram → Cursor-style terminal architecture art.
+                if lang.eq_ignore_ascii_case("mermaid") {
+                    let diagram_width = width.saturating_sub(indent).max(16);
+                    if let Some(diagram_lines) = sequence::try_render_sequence(&code, diagram_width)
+                    {
+                        if output.last().is_some_and(|line| !line.text.is_empty()) {
+                            output.push(MarkdownLine::normal(String::new()));
+                        }
+                        let indent = " ".repeat(indent);
+                        for line in diagram_lines {
+                            output.push(MarkdownLine::non_wrapping(format!("{indent}{line}")));
+                        }
+                        output.push(MarkdownLine::normal(String::new()));
+                        return;
+                    }
+                }
+
                 let highlighted = self.highlight_code(&code, lang);
                 let code = highlighted.strip_suffix('\n').unwrap_or(&highlighted);
 
@@ -745,14 +761,16 @@ fn prefix_blockquote_line(mut line: MarkdownLine, indent: usize, width: usize) -
     line
 }
 
-// Tokyo Night heading palette (cohesive, low-saturation RGB).
+// Design-system heading palette (aligned with A3S Code chrome / Cursor CLI).
+// Avoid Tokyo Night purple-heavy hierarchy; keep levels distinct via accent /
+// cyan / muted roles that the CLI color normalizer understands.
 fn heading_color(level: u8) -> Color {
     match level {
-        1 => Color::Rgb(122, 162, 247), // blue
-        2 => Color::Rgb(187, 154, 247), // purple
-        3 => Color::Rgb(125, 207, 255), // cyan
-        4 => Color::Rgb(158, 206, 106), // green
-        _ => Color::Rgb(192, 202, 245), // fg
+        1 => Color::Rgb(88, 166, 255),  // ACCENT
+        2 => Color::Rgb(57, 172, 200),  // TN_CYAN
+        3 => Color::Rgb(230, 237, 243), // TN_FG
+        4 => Color::Rgb(139, 148, 158), // TN_GRAY
+        _ => Color::Rgb(110, 118, 129), // TN_SUBTLE
     }
 }
 

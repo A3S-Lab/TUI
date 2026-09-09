@@ -43,7 +43,9 @@ fn render_heading() {
     let md = Markdown::new();
     let output = md.render("# Title");
     let plain = strip_ansi(&output);
-    assert_eq!(plain.lines().next(), Some("# Title"));
+    // Cursor-like: ATX markers stay in source, not in the rendered transcript.
+    assert_eq!(plain.lines().next(), Some("Title"));
+    assert!(!plain.lines().next().unwrap_or("").starts_with('#'));
 }
 
 #[test]
@@ -66,7 +68,7 @@ fn section_heading_has_one_blank_row_before_and_after() {
         vec![
             "Previous section body.",
             "",
-            "## Next section",
+            "Next section",
             "",
             "Next section body."
         ]
@@ -90,6 +92,58 @@ fn render_code_block_has_no_frame_or_gutter() {
 
     assert_eq!(rows, vec!["let x = 1;"]);
     assert!(!plain.contains(['┌', '│', '└']));
+}
+
+#[test]
+fn mermaid_sequence_diagram_renders_as_terminal_architecture_art() {
+    let source = "\
+```mermaid
+sequenceDiagram
+    title Architecture
+    participant ToolAsk
+    participant App
+    ToolAsk->>App: pending
+    App-->>ToolAsk: ack
+```";
+    let plain = strip_ansi(&Markdown::new().with_width(72).render(source));
+    assert!(
+        plain.contains("Architecture"),
+        "title should render: {plain}"
+    );
+    assert!(
+        plain.contains('╭') && plain.contains('╮'),
+        "participant boxes expected: {plain}"
+    );
+    assert!(
+        plain.contains("ToolAsk") && plain.contains("App"),
+        "participants expected: {plain}"
+    );
+    assert!(
+        plain.contains('─') || plain.contains('→') || plain.contains("pending"),
+        "message arrow or label expected: {plain}"
+    );
+    assert!(
+        !plain.contains("sequenceDiagram"),
+        "raw mermaid header should not leak: {plain}"
+    );
+}
+
+#[test]
+fn mermaid_non_sequence_falls_back_to_code_block() {
+    let source = "\
+```mermaid
+flowchart TD
+    A --> B
+```";
+    let plain = strip_ansi(&Markdown::new().render(source));
+    assert!(
+        plain.contains("flowchart TD"),
+        "unsupported mermaid should stay as code: {plain}"
+    );
+    assert!(
+        !plain.contains('╭'),
+        "non-sequence mermaid should not invent boxes: {plain}"
+    );
 }
 
 #[test]
