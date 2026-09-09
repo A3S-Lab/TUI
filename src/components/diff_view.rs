@@ -169,11 +169,12 @@ impl DiffView {
             context_gutter_color: Color::BrightBlack,
             insert_fg: Color::Rgb(205, 255, 210),
             insert_marker_color: Color::Rgb(205, 255, 210),
-            insert_gutter_color: Color::Rgb(205, 255, 210),
+            // Line numbers stay neutral; only +/- markers carry insert/delete tint.
+            insert_gutter_color: Color::BrightBlack,
             insert_bg: Some(Color::Rgb(26, 60, 36)),
             delete_fg: Color::Rgb(255, 215, 215),
             delete_marker_color: Color::Rgb(255, 215, 215),
-            delete_gutter_color: Color::Rgb(255, 215, 215),
+            delete_gutter_color: Color::BrightBlack,
             delete_bg: Some(Color::Rgb(82, 30, 34)),
             separator_color: Color::BrightBlack,
         }
@@ -385,10 +386,13 @@ impl DiffView {
         self
     }
 
-    pub fn gutter_colors(mut self, context: Color, insert: Color, delete: Color) -> Self {
+    pub fn gutter_colors(mut self, context: Color, _insert: Color, _delete: Color) -> Self {
+        // Line numbers and per-line +/- stay one muted gray for every kind.
+        // Insert/delete overrides are ignored so callers cannot reintroduce
+        // kind-tinted gutters (header +N/-N still uses marker_colors).
         self.context_gutter_color = context;
-        self.insert_gutter_color = insert;
-        self.delete_gutter_color = delete;
+        self.insert_gutter_color = context;
+        self.delete_gutter_color = context;
         self
     }
 
@@ -439,6 +443,38 @@ impl DiffView {
         self
     }
 
+    /// Emphasize word-level changes inside adjacent delete/insert pairs.
+    ///
+    /// Runs after [`Self::highlight_content`]. Unchanged tokens keep a muted
+    /// color; changed tokens use the insert/delete foreground so small edits
+    /// peek without a second renderer.
+    pub fn emphasize_inline_changes(mut self) -> Self {
+        let muted = self.meta_color;
+        let insert_fg = self.insert_fg;
+        let delete_fg = self.delete_fg;
+        let mut index = 0usize;
+        while index + 1 < self.lines.len() {
+            let is_pair = self.lines[index].kind == DiffLineKind::Delete
+                && self.lines[index + 1].kind == DiffLineKind::Insert;
+            if !is_pair {
+                index += 1;
+                continue;
+            }
+            let left = self.lines[index].content.clone();
+            let right = self.lines[index + 1].content.clone();
+            if left.is_empty() || right.is_empty() || left == right {
+                index += 2;
+                continue;
+            }
+            let (delete_spans, insert_spans) =
+                word_change_spans(&left, &right, delete_fg, insert_fg, muted);
+            self.lines[index].spans = delete_spans;
+            self.lines[index + 1].spans = insert_spans;
+            index += 2;
+        }
+        self
+    }
+
     pub fn with_theme(mut self, theme: &Theme) -> Self {
         self.header_color = theme.color(ThemeRole::Primary);
         self.header_bullet_color = theme.color(ThemeRole::Primary);
@@ -447,14 +483,16 @@ impl DiffView {
         self.meta_color = theme.color(ThemeRole::Muted);
         self.hunk_color = theme.color(ThemeRole::Info);
         self.context_color = theme.color(ThemeRole::Foreground);
-        self.context_gutter_color = theme.color(ThemeRole::Foreground);
+        let gutter = theme.color(ThemeRole::Muted);
+        self.context_gutter_color = gutter;
         self.insert_fg = theme.color(ThemeRole::Success);
         self.insert_marker_color = theme.color(ThemeRole::Success);
-        self.insert_gutter_color = theme.color(ThemeRole::Success);
+        // Line numbers stay muted gray for every kind; markers keep success/error.
+        self.insert_gutter_color = gutter;
         self.insert_bg = Some(theme.color(ThemeRole::Surface));
         self.delete_fg = theme.color(ThemeRole::Error);
         self.delete_marker_color = theme.color(ThemeRole::Error);
-        self.delete_gutter_color = theme.color(ThemeRole::Error);
+        self.delete_gutter_color = gutter;
         self.delete_bg = Some(theme.color(ThemeRole::Surface));
         self.separator_color = theme.color(ThemeRole::Border);
         self
@@ -610,23 +648,27 @@ impl DiffView {
         row_width: usize,
     ) -> String {
         let bg = self.line_background(line.kind);
-        let mut rendered = style_piece("    ", None, bg);
+        // Leading gutter (indent + digits + marker) stays neutral so add/delete
+        // tint applies only to code content — matching Cursor Diff gutters.
+        let mut rendered = style_piece("    ", None, None);
 
         if segment_index == 0 {
             rendered.push_str(&style_piece(
                 &self.line_number(line, number_width),
                 Some(self.gutter_color(line.kind)),
-                bg,
+                None,
             ));
-            rendered.push_str(&style_piece(" ", None, bg));
+            rendered.push_str(&style_piece(" ", None, None));
+            // Per-line +/- shares the muted gutter color; header counts still
+            // use marker_colors for the +N/-N summary.
             rendered.push_str(&style_piece(
                 &line.kind.marker().to_string(),
-                Some(self.marker_color(line.kind)),
-                bg,
+                Some(self.gutter_color(line.kind)),
+                None,
             ));
-            rendered.push_str(&style_piece(" ", None, bg));
+            rendered.push_str(&style_piece(" ", None, None));
         } else {
-            rendered.push_str(&style_piece(&" ".repeat(number_width + 3), None, bg));
+            rendered.push_str(&style_piece(&" ".repeat(number_width + 3), None, None));
         }
 
         for span in spans {
@@ -647,23 +689,8 @@ impl DiffView {
         }
     }
 
-    fn gutter_color(&self, kind: DiffLineKind) -> Color {
-        match kind {
-            DiffLineKind::Insert => self.insert_gutter_color,
-            DiffLineKind::Delete => self.delete_gutter_color,
-            _ => self.context_gutter_color,
-        }
-    }
-
-    fn marker_color(&self, kind: DiffLineKind) -> Color {
-        match kind {
-            DiffLineKind::Insert => self.insert_marker_color,
-            DiffLineKind::Delete => self.delete_marker_color,
-            DiffLineKind::Hunk => self.hunk_color,
-            DiffLineKind::Metadata => self.meta_color,
-            DiffLineKind::Separator => self.separator_color,
-            DiffLineKind::Context => self.context_gutter_color,
-        }
+    fn gutter_color(&self, _kind: DiffLineKind) -> Color {
+        self.context_gutter_color
     }
 
     fn content_color(&self, kind: DiffLineKind) -> Color {
@@ -989,6 +1016,9 @@ fn truncate_diff_spans(spans: &[DiffSpan], width: usize) -> Vec<DiffSpan> {
 }
 
 fn push_diff_span(spans: &mut Vec<DiffSpan>, content: &str, color: Option<Color>) {
+    if content.is_empty() {
+        return;
+    }
     if let Some(last) = spans.last_mut().filter(|span| span.color == color) {
         last.content.push_str(content);
     } else {
@@ -997,6 +1027,43 @@ fn push_diff_span(spans: &mut Vec<DiffSpan>, content: &str, color: Option<Color>
             color,
         });
     }
+}
+
+/// Word-level spans for one delete/insert pair. Equal tokens are muted; changed
+/// tokens keep insert/delete foreground so small edits peek without a second
+/// renderer.
+fn word_change_spans(
+    before: &str,
+    after: &str,
+    delete_fg: Color,
+    insert_fg: Color,
+    muted: Color,
+) -> (Vec<DiffSpan>, Vec<DiffSpan>) {
+    let diff = TextDiff::from_words(before, after);
+    let mut delete_spans = Vec::new();
+    let mut insert_spans = Vec::new();
+    for change in diff.iter_all_changes() {
+        let value = change.value();
+        match change.tag() {
+            ChangeTag::Equal => {
+                push_diff_span(&mut delete_spans, value, Some(muted));
+                push_diff_span(&mut insert_spans, value, Some(muted));
+            }
+            ChangeTag::Delete => {
+                push_diff_span(&mut delete_spans, value, Some(delete_fg));
+            }
+            ChangeTag::Insert => {
+                push_diff_span(&mut insert_spans, value, Some(insert_fg));
+            }
+        }
+    }
+    if delete_spans.is_empty() {
+        delete_spans.push(DiffSpan::new(before).color(delete_fg));
+    }
+    if insert_spans.is_empty() {
+        insert_spans.push(DiffSpan::new(after).color(insert_fg));
+    }
+    (delete_spans, insert_spans)
 }
 
 fn wrap_hard(value: &str, width: usize) -> Vec<String> {
@@ -1122,6 +1189,50 @@ mod tests {
     }
 
     #[test]
+    fn emphasize_inline_changes_marks_changed_words() {
+        let muted = Color::BrightBlack;
+        let insert = Color::Rgb(0, 200, 0);
+        let delete = Color::Rgb(200, 0, 0);
+        let diff = DiffView::from_texts("x.rs", "let value = 1;\n", "let value = 2;\n")
+            .changed_content_colors(insert, delete)
+            .emphasize_inline_changes();
+        let lines = diff.lines();
+        let delete_line = lines
+            .iter()
+            .find(|line| line.kind() == DiffLineKind::Delete)
+            .expect("delete line");
+        let insert_line = lines
+            .iter()
+            .find(|line| line.kind() == DiffLineKind::Insert)
+            .expect("insert line");
+        assert!(
+            delete_line
+                .spans
+                .iter()
+                .any(|span| span.content().contains('1') && span.foreground() == Some(delete)),
+            "{:?}",
+            delete_line.spans
+        );
+        assert!(
+            insert_line
+                .spans
+                .iter()
+                .any(|span| span.content().contains('2') && span.foreground() == Some(insert)),
+            "{:?}",
+            insert_line.spans
+        );
+        assert!(
+            delete_line
+                .spans
+                .iter()
+                .any(|span| span.content().contains("let") && span.foreground() == Some(muted)),
+            "{:?}",
+            delete_line.spans
+        );
+        let _ = muted;
+    }
+
+    #[test]
     fn parses_unified_lines() {
         let diff = DiffView::from_unified_lines(vec![
             "diff --git a/a b/a",
@@ -1176,7 +1287,8 @@ mod tests {
 
     #[test]
     fn styled_content_keeps_gutter_marker_token_and_background_layers() {
-        let gutter = Color::Rgb(122, 139, 131);
+        let ignored_insert_gutter = Color::Rgb(122, 139, 131);
+        let context_gutter = Color::BrightBlack;
         let marker = Color::Rgb(0, 194, 0);
         let keyword = Color::Rgb(210, 164, 253);
         let content = Color::Rgb(203, 214, 247);
@@ -1184,7 +1296,7 @@ mod tests {
         let rendered = DiffView::new(vec![
             DiffLine::new(DiffLineKind::Insert, "let value").numbers(None, Some(7))
         ])
-        .gutter_colors(Color::BrightBlack, gutter, Color::BrightBlack)
+        .gutter_colors(context_gutter, ignored_insert_gutter, Color::BrightBlack)
         .marker_colors(marker, Color::Red)
         .changed_content_colors(content, Color::Red)
         .changed_backgrounds(Some(background), None)
@@ -1197,20 +1309,32 @@ mod tests {
         .view(32, 1);
 
         assert!(
-            rendered.contains(&Style::new().fg(gutter).bg(background).render("  7")),
-            "line number should use the insert gutter color: {rendered:?}"
+            rendered.contains(&Style::new().fg(context_gutter).render("  7")),
+            "line number must stay on the uniform context gutter color: {rendered:?}"
         );
         assert!(
-            rendered.contains(&Style::new().fg(marker).bg(background).render("+")),
-            "marker should use its own color: {rendered:?}"
+            !rendered.contains(&Style::new().fg(ignored_insert_gutter).render("  7")),
+            "line number must ignore insert gutter override: {rendered:?}"
+        );
+        assert!(
+            rendered.contains(&Style::new().fg(context_gutter).render("+")),
+            "per-line marker should use the muted gutter color: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&Style::new().fg(marker).render("+")),
+            "per-line marker should not use header marker color: {rendered:?}"
         );
         assert!(
             rendered.contains(&Style::new().fg(keyword).bg(background).render("let")),
             "syntax token should retain its color: {rendered:?}"
         );
         assert!(
-            rendered.contains(&Style::new().bg(background).render("    ")),
-            "the background should cover the leading row padding: {rendered:?}"
+            !rendered.contains(&Style::new().bg(background).render("    ")),
+            "leading gutter padding should stay free of row tint: {rendered:?}"
+        );
+        assert!(
+            rendered.contains(&Style::new().bg(background).render("             ")),
+            "row tint should still pad the code region: {rendered:?}"
         );
         assert_eq!(visible_len(&rendered), 32);
     }
@@ -1380,5 +1504,11 @@ mod tests {
         assert_eq!(diff.delete_fg, theme.color(ThemeRole::Error));
         assert_eq!(diff.delete_bg, Some(theme.color(ThemeRole::Surface)));
         assert_eq!(diff.separator_color, theme.color(ThemeRole::Border));
+        let gutter = theme.color(ThemeRole::Muted);
+        assert_eq!(diff.context_gutter_color, gutter);
+        assert_eq!(diff.insert_gutter_color, gutter);
+        assert_eq!(diff.delete_gutter_color, gutter);
+        assert_eq!(diff.insert_marker_color, theme.color(ThemeRole::Success));
+        assert_eq!(diff.delete_marker_color, theme.color(ThemeRole::Error));
     }
 }

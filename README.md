@@ -25,7 +25,7 @@ Most terminal UI libraries force you to manage state, layout, and rendering manu
 - **Flexbox Layout** — CSS-like layout powered by [Taffy](https://github.com/DioxusLabs/taffy)
 - **Incremental Rendering** — only redraw what changed
 - **Rich Components** — 60 ready-to-use components (tables, modals, help panels, text editors, etc.)
-- **Terminal-Native Markdown** — clickable OSC 8 links, responsive tables, display-width-safe wrapping, and guarded multi-color code highlighting
+- **Terminal-Native Markdown** — clickable OSC 8 links, responsive tables, display-width-safe wrapping, guarded multi-color code highlighting, and Cursor-style Unicode Mermaid `sequenceDiagram` art
 
 ---
 
@@ -267,6 +267,13 @@ code block contents as plain text.
 Recognized fenced-code languages use foreground-only syntax colors. Unknown
 language tags and blocks larger than 512 KiB or 10,000 lines stay unstyled so
 streaming transcripts remain predictable and responsive.
+
+Mermaid fences (`mermaid` language tag) whose body starts with `sequenceDiagram`
+render as terminal architecture diagrams (participant boxes, lifelines,
+solid/dashed arrows, alt/opt/loop frames). Other Mermaid dialects fall back to
+the plain code path. While a mermaid fence is still open in a streaming
+transcript, the fence stays in the mutable live tail so layout can reflow until
+the closing marker arrives.
 
 ---
 
@@ -529,7 +536,7 @@ fn render_agent_chrome(theme: &Theme, width: u16) -> String {
 | `Scrollbar` | Visual scroll position on text views. | Append to a rendered view or render beside a fixed-height panel. |
 | `Paragraph` | Wrapped prose with optional alignment. | Use for descriptions, help text, and detail copy that must fit a width. |
 | `DiffView` | Unified diff display. | Convert edits into `DiffLine` rows and render with add/remove/context styling. |
-| `Markdown` support | Rich transcript and documentation rendering. | Use the markdown renderer for CommonMark content, code highlighting, clickable OSC 8 links, and narrow-width table fallback without raw delimiter rows. |
+| `Markdown` support | Rich transcript and documentation rendering. | Use the markdown renderer for CommonMark content, code highlighting, clickable OSC 8 links, Mermaid `sequenceDiagram` terminal art, and narrow-width table fallback without raw delimiter rows. |
 
 #### Layout, Frames, And Visual Structure
 

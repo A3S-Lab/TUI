@@ -103,6 +103,7 @@ where
                 alt_screen: self.alt_screen,
                 mouse_support: self.mouse_support,
                 raw_mode: true,
+                canvas_rgb: None,
             },
             self.fps,
         )

@@ -21,6 +21,7 @@ pub struct ProgramBuilder<M: Model> {
     alt_screen: bool,
     mouse_support: bool,
     fps: u32,
+    canvas_rgb: Option<(u8, u8, u8)>,
 }
 
 impl<M: Model> ProgramBuilder<M>
@@ -33,6 +34,7 @@ where
             alt_screen: true,
             mouse_support: false,
             fps: 60,
+            canvas_rgb: None,
         }
     }
 
@@ -56,6 +58,12 @@ where
         self
     }
 
+    /// Paint `Clear` / default background with this RGB (pure black canvas).
+    pub fn with_canvas_rgb(mut self, r: u8, g: u8, b: u8) -> Self {
+        self.canvas_rgb = Some((r, g, b));
+        self
+    }
+
     pub async fn run(self) -> io::Result<()> {
         Program::run_inner(
             self.model,
@@ -63,6 +71,7 @@ where
                 alt_screen: self.alt_screen,
                 mouse_support: self.mouse_support,
                 raw_mode: true,
+                canvas_rgb: self.canvas_rgb,
             },
             self.fps,
         )

@@ -306,7 +306,10 @@ impl Textarea {
             return String::new();
         }
 
-        if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
+        // Ghost placeholder stays visible while focused and empty so the live
+        // composer can match Cursor CLI empty-state grammar; the host cursor
+        // still marks the real insertion point at column 0.
+        if self.lines == vec![String::new()] && !self.placeholder.is_empty() {
             return format!("\x1b[2m{}\x1b[0m", self.placeholder);
         }
 
@@ -804,7 +807,7 @@ impl Textarea {
             return Element::Box(BoxElement::new().direction(FlexDirection::Column));
         }
 
-        if self.lines == vec![String::new()] && !self.placeholder.is_empty() && !self.focused {
+        if self.lines == vec![String::new()] && !self.placeholder.is_empty() {
             return Element::Text(
                 TextElement::new(&self.placeholder)
                     .dim()

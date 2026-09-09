@@ -203,11 +203,24 @@ fn newline_creates_new_line() {
 }
 
 #[test]
+fn ctrl_j_inserts_newline_even_when_enter_submits() {
+    // Cursor CLI documents Ctrl+J as the reliable newline when terminals remap
+    // Shift+Enter. With submit_on_enter, plain Enter must submit; Ctrl+J must not.
+    let mut ta = Textarea::new().with_submit_on_enter(true);
+    ta.handle_key(&key(KeyCode::Char('a')));
+    let msg = ta.handle_key(&ctrl(KeyCode::Char('j')));
+    assert!(matches!(msg, Some(TextareaMsg::Changed(_))));
+    assert_eq!(ta.value(), "a\n");
+    let submit = ta.handle_key(&key(KeyCode::Enter));
+    assert!(matches!(submit, Some(TextareaMsg::Submit(value)) if value == "a\n"));
+}
+
+#[test]
 fn auto_grow_shows_all_lines_after_newline() {
     // Regression: with auto-grow, adding a newline grew the height but left
     // the scroll offset following the cursor, hiding the first line. The box
     // must show BOTH lines (height grows, offset resets).
-    let mut ta = Textarea::new().with_height(1).with_auto_grow(8);
+    let mut ta = Textarea::new().with_height(1).with_auto_grow(6);
     ta.handle_key(&key(KeyCode::Char('a')));
     ta.handle_key(&key(KeyCode::Enter));
     ta.handle_key(&key(KeyCode::Char('b')));
@@ -215,6 +228,27 @@ fn auto_grow_shows_all_lines_after_newline() {
     let view = ta.view();
     assert!(view.contains('a'), "first line still visible");
     assert!(view.contains('b'), "second line visible");
+}
+
+#[test]
+fn auto_grow_caps_at_six_visual_lines_then_scrolls() {
+    // Cursor CLI keeps long prompts within six visual lines; further lines
+    // scroll inside the bar instead of unbounded growth.
+    let mut ta = Textarea::new()
+        .with_height(1)
+        .with_auto_grow(6)
+        .with_submit_on_enter(false);
+    for i in 0..8 {
+        if i > 0 {
+            ta.handle_key(&key(KeyCode::Enter));
+        }
+        ta.handle_key(&key(KeyCode::Char('x')));
+    }
+    assert_eq!(ta.height(), 6, "composer height must cap at six rows");
+    assert!(
+        ta.offset > 0,
+        "overflow must scroll to keep the caret visible"
+    );
 }
 
 #[test]
@@ -245,6 +279,35 @@ fn zero_height_hides_placeholder() {
         panic!("expected empty textarea element box");
     };
     assert!(box_el.children.is_empty());
+}
+
+#[test]
+fn focused_empty_textarea_shows_placeholder_ghost() {
+    // Cursor CLI keeps an empty-state hint visible while the prompt is focused.
+    let ta = Textarea::new()
+        .with_height(1)
+        .with_placeholder("Add a follow-up");
+    assert!(ta.focused);
+    let view = crate::style::strip_ansi(&ta.view());
+    assert!(
+        view.contains("Add a follow-up"),
+        "focused empty composer must show placeholder ghost: {view:?}"
+    );
+    let Element::Text(text) = ta.element::<()>() else {
+        panic!("expected placeholder text element");
+    };
+    assert!(text.content.contains("Add a follow-up"));
+}
+
+#[test]
+fn typing_clears_placeholder_ghost() {
+    let mut ta = Textarea::new()
+        .with_height(1)
+        .with_placeholder("Add a follow-up");
+    ta.handle_key(&key(KeyCode::Char('h')));
+    let view = crate::style::strip_ansi(&ta.view());
+    assert!(!view.contains("Add a follow-up"), "{view:?}");
+    assert!(view.contains('h'), "{view:?}");
 }
 
 #[test]
