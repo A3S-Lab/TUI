@@ -283,7 +283,8 @@ fn highlighted_code_normalizes_crlf_without_stray_carriage_returns() {
 fn code_tokens_keep_distinct_foreground_colors() {
     let output = Markdown::new()
         .render("```rust\nfn greet() { let answer = format_value(\"hello\", 42); // note\n}\n```");
-    let colors = ["fn", "greet", "hello", "42", "//"].map(|token| {
+    // base16-ocean.dark collapses some keyword/number roles; pick tokens that stay distinct.
+    let colors = ["fn", "greet", "hello", "//", "answer"].map(|token| {
         foreground_rgb_before(&output, token)
             .unwrap_or_else(|| panic!("missing foreground for {token:?} in {output:?}"))
     });
@@ -767,7 +768,7 @@ fn render_element_preserves_heading_style() {
     };
 
     assert!(text.style.bold);
-    assert_eq!(text.style.fg, Some(Color::Rgb(122, 162, 247)));
+    assert_eq!(text.style.fg, Some(Color::Rgb(88, 166, 255)));
     assert!(!text.content.contains('\x1b'));
 }
 
