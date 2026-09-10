@@ -708,7 +708,7 @@ impl MenuPanel {
     }
 
     fn number_shortcut_msg(&mut self, c: char) -> Option<MenuPanelMsg> {
-        let index = number_shortcut_index(c)?;
+        let index = super::number_shortcut_index(c)?;
         if index < self.items.len() {
             self.selected = index;
             self.keep_selected_visible(self.max_items.unwrap_or(10));
@@ -780,7 +780,7 @@ impl MenuPanel {
     fn item_prefix_tail(&self, index: usize, item: &MenuItem, marker: &str) -> String {
         let mut prefix = format!("{marker} ");
         if self.number_shortcuts {
-            if let Some(shortcut) = number_shortcut_label(index) {
+            if let Some(shortcut) = super::number_shortcut_label(index) {
                 prefix.push_str(&format!("{shortcut}. "));
             } else {
                 prefix.push_str("   ");
@@ -804,22 +804,6 @@ impl MenuPanel {
 impl Default for MenuPanel {
     fn default() -> Self {
         Self::without_title()
-    }
-}
-
-fn number_shortcut_index(c: char) -> Option<usize> {
-    match c {
-        '1'..='9' => Some((c as u8 - b'1') as usize),
-        '0' => Some(9),
-        _ => None,
-    }
-}
-
-fn number_shortcut_label(index: usize) -> Option<char> {
-    match index {
-        0..=8 => Some((b'1' + index as u8) as char),
-        9 => Some('0'),
-        _ => None,
     }
 }
 

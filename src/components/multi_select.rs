@@ -100,7 +100,7 @@ impl MultiSelect {
                 self.toggle_index(self.cursor)
             }
             KeyCode::Char(c) if self.number_shortcuts => {
-                let idx = number_shortcut_index(c)?;
+                let idx = super::number_shortcut_index(c)?;
                 if idx < self.items.len() {
                     self.cursor = idx;
                     self.toggle_index(idx)
@@ -150,7 +150,7 @@ impl MultiSelect {
                 let cursor_marker = if idx == cursor { ">" } else { " " };
                 let check = if self.is_checked(idx) { "[x]" } else { "[ ]" };
                 let raw = if self.number_shortcuts {
-                    match number_shortcut_label(idx) {
+                    match super::number_shortcut_label(idx) {
                         Some(label) => {
                             fit_visible(&format!("{cursor_marker} {label} {check} {item}"), width)
                         }
@@ -186,7 +186,7 @@ impl MultiSelect {
                 let cursor_marker = if i == cursor { "▸" } else { " " };
                 let check = if self.is_checked(i) { "[x]" } else { "[ ]" };
                 let text = if self.number_shortcuts {
-                    match number_shortcut_label(i) {
+                    match super::number_shortcut_label(i) {
                         Some(label) => format!("{cursor_marker} {label} {check} {item}"),
                         None => format!("{cursor_marker}   {check} {item}"),
                     }
@@ -223,22 +223,6 @@ impl MultiSelect {
                 .min(self.items.len() - visible)
         };
         start..start.saturating_add(visible).min(self.items.len())
-    }
-}
-
-fn number_shortcut_index(c: char) -> Option<usize> {
-    match c {
-        '1'..='9' => Some((c as u8 - b'1') as usize),
-        '0' => Some(9),
-        _ => None,
-    }
-}
-
-fn number_shortcut_label(idx: usize) -> Option<char> {
-    match idx {
-        0..=8 => Some((b'1' + idx as u8) as char),
-        9 => Some('0'),
-        _ => None,
     }
 }
 

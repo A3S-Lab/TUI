@@ -432,7 +432,7 @@ impl ChoicePrompt {
 
     fn choice_label(&self, index: usize, choice: &ChoicePromptItem) -> String {
         if self.number_shortcuts {
-            number_shortcut_label(index)
+            super::number_shortcut_label(index)
                 .map(|label| format!("{label}."))
                 .unwrap_or_default()
         } else {
@@ -445,7 +445,7 @@ impl ChoicePrompt {
 
     fn shortcut_msg(&mut self, c: char) -> Option<ChoicePromptMsg> {
         if self.number_shortcuts {
-            if let Some(index) = number_shortcut_index(c) {
+            if let Some(index) = super::number_shortcut_index(c) {
                 if index < self.choices.len() {
                     self.selected = index;
                     return Some(ChoicePromptMsg::Selected(index));
@@ -546,22 +546,6 @@ impl Selectable for ChoicePrompt {
 impl Activatable for ChoicePrompt {
     fn is_item_disabled(&self, _index: usize) -> bool {
         false
-    }
-}
-
-fn number_shortcut_index(c: char) -> Option<usize> {
-    match c {
-        '1'..='9' => Some((c as u8 - b'1') as usize),
-        '0' => Some(9),
-        _ => None,
-    }
-}
-
-fn number_shortcut_label(index: usize) -> Option<char> {
-    match index {
-        0..=8 => Some((b'1' + index as u8) as char),
-        9 => Some('0'),
-        _ => None,
     }
 }
 

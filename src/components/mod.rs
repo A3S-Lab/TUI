@@ -68,6 +68,22 @@ fn relative_mouse_column(column: u16, x_offset: u16) -> Option<usize> {
     column.checked_sub(x_offset).map(usize::from)
 }
 
+fn number_shortcut_index(c: char) -> Option<usize> {
+    match c {
+        '1'..='9' => Some((c as u8 - b'1') as usize),
+        '0' => Some(9),
+        _ => None,
+    }
+}
+
+fn number_shortcut_label(index: usize) -> Option<char> {
+    match index {
+        0..=8 => Some((b'1' + index as u8) as char),
+        9 => Some('0'),
+        _ => None,
+    }
+}
+
 pub use activity_block::ActivityBlock;
 pub use alert::{Alert, AlertKind};
 pub use badge::Badge;

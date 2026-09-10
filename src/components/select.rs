@@ -79,7 +79,7 @@ impl Select {
             }
             KeyCode::Enter => self.selected_msg(),
             KeyCode::Char(c) if self.number_shortcuts => {
-                let idx = number_shortcut_index(c)?;
+                let idx = super::number_shortcut_index(c)?;
                 if idx < self.items.len() {
                     self.cursor = idx;
                     self.selected_msg()
@@ -130,7 +130,7 @@ impl Select {
             .map(|(idx, item)| {
                 let prefix = if idx == cursor { ">" } else { " " };
                 let raw = if self.number_shortcuts {
-                    match number_shortcut_label(idx) {
+                    match super::number_shortcut_label(idx) {
                         Some(label) => fit_visible(&format!("{prefix} {label} {item}"), width),
                         None => fit_visible(&format!("{prefix}   {item}"), width),
                     }
@@ -163,7 +163,7 @@ impl Select {
             .map(|(i, item)| {
                 let prefix = if i == cursor { "▸ " } else { "  " };
                 let text = if self.number_shortcuts {
-                    match number_shortcut_label(i) {
+                    match super::number_shortcut_label(i) {
                         Some(label) => format!("{prefix}{label} {item}"),
                         None => format!("{prefix}  {item}"),
                     }
@@ -216,22 +216,6 @@ impl Select {
                 .min(self.items.len() - visible)
         };
         start..start.saturating_add(visible).min(self.items.len())
-    }
-}
-
-fn number_shortcut_index(c: char) -> Option<usize> {
-    match c {
-        '1'..='9' => Some((c as u8 - b'1') as usize),
-        '0' => Some(9),
-        _ => None,
-    }
-}
-
-fn number_shortcut_label(idx: usize) -> Option<char> {
-    match idx {
-        0..=8 => Some((b'1' + idx as u8) as char),
-        9 => Some('0'),
-        _ => None,
     }
 }
 
