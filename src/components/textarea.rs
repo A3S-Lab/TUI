@@ -5,6 +5,10 @@ use crate::style::{
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 
+use super::text_nav::{
+    next_word_boundary, previous_word_boundary, text_char_modifier, word_modifier,
+};
+
 pub struct Textarea {
     lines: Vec<String>,
     cursor_row: usize,
@@ -757,42 +761,6 @@ fn clamp_lines_to_char_limit(lines: Vec<String>, limit: usize) -> Vec<String> {
 
 fn line_chars(line: &str) -> Vec<char> {
     line.chars().collect()
-}
-
-fn text_char_modifier(modifiers: KeyModifiers) -> bool {
-    !modifiers.intersects(
-        KeyModifiers::CONTROL
-            | KeyModifiers::ALT
-            | KeyModifiers::SUPER
-            | KeyModifiers::HYPER
-            | KeyModifiers::META,
-    )
-}
-
-fn word_modifier(modifiers: KeyModifiers) -> bool {
-    modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-}
-
-fn previous_word_boundary(chars: &[char], cursor: usize) -> usize {
-    let mut index = cursor.min(chars.len());
-    while index > 0 && chars[index - 1].is_whitespace() {
-        index -= 1;
-    }
-    while index > 0 && !chars[index - 1].is_whitespace() {
-        index -= 1;
-    }
-    index
-}
-
-fn next_word_boundary(chars: &[char], cursor: usize) -> usize {
-    let mut index = cursor.min(chars.len());
-    while index < chars.len() && !chars[index].is_whitespace() {
-        index += 1;
-    }
-    while index < chars.len() && chars[index].is_whitespace() {
-        index += 1;
-    }
-    index
 }
 
 impl Default for Textarea {

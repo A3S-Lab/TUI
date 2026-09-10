@@ -48,6 +48,7 @@ pub mod table;
 pub mod tabs;
 pub mod task_queue;
 pub mod text_input;
+mod text_nav;
 pub mod text_overlay;
 pub mod textarea;
 pub mod timeline;
