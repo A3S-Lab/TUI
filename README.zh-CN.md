@@ -248,7 +248,7 @@ a3s-tui = "0.1"
 代码块，禁用默认值：
 
 ```toml
-a3s-tui = { version = "0.1", default-features = false }
+a3s-tui = { version = "0.2", default-features = false }
 ```
 
 可用功能：
