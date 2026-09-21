@@ -250,7 +250,7 @@ For lightweight apps that do not render markdown transcripts or highlighted
 code blocks, disable defaults:
 
 ```toml
-a3s-tui = { version = "0.1", default-features = false }
+a3s-tui = { version = "0.2", default-features = false }
 ```
 
 Available features:
